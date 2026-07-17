@@ -1,0 +1,28 @@
+namespace OnCallApi.Models;
+
+public class PhoneTree
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public string TreeType { get; set; } = "department"; // emergency, department, oncall, admin
+    public int? DepartmentId { get; set; }
+    public Department? Department { get; set; }
+    public string? FallbackProcedure { get; set; }
+    public bool IsActive { get; set; } = true;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public ICollection<PhoneTreeNode> Nodes { get; set; } = new List<PhoneTreeNode>();
+}
+
+public class PhoneTreeNode
+{
+    public int Id { get; set; }
+    public int PhoneTreeId { get; set; }
+    public PhoneTree PhoneTree { get; set; } = null!;
+    public int Order { get; set; }
+    public Guid? EmployeeId { get; set; }
+    public Employee? Employee { get; set; }
+    public string? RoleName { get; set; } // fallback if not assigned to specific person
+    public string? Condition { get; set; }
+    public int TimeoutSeconds { get; set; } = 30;
+}
