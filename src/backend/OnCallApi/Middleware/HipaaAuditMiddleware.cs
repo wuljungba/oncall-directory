@@ -1,11 +1,12 @@
 using System.Security.Claims;
-using OnCallApi.Data;
 using OnCallApi.Models;
+using OnCallApi.Services;
 
 namespace OnCallApi.Middleware;
 
 /// <summary>
-/// HIPAA audit middleware — logs all access to PHI-containing endpoints.
+/// HIPAA audit middleware — logs all access to PHI-containing endpoints
+/// via an async background queue to avoid blocking the request pipeline.
 /// </summary>
 public class HipaaAuditMiddleware
 {
@@ -15,7 +16,7 @@ public class HipaaAuditMiddleware
     // Endpoints that access PHI (personally identifiable health information)
     private static readonly HashSet<string> PhiPhoneEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/api/employee", "/api/directory", "/api/schedule/time-off"
+        "/api/employee", "/api/directory", "/api/schedule/time-off", "/api/settings"
     };
 
     public HipaaAuditMiddleware(RequestDelegate next, ILogger<HipaaAuditMiddleware> logger)
@@ -24,7 +25,7 @@ public class HipaaAuditMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, AppDbContext db)
+    public async Task InvokeAsync(HttpContext context, IAuditService auditService)
     {
         var path = context.Request.Path.Value ?? "";
 
@@ -56,11 +57,11 @@ public class HipaaAuditMiddleware
                 Timestamp = DateTime.UtcNow
             };
 
-            db.AuditLogs.Add(auditLog);
-            await db.SaveChangesAsync();
+            // Enqueue for async batch processing instead of synchronous DB write
+            auditService.Enqueue(auditLog);
 
-            _logger.LogInformation("HIPAA Audit: {User} {Action} {Resource} at {Time}",
-                auditLog.UserName, auditLog.Action, auditLog.ResourceType, auditLog.Timestamp);
+            _logger.LogDebug("HIPAA Audit queued: {User} {Action} {Resource}",
+                auditLog.UserName, auditLog.Action, auditLog.ResourceType);
         }
 
         await _next(context);

@@ -60,6 +60,9 @@ builder.Services.AddScoped<IGraphApiService, GraphApiService>();
 builder.Services.AddScoped<IScheduleService, ScheduleService>();
 builder.Services.AddScoped<IDirectoryService, DirectoryService>();
 builder.Services.AddScoped<BulkImportService>();
+builder.Services.AddSingleton<AuditService>();
+builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
+builder.Services.AddHostedService<AuditBackgroundService>();
 builder.Services.AddHostedService<AdSyncBackgroundService>();
 
 // ── SignalR (real-time notifications) ──
