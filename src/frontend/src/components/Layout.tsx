@@ -7,6 +7,7 @@ import {
   Users,
   Settings,
   Clock,
+  ShieldCheck,
   LogOut,
   Menu,
   X,
@@ -20,6 +21,7 @@ const navItems = [
   { path: '/directory', label: 'Phone Directory', icon: Phone },
   { path: '/phone-trees', label: 'Phone Trees', icon: PhoneCall },
   { path: '/time-off', label: 'Time Off', icon: Users },
+  { path: '/compliance', label: 'Compliance', icon: ShieldCheck },
   { path: '/settings', label: 'Settings', icon: Settings },
 ]
 

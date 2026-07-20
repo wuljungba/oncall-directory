@@ -105,6 +105,31 @@ export interface PhoneTreeNode {
   timeoutSeconds: number
 }
 
+export interface DutyHourRule {
+  id: number
+  name: string
+  maxHoursPerPeriod: number
+  periodDays: number
+  minHoursBetweenShifts: number
+  maxShiftLengthHours: number
+  maxConsecutiveDays: number
+  applicableRoles?: string
+  departmentId?: number
+  isEnabled: boolean
+}
+
+export interface DutyHourViolation {
+  id: number
+  employeeId: string
+  employee?: Employee
+  ruleId: number
+  rule?: DutyHourRule
+  description: string
+  severity: number
+  isResolved: boolean
+  violatedAt: string
+}
+
 export interface AppSetting {
   key: string
   value: string

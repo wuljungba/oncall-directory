@@ -9,6 +9,7 @@ import DirectoryPage from '@/pages/DirectoryPage'
 import PhoneTreePage from '@/pages/PhoneTreePage'
 import TimeOffPage from '@/pages/TimeOffPage'
 import SettingsPage from '@/pages/SettingsPage'
+import CompliancePage from '@/pages/CompliancePage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="phone-trees" element={<PhoneTreePage />} />
         <Route path="time-off" element={<TimeOffPage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="compliance" element={<CompliancePage />} />
       </Route>
     </Routes>
   )

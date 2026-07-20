@@ -1,6 +1,8 @@
 import type {
   AppSetting,
   Department,
+  DutyHourRule,
+  DutyHourViolation,
   Employee,
   Schedule,
   Shift,
@@ -107,6 +109,28 @@ export const scheduleApi = {
       method: 'POST',
       body: JSON.stringify(timeOff),
     }),
+}
+
+// ── Compliance ──
+export const complianceApi = {
+  getRules: (departmentId?: number) =>
+    fetchApi<DutyHourRule[]>(`/compliance/rules${departmentId ? `?departmentId=${departmentId}` : ''}`),
+  checkEmployee: (employeeId: string, from?: string, to?: string) => {
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    const qs = params.toString()
+    return fetchApi<DutyHourViolation[]>(`/compliance/check/${employeeId}${qs ? `?${qs}` : ''}`)
+  },
+  checkAll: (from?: string, to?: string) => {
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    const qs = params.toString()
+    return fetchApi<DutyHourViolation[]>(`/compliance/check${qs ? `?${qs}` : ''}`)
+  },
+  getHours: (employeeId: string, from: string, to: string) =>
+    fetchApi<number>(`/compliance/hours/${employeeId}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 }
 
 // ── Bulk Import ──
