@@ -6,11 +6,24 @@ var resourceGroupName = 'rg-oncall-${environmentName}'
 var appName = 'app-oncall-${environmentName}'
 var sqlServerName = 'sql-oncall-${environmentName}'
 var sqlDbName = 'sqldb-oncall-${environmentName}'
+var kvName = 'kv-oncall-${environmentName}'
+var aiName = 'ai-oncall-${environmentName}'
 
 // ── Resource Group ──
 resource rg 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: resourceGroupName
   location: location
+}
+
+// ── Application Insights ──
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: aiName
+  location: location
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: null
+  }
 }
 
 // ── Azure SQL Database ──
@@ -39,6 +52,21 @@ resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   }
 }
 
+// ── Key Vault ──
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: kvName
+  location: location
+  properties: {
+    sku: {
+      family: 'A'
+      name: 'Standard'
+    }
+    tenantId: subscription().tenantId
+    enableRbacAuthorization: true
+    softDeleteRetentionInDays: 7
+  }
+}
+
 // ── App Service Plan + Web App ──
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'plan-oncall-${environmentName}'
@@ -53,6 +81,9 @@ resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   name: appName
   location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: appPlan.id
     httpsOnly: true
@@ -67,9 +98,27 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AzureAd__TenantId', value: 'your-tenant-id' }
         { name: 'AzureAd__ClientId', value: 'your-api-client-id' }
         { name: 'Cors__Origin', value: 'https://${appName}.azurewebsites.net' }
+        { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.InstrumentationKey }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
       ]
     }
+  }
+}
+
+// ── Key Vault Access Policy for Web App Managed Identity ──
+resource kvAccessPolicy 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = {
+  parent: keyVault
+  name: 'add'
+  properties: {
+    accessPolicies: [
+      {
+        objectId: webApp.identity.principalId
+        permissions: {
+          secrets: ['get', 'list']
+        }
+        tenantId: subscription().tenantId
+      }
+    ]
   }
 }
 
@@ -96,3 +145,5 @@ resource swa 'Microsoft.Web/staticSites@2022-09-01' = {
 output appUrl string = 'https://${appName}.azurewebsites.net'
 output swaUrl string = swa.properties.defaultHostname
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
+output keyVaultName string = kvName
+output appInsightsConnectionString string = appInsights.properties.InstrumentationKey

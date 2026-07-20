@@ -25,6 +25,7 @@ export default function TimeOffPage() {
   const [showForm, setShowForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [formData, setFormData] = useState({
     startDate: '',
     endDate: '',
@@ -49,8 +50,24 @@ export default function TimeOffPage() {
     }
   }
 
+  function validate(): boolean {
+    const errors: Record<string, string> = {}
+    if (!formData.startDate) {
+      errors.startDate = 'Start date is required'
+    }
+    if (!formData.endDate) {
+      errors.endDate = 'End date is required'
+    }
+    if (formData.startDate && formData.endDate && formData.endDate < formData.startDate) {
+      errors.endDate = 'End date must be on or after start date'
+    }
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!validate()) return
     setSubmitting(true)
     setError(null)
     try {
@@ -106,11 +123,17 @@ export default function TimeOffPage() {
                 type="date"
                 required
                 value={formData.startDate}
-                onChange={(e) =>
+                onChange={(e) => {
                   setFormData({ ...formData, startDate: e.target.value })
-                }
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+                  setFormErrors((prev) => ({ ...prev, startDate: '' }))
+                }}
+                className={`w-full bg-gray-800 border rounded-lg px-4 py-2 text-sm focus:outline-none ${
+                  formErrors.startDate ? 'border-red-500' : 'border-gray-700 focus:border-amber-600'
+                }`}
               />
+              {formErrors.startDate && (
+                <p className="text-red-500 text-xs mt-1">{formErrors.startDate}</p>
+              )}
             </div>
             <div>
               <label className="block text-sm text-gray-500 mb-1">End Date</label>
@@ -118,11 +141,17 @@ export default function TimeOffPage() {
                 type="date"
                 required
                 value={formData.endDate}
-                onChange={(e) =>
+                onChange={(e) => {
                   setFormData({ ...formData, endDate: e.target.value })
-                }
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+                  setFormErrors((prev) => ({ ...prev, endDate: '' }))
+                }}
+                className={`w-full bg-gray-800 border rounded-lg px-4 py-2 text-sm focus:outline-none ${
+                  formErrors.endDate ? 'border-red-500' : 'border-gray-700 focus:border-amber-600'
+                }`}
               />
+              {formErrors.endDate && (
+                <p className="text-red-500 text-xs mt-1">{formErrors.endDate}</p>
+              )}
             </div>
           </div>
           <div>

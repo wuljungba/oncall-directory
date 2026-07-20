@@ -56,6 +56,12 @@ builder.Services.AddCors(options =>
               .AllowCredentials());
 });
 
+// ── Telemetry ──
+builder.Services.AddApplicationInsightsTelemetry(options =>
+{
+    options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"] ?? string.Empty;
+});
+
 // ── Health Checks ──
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database");
