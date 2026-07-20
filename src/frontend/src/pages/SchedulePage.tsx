@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { ChevronLeft, ChevronRight, Clock, UserPlus } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Clock } from 'lucide-react'
 import { scheduleApi } from '@/services/api'
 import type { Schedule, Shift } from '@/types'
 
@@ -34,8 +34,6 @@ export default function SchedulePage() {
     d.setDate(d.getDate() + i)
     return d
   })
-
-  const hours = Array.from({ length: 24 }, (_, i) => i)
 
   const getShiftForCell = (day: Date, hour: number) => {
     return shifts.find((s) => {

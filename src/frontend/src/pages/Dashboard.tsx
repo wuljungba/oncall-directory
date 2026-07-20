@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Clock, Phone, Users, AlertTriangle } from 'lucide-react'
 import { scheduleApi, directoryApi } from '@/services/api'
-import type { Shift, Employee } from '@/types'
+import type { Shift } from '@/types'
 
 interface OnCallSummary {
   employeeName: string
@@ -14,13 +14,12 @@ interface OnCallSummary {
 
 export default function Dashboard() {
   const [onCallNow, setOnCallNow] = useState<OnCallSummary[]>([])
-  const [departments, setDepartments] = useState<{ id: number; name: string }[]>([])
   const [stats, setStats] = useState({ onCall: 0, departments: 0, employees: 0 })
 
   useEffect(() => {
     async function load() {
       try {
-        const [shifts, depts] = await Promise.all([
+        const [shifts, employees] = await Promise.all([
           scheduleApi.getOnCall(),
           directoryApi.search(''),
         ])
@@ -38,7 +37,7 @@ export default function Dashboard() {
         setStats({
           onCall: shifts.length,
           departments: 6,
-          employees: depts.length,
+          employees: employees.length,
         })
       } catch (err) {
         console.error('Failed to load dashboard:', err)

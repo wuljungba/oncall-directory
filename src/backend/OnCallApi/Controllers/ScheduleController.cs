@@ -79,7 +79,7 @@ public class ScheduleController : ControllerBase
     public async Task<ActionResult<ShiftSwap>> RequestSwap([FromBody] SwapRequest request)
     {
         var swap = await _scheduleService.RequestSwapAsync(
-            request.ShiftId, request.RequestedById, request.ReplacementUserId, request.Reason);
+            request.ShiftId, request.RequestedById, request.ReplacementUserId, request.Reason ?? string.Empty);
 
         await _hub.Clients.All.SendAsync("SwapRequested", swap);
         return CreatedAtAction(nameof(RequestSwap), swap);
@@ -116,15 +116,15 @@ public class ScheduleController : ControllerBase
 // ── Request DTOs ──
 
 public record AssignShiftRequest(
-    Guid EmployeeId,
-    DateTime StartTime,
-    DateTime EndTime,
-    string Tier = "primary"
+    [Required] Guid EmployeeId,
+    [Required] DateTime StartTime,
+    [Required] DateTime EndTime,
+    [MaxLength(20)] string Tier = "primary"
 );
 
 public record SwapRequest(
-    int ShiftId,
-    Guid RequestedById,
+    [Required] int ShiftId,
+    [Required] Guid RequestedById,
     Guid? ReplacementUserId,
-    string Reason
+    [MaxLength(500)] string? Reason
 );

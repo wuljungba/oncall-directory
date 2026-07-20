@@ -2,7 +2,6 @@ import {
   PublicClientApplication,
   type AccountInfo,
   type InteractionRequiredAuthError,
-  InteractionStatus,
 } from '@azure/msal-browser'
 
 const MSAL_CONFIG = {

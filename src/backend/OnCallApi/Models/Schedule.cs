@@ -3,9 +3,15 @@ namespace OnCallApi.Models;
 public class Schedule
 {
     public int Id { get; set; }
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
+
     public int DepartmentId { get; set; }
     public Department Department { get; set; } = null!;
+
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string RotationType { get; set; } = "weekly"; // weekly, biweekly, monthly
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }

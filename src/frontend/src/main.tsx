@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { MsalProvider } from '@azure/msal-react'
 import { msalInstance } from '@/services/auth'
 import App from './App'
+import ErrorBoundary from './components/ErrorBoundary'
 import './index.css'
 
 msalInstance.initialize().then(() => {
@@ -11,7 +12,9 @@ msalInstance.initialize().then(() => {
     <React.StrictMode>
       <MsalProvider instance={msalInstance}>
         <BrowserRouter>
-          <App />
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
         </BrowserRouter>
       </MsalProvider>
     </React.StrictMode>

@@ -9,6 +9,8 @@ public class ShiftSwap
     public Employee RequestedBy { get; set; } = null!;
     public Guid? ReplacementUserId { get; set; }
     public Employee? ReplacementUser { get; set; }
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string Status { get; set; } = "pending"; // pending, approved, rejected, cancelled
     public string? Reason { get; set; }
     public Guid? ApprovedById { get; set; }

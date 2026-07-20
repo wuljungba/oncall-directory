@@ -7,7 +7,12 @@ public class TimeOff
     public Employee Employee { get; set; } = null!;
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string Type { get; set; } = "pto"; // pto, cme, holiday, sick
+
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string Status { get; set; } = "pending"; // pending, approved, denied
     public string? Notes { get; set; }
     public Guid? ApprovedById { get; set; }

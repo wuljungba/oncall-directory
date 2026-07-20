@@ -4,15 +4,40 @@ public class Employee
 {
     public Guid Id { get; set; } = Guid.NewGuid();
     public string AzureAdObjectId { get; set; } = string.Empty;
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(100)]
     public string FirstName { get; set; } = string.Empty;
+
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(100)]
     public string LastName { get; set; } = string.Empty;
+
+    [MaxLength(200)]
     public string? Title { get; set; }
+
+    [MaxLength(200)]
     public string? Specialty { get; set; }
+
+    [MaxLength(100)]
     public string? ClinicalRole { get; set; }
+
+    [Required(AllowEmptyStrings = false)]
+    [EmailAddress]
+    [MaxLength(256)]
     public string Email { get; set; } = string.Empty;
+
+    [Phone]
+    [MaxLength(50)]
     public string? OfficePhone { get; set; }
+
+    [Phone]
+    [MaxLength(50)]
     public string? MobilePhone { get; set; }
+
+    [MaxLength(50)]
     public string? PagerNumber { get; set; }
+
+    [MaxLength(200)]
     public string? OfficeLocation { get; set; }
     public int? DepartmentId { get; set; }
     public Department? Department { get; set; }

@@ -3,7 +3,12 @@ namespace OnCallApi.Models;
 public class PhoneTree
 {
     public int Id { get; set; }
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
+
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string TreeType { get; set; } = "department"; // emergency, department, oncall, admin
     public int? DepartmentId { get; set; }
     public Department? Department { get; set; }

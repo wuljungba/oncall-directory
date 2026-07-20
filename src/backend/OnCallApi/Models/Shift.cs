@@ -9,7 +9,12 @@ public class Shift
     public Employee Employee { get; set; } = null!;
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string Tier { get; set; } = "primary"; // primary, secondary, tertiary
+
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(20)]
     public string Status { get; set; } = "scheduled"; // scheduled, swapped, covered, gap
     public string? Notes { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

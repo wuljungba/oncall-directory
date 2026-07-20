@@ -56,6 +56,10 @@ builder.Services.AddCors(options =>
               .AllowCredentials());
 });
 
+// ── Health Checks ──
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>("database");
+
 // ── Swagger ──
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
@@ -64,6 +68,7 @@ builder.Services.AddControllers();
 var app = builder.Build();
 
 // ── Middleware Pipeline ──
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
@@ -78,6 +83,26 @@ if (app.Environment.IsDevelopment())
 
 // ── Controllers ──
 app.MapControllers();
+
+// ── Health Checks ──
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResponseWriter = async (context, report) =>
+    {
+        context.Response.ContentType = "application/json";
+        var result = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.Select(e => new
+            {
+                name = e.Key,
+                status = e.Value.Status.ToString(),
+                description = e.Value.Description
+            })
+        });
+        await context.Response.WriteAsync(result);
+    }
+});
 
 // ── SignalR Hubs ──
 app.MapHub<OnCallNotificationHub>("/hubs/notifications");
