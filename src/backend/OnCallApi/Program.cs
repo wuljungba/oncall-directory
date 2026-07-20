@@ -37,6 +37,24 @@ else
         options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 }
 
+// ── Rate Limiting ──
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("Api", opt =>
+    {
+        opt.PermitLimit = 100;
+        opt.Window = TimeSpan.FromMinutes(1);
+    });
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
+// ── Response Compression ──
+builder.Services.AddResponseCompression(options =>
+{
+    options.Providers.Add<BrotliCompressionProvider>();
+    options.Providers.Add<GzipCompressionProvider>();
+});
+
 // ── Application Services ──
 builder.Services.AddScoped<IGraphApiService, GraphApiService>();
 builder.Services.AddScoped<IScheduleService, ScheduleService>();
@@ -75,6 +93,8 @@ var app = builder.Build();
 
 // ── Middleware Pipeline ──
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseResponseCompression();
+app.UseRateLimiter();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
