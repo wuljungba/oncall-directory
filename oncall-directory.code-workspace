@@ -1,0 +1,7 @@
+{
+  "folders": [
+    { "path": "src/frontend" },
+    { "path": "src/backend/OnCallApi" }
+  ],
+  "settings": {}
+}

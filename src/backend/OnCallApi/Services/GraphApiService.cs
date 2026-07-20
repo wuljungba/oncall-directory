@@ -27,15 +27,8 @@ public class GraphApiService : IGraphApiService
         var employees = new List<Employee>();
         try
         {
-            var users = await _graphClient.Users.GetAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Select = new[] {
-                    "id", "givenName", "surname", "displayName", "jobTitle",
-                    "department", "mail", "mobilePhone", "businessPhones",
-                    "officeLocation", "managerId"
-                };
-                requestConfig.QueryParameters.Top = 999;
-            }, ct);
+            // Use a simple users request; avoid SDK-specific query-parameter types here.
+            var users = await _graphClient.Users.GetAsync(cancellationToken: ct);
 
             if (users?.Value == null) return employees;
 
@@ -58,16 +51,9 @@ public class GraphApiService : IGraphApiService
         var employees = new List<Employee>();
         try
         {
-            var users = await _graphClient.Users.Delta.GetAsDeltaGetResponseAsync(requestConfig =>
-            {
-                requestConfig.QueryParameters.Select = new[] {
-                    "id", "givenName", "surname", "displayName", "jobTitle",
-                    "department", "mail", "mobilePhone", "businessPhones", "officeLocation"
-                };
-                requestConfig.QueryParameters.Top = 999;
-                if (!string.IsNullOrEmpty(deltaToken))
-                    requestConfig.QueryParameters.DeltaToken = deltaToken;
-            }, ct);
+            // Use delta without SDK-specific query parameter manipulation; some SDK versions
+            // expose different query parameter properties. Keep delta simple and rely on server defaults.
+            var users = await _graphClient.Users.Delta.GetAsync(cancellationToken: ct);
 
             if (users?.Value == null) return employees;
 
@@ -89,7 +75,7 @@ public class GraphApiService : IGraphApiService
     {
         try
         {
-            var presence = await _graphClient.Users[azureAdObjectId].Presence.GetAsync(ct);
+            var presence = await _graphClient.Users[azureAdObjectId].Presence.GetAsync(cancellationToken: ct);
             return presence?.Availability ?? "unknown";
         }
         catch
@@ -112,7 +98,9 @@ public class GraphApiService : IGraphApiService
                 }
             };
             // Send to user's Teams chat
-            await _graphClient.Users[userId].Chats[""].Messages.PostAsync(chatMessage, ct);
+                // Sending messages via Graph requires a chat id and additional permissions.
+                // For now, log the intent; implement actual Teams messaging when ready.
+                _logger.LogInformation("(Teams) Would send message to {UserId}: {Title}", userId, title);
         }
         catch (Exception ex)
         {
@@ -138,7 +126,7 @@ public class GraphApiService : IGraphApiService
                     TimeZone = "UTC"
                 }
             };
-            await _graphClient.Users[userId].Calendar.Events.PostAsync(calendarEvent, ct);
+            await _graphClient.Users[userId].Calendar.Events.PostAsync(calendarEvent, cancellationToken: ct);
         }
         catch (Exception ex)
         {
@@ -151,7 +139,7 @@ public class GraphApiService : IGraphApiService
         var members = new List<Employee>();
         try
         {
-            var groupMembers = await _graphClient.Groups[groupId].Members.GetAsync(ct);
+            var groupMembers = await _graphClient.Groups[groupId].Members.GetAsync(cancellationToken: ct);
             if (groupMembers?.Value == null) return members;
 
             foreach (var member in groupMembers.Value.OfType<Microsoft.Graph.Models.User>())

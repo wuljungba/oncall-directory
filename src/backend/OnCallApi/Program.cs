@@ -1,6 +1,7 @@
 using OnCallApi.Data;
 using OnCallApi.Services;
 using OnCallApi.Middleware;
+using OnCallApi.Hubs;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -24,8 +25,17 @@ builder.Services.AddAuthorization(options =>
 });
 
 // ── Database ──
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+if (builder.Environment.IsDevelopment())
+{
+    // Use in-memory DB for local development when SQL LocalDB is not available.
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseInMemoryDatabase("OnCallDb"));
+}
+else
+{
+    builder.Services.AddDbContext<AppDbContext>(options =>
+        options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+}
 
 // ── Application Services ──
 builder.Services.AddScoped<IGraphApiService, GraphApiService>();
@@ -49,6 +59,7 @@ builder.Services.AddCors(options =>
 // ── Swagger ──
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddControllers();
 
 var app = builder.Build();
 
@@ -71,12 +82,16 @@ app.MapControllers();
 // ── SignalR Hubs ──
 app.MapHub<OnCallNotificationHub>("/hubs/notifications");
 
-// ── Auto-migrate (dev only) ──
+// ── Auto-migrate (only for relational providers)
 if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    await db.Database.MigrateAsync();
+    var provider = db.Database.ProviderName ?? string.Empty;
+    if (!provider.Contains("InMemory", StringComparison.OrdinalIgnoreCase))
+    {
+        await db.Database.MigrateAsync();
+    }
 }
 
 app.Run();

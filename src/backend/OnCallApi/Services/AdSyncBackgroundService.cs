@@ -20,6 +20,12 @@ public class AdSyncBackgroundService : BackgroundService
     {
         _logger.LogInformation("AD Sync background service started (interval: {Interval}m)", _intervalMinutes);
 
+        if (_intervalMinutes <= 0)
+        {
+            _logger.LogInformation("AD Sync is disabled (Sync:AdSyncIntervalMinutes <= 0)");
+            return;
+        }
+
         // Run initial sync immediately
         await SyncUsersAsync(stoppingToken);
 

@@ -14,7 +14,7 @@ public class Employee
     public string? MobilePhone { get; set; }
     public string? PagerNumber { get; set; }
     public string? OfficeLocation { get; set; }
-    public Guid? DepartmentId { get; set; }
+    public int? DepartmentId { get; set; }
     public Department? Department { get; set; }
     public Guid? ManagerId { get; set; }
     public Employee? Manager { get; set; }
