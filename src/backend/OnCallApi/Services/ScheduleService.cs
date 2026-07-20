@@ -127,6 +127,20 @@ public class ScheduleService : IScheduleService
         return await query.OrderBy(s => s.Tier).ToListAsync();
     }
 
+    public async Task<List<TimeOff>> GetTimeOffForCurrentUserAsync(string azureAdObjectId)
+    {
+        var employee = await _db.Employees
+            .FirstOrDefaultAsync(e => e.AzureAdObjectId == azureAdObjectId);
+
+        if (employee == null)
+            return new List<TimeOff>();
+
+        return await _db.TimeOffs
+            .Where(t => t.EmployeeId == employee.Id)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync();
+    }
+
     public async Task<List<TimeOff>> GetTimeOffAsync(Guid employeeId)
     {
         return await _db.TimeOffs

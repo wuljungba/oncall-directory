@@ -13,5 +13,6 @@ public interface IScheduleService
     Task<ShiftSwap> ApproveSwapAsync(int swapId, Guid approvedById);
     Task<List<Shift>> GetCurrentOnCallAsync(int? departmentId = null);
     Task<List<TimeOff>> GetTimeOffAsync(Guid employeeId);
+    Task<List<TimeOff>> GetTimeOffForCurrentUserAsync(string azureAdObjectId);
     Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff);
 }

@@ -81,6 +81,8 @@ export const scheduleApi = {
     fetchApi<ShiftSwap>(`/schedule/swaps/${id}/approve`, { method: 'POST' }),
   getTimeOff: (employeeId: string) =>
     fetchApi<TimeOff[]>(`/schedule/time-off/${employeeId}`),
+  getMyTimeOff: () =>
+    fetchApi<TimeOff[]>('/schedule/time-off/me'),
   requestTimeOff: (timeOff: Partial<TimeOff>) =>
     fetchApi<TimeOff>('/schedule/time-off', {
       method: 'POST',
