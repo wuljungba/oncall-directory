@@ -48,6 +48,38 @@ public class ScheduleController : ControllerBase
         return CreatedAtAction(nameof(GetSchedule), new { id = created.Id }, created);
     }
 
+    /// <summary>Update an existing schedule.</summary>
+    [HttpPut("{id}")]
+    [Authorize(Policy = "RequireScheduler")]
+    public async Task<ActionResult<Schedule>> UpdateSchedule(int id, Schedule schedule)
+    {
+        if (id != schedule.Id)
+            return BadRequest(new { error = "Route ID and body ID must match." });
+
+        var updated = await _scheduleService.UpdateScheduleAsync(schedule);
+        return Ok(updated);
+    }
+
+    /// <summary>Delete a schedule.</summary>
+    [HttpDelete("{id}")]
+    [Authorize(Policy = "RequireAdmin")]
+    public async Task<ActionResult> DeleteSchedule(int id)
+    {
+        await _scheduleService.DeleteScheduleAsync(id);
+        return NoContent();
+    }
+
+    /// <summary>Auto-generate shifts for a schedule for N weeks.</summary>
+    [HttpPost("{scheduleId}/generate")]
+    [Authorize(Policy = "RequireScheduler")]
+    public async Task<ActionResult<List<Shift>>> GenerateShifts(int scheduleId, [FromQuery] int weeks = 4)
+    {
+        var shifts = await _scheduleService.GenerateShiftsAsync(scheduleId, weeks);
+
+        await _hub.Clients.All.SendAsync("ShiftsGenerated", new { scheduleId, count = shifts.Count });
+        return Ok(shifts);
+    }
+
     /// <summary>Get shifts for a schedule within an optional date range.</summary>
     [HttpGet("{scheduleId}/shifts")]
     public async Task<ActionResult<List<Shift>>> GetShifts(int scheduleId, [FromQuery] DateTime? from, [FromQuery] DateTime? to)

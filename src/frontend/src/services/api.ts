@@ -62,6 +62,17 @@ export const scheduleApi = {
       method: 'POST',
       body: JSON.stringify(schedule),
     }),
+  update: (id: number, schedule: Partial<Schedule>) =>
+    fetchApi<Schedule>(`/schedule/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(schedule),
+    }),
+  delete: (id: number) =>
+    fetchApi<void>(`/schedule/${id}`, { method: 'DELETE' }),
+  generateShifts: (scheduleId: number, weeks: number = 4) =>
+    fetchApi<Shift[]>(`/schedule/${scheduleId}/generate?weeks=${weeks}`, {
+      method: 'POST',
+    }),
   getShifts: (scheduleId: number, from?: string, to?: string) => {
     const params = new URLSearchParams()
     if (from) params.set('from', from)

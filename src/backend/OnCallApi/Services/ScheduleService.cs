@@ -149,6 +149,98 @@ public class ScheduleService : IScheduleService
             .ToListAsync();
     }
 
+    public async Task<Schedule> UpdateScheduleAsync(Schedule schedule)
+    {
+        var existing = await _db.Schedules.FindAsync(schedule.Id)
+            ?? throw new KeyNotFoundException($"Schedule {schedule.Id} not found");
+
+        existing.Name = schedule.Name;
+        existing.DepartmentId = schedule.DepartmentId;
+        existing.RotationType = schedule.RotationType;
+        existing.StartDate = schedule.StartDate;
+        existing.EndDate = schedule.EndDate;
+        existing.Notes = schedule.Notes;
+        existing.IsActive = schedule.IsActive;
+        existing.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Updated schedule {Id}: {Name}", existing.Id, existing.Name);
+        return existing;
+    }
+
+    public async Task DeleteScheduleAsync(int id)
+    {
+        var schedule = await _db.Schedules.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Schedule {id} not found");
+
+        _db.Schedules.Remove(schedule);
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Deleted schedule {Id}: {Name}", id, schedule.Name);
+    }
+
+    public async Task<List<Shift>> GenerateShiftsAsync(int scheduleId, int weeks)
+    {
+        var schedule = await _db.Schedules
+            .Include(s => s.Shifts)
+            .FirstOrDefaultAsync(s => s.Id == scheduleId)
+            ?? throw new KeyNotFoundException($"Schedule {scheduleId} not found");
+
+        // Find employees in the same department to auto-assign
+        var employees = await _db.Employees
+            .Where(e => e.DepartmentId == schedule.DepartmentId && e.IsActive)
+            .ToListAsync();
+
+        if (employees.Count == 0)
+        {
+            _logger.LogWarning("No active employees found for department {DeptId} to generate shifts", schedule.DepartmentId);
+            return [];
+        }
+
+        var generatedShifts = new List<Shift>();
+        var startDate = DateTime.UtcNow.Date;
+        var endDate = startDate.AddDays(weeks * 7);
+        var tiers = new[] { "primary", "secondary", "tertiary" };
+
+        // Generate 24-hour shifts for each day, rotating through employees
+        for (var day = startDate; day < endDate; day = day.AddDays(1))
+        {
+            // Skip existing shifts for this date
+            if (schedule.Shifts.Any(s => s.StartTime.Date == day.Date))
+                continue;
+
+            // 7a-7p day shift, 7p-7a night shift
+            var shiftsForDay = new[]
+            {
+                new { Start = day.AddHours(7), End = day.AddHours(19), Tier = 0 },
+                new { Start = day.AddHours(19), End = day.AddDays(1).AddHours(7), Tier = 1 },
+            };
+
+            foreach (var shiftDef in shiftsForDay)
+            {
+                var empIndex = (generatedShifts.Count + day.DayOfYear) % employees.Count;
+                var employee = employees[empIndex];
+
+                generatedShifts.Add(new Shift
+                {
+                    ScheduleId = scheduleId,
+                    EmployeeId = employee.Id,
+                    StartTime = shiftDef.Start,
+                    EndTime = shiftDef.End,
+                    Tier = tiers[shiftDef.Tier],
+                    Status = "scheduled"
+                });
+            }
+        }
+
+        _db.Shifts.AddRange(generatedShifts);
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Generated {Count} shifts for schedule {ScheduleId} over {Weeks} weeks",
+            generatedShifts.Count, scheduleId, weeks);
+
+        return generatedShifts;
+    }
+
     public async Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff)
     {
         _db.TimeOffs.Add(timeOff);

@@ -15,4 +15,7 @@ public interface IScheduleService
     Task<List<TimeOff>> GetTimeOffAsync(Guid employeeId);
     Task<List<TimeOff>> GetTimeOffForCurrentUserAsync(string azureAdObjectId);
     Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff);
+    Task<Schedule> UpdateScheduleAsync(Schedule schedule);
+    Task DeleteScheduleAsync(int id);
+    Task<List<Shift>> GenerateShiftsAsync(int scheduleId, int weeks);
 }
