@@ -105,6 +105,13 @@ export interface PhoneTreeNode {
   timeoutSeconds: number
 }
 
+export interface AppSetting {
+  key: string
+  value: string
+  description?: string
+  updatedAt: string
+}
+
 export interface OnCallStatus {
   employeeId: string
   employeeName: string

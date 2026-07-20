@@ -16,6 +16,7 @@ public class AppDbContext : DbContext
     public DbSet<PhoneTree> PhoneTrees => Set<PhoneTree>();
     public DbSet<PhoneTreeNode> PhoneTreeNodes => Set<PhoneTreeNode>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<AppSetting> AppSettings => Set<AppSetting>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

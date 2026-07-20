@@ -1,4 +1,5 @@
 import type {
+  AppSetting,
   Department,
   Employee,
   Schedule,
@@ -87,6 +88,17 @@ export const scheduleApi = {
     fetchApi<TimeOff>('/schedule/time-off', {
       method: 'POST',
       body: JSON.stringify(timeOff),
+    }),
+}
+
+// ── Settings ──
+export const settingsApi = {
+  getAll: () => fetchApi<AppSetting[]>('/settings'),
+  get: (key: string) => fetchApi<AppSetting>(`/settings/${encodeURIComponent(key)}`),
+  upsert: (key: string, value: string, description?: string) =>
+    fetchApi<AppSetting>(`/settings/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value, description }),
     }),
 }
 
