@@ -12,4 +12,11 @@ public interface IDirectoryService
     Task<PhoneTree?> GetPhoneTreeByIdAsync(int id);
     Task<List<Employee>> GetOnCallEmployeesAsync(int? departmentId = null);
     Task UpdatePresenceAsync(Guid employeeId, string presence);
+    Task<PhoneTree> CreatePhoneTreeAsync(PhoneTree tree);
+    Task<PhoneTree> UpdatePhoneTreeAsync(PhoneTree tree);
+    Task DeletePhoneTreeAsync(int id);
+    Task<PhoneTreeNode> AddNodeAsync(int treeId, PhoneTreeNode node);
+    Task UpdateNodeAsync(PhoneTreeNode node);
+    Task RemoveNodeAsync(int nodeId);
+    Task ReorderNodesAsync(int treeId, List<int> nodeIds);
 }

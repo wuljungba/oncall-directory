@@ -93,6 +93,69 @@ public class DirectoryService : IDirectoryService
         return await query.ToListAsync();
     }
 
+    public async Task<PhoneTree> CreatePhoneTreeAsync(PhoneTree tree)
+    {
+        _db.PhoneTrees.Add(tree);
+        await _db.SaveChangesAsync();
+        return tree;
+    }
+
+    public async Task<PhoneTree> UpdatePhoneTreeAsync(PhoneTree tree)
+    {
+        var existing = await _db.PhoneTrees.FindAsync(tree.Id)
+            ?? throw new KeyNotFoundException($"Phone tree {tree.Id} not found");
+        _db.Entry(existing).CurrentValues.SetValues(tree);
+        await _db.SaveChangesAsync();
+        return existing;
+    }
+
+    public async Task DeletePhoneTreeAsync(int id)
+    {
+        var tree = await _db.PhoneTrees.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Phone tree {id} not found");
+        _db.PhoneTrees.Remove(tree);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task<PhoneTreeNode> AddNodeAsync(int treeId, PhoneTreeNode node)
+    {
+        node.PhoneTreeId = treeId;
+        _db.PhoneTreeNodes.Add(node);
+        await _db.SaveChangesAsync();
+        return node;
+    }
+
+    public async Task UpdateNodeAsync(PhoneTreeNode node)
+    {
+        var existing = await _db.PhoneTreeNodes.FindAsync(node.Id)
+            ?? throw new KeyNotFoundException($"Phone tree node {node.Id} not found");
+        _db.Entry(existing).CurrentValues.SetValues(node);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task RemoveNodeAsync(int nodeId)
+    {
+        var node = await _db.PhoneTreeNodes.FindAsync(nodeId)
+            ?? throw new KeyNotFoundException($"Phone tree node {nodeId} not found");
+        _db.PhoneTreeNodes.Remove(node);
+        await _db.SaveChangesAsync();
+    }
+
+    public async Task ReorderNodesAsync(int treeId, List<int> nodeIds)
+    {
+        var nodes = await _db.PhoneTreeNodes
+            .Where(n => n.PhoneTreeId == treeId)
+            .ToListAsync();
+
+        for (int i = 0; i < nodeIds.Count; i++)
+        {
+            var node = nodes.FirstOrDefault(n => n.Id == nodeIds[i]);
+            if (node != null) node.Order = i + 1;
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
     public async Task UpdatePresenceAsync(Guid employeeId, string presence)
     {
         var employee = await _db.Employees.FindAsync(employeeId);

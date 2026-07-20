@@ -9,6 +9,7 @@ import type {
   ShiftSwap,
   TimeOff,
   PhoneTree,
+  PhoneTreeNode,
 } from '@/types'
 
 interface ImportResult {
@@ -199,4 +200,23 @@ export const directoryApi = {
     fetchApi<Employee[]>(
       `/directory/on-call${departmentId ? `?departmentId=${departmentId}` : ''}`
     ),
+}
+
+// ── Phone Trees (CRUD) ──
+export const phoneTreesApi = {
+  getAll: (departmentId?: number) =>
+    fetchApi<PhoneTree[]>(`/phone-trees${departmentId ? `?departmentId=${departmentId}` : ''}`),
+  get: (id: number) => fetchApi<PhoneTree>(`/phone-trees/${id}`),
+  create: (tree: Partial<PhoneTree>) =>
+    fetchApi<PhoneTree>('/phone-trees', { method: 'POST', body: JSON.stringify(tree) }),
+  update: (id: number, tree: Partial<PhoneTree>) =>
+    fetchApi<PhoneTree>(`/phone-trees/${id}`, { method: 'PUT', body: JSON.stringify(tree) }),
+  delete: (id: number) => fetchApi<void>(`/phone-trees/${id}`, { method: 'DELETE' }),
+  addNode: (treeId: number, node: Partial<PhoneTreeNode>) =>
+    fetchApi<PhoneTreeNode>(`/phone-trees/${treeId}/nodes`, { method: 'POST', body: JSON.stringify(node) }),
+  updateNode: (nodeId: number, node: Partial<PhoneTreeNode>) =>
+    fetchApi<void>(`/phone-trees/nodes/${nodeId}`, { method: 'PUT', body: JSON.stringify(node) }),
+  removeNode: (nodeId: number) => fetchApi<void>(`/phone-trees/nodes/${nodeId}`, { method: 'DELETE' }),
+  reorder: (treeId: number, nodeIds: number[]) =>
+    fetchApi<void>(`/phone-trees/${treeId}/reorder`, { method: 'POST', body: JSON.stringify(nodeIds) }),
 }
