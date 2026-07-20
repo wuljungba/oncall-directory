@@ -12,28 +12,29 @@
     "lint": "eslint src/"
   },
   "dependencies": {
+    "@azure/msal-browser": "^3.20.0",
+    "@azure/msal-react": "^2.0.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@microsoft/signalr": "^10.0.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "lucide-react": "^0.441.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.0",
-    "@microsoft/microsoft-graph-client": "^3.0.7",
-    "@azure/msal-browser": "^3.20.0",
-    "@azure/msal-react": "^2.0.0",
-    "date-fns": "^3.6.0",
-    "lucide-react": "^0.441.0",
-    "clsx": "^2.1.1",
     "tailwind-merge": "^2.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.47.0",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
+    "eslint": "^9.9.1",
     "postcss": "^8.4.41",
     "tailwindcss": "^3.4.10",
     "typescript": "^5.5.4",
     "vite": "^5.4.2",
-    "vitest": "^2.0.5",
-    "@playwright/test": "^1.47.0",
-    "eslint": "^9.9.1"
+    "vitest": "^2.0.5"
   }
 }

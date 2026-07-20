@@ -1,4 +1,5 @@
 import { Outlet, NavLink } from 'react-router-dom'
+import { useSignalR } from '@/hooks/useSignalR'
 import {
   Calendar,
   Phone,
@@ -25,6 +26,7 @@ const navItems = [
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { user, signOut } = useAuth()
+  const { isConnected } = useSignalR()
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
@@ -102,6 +104,17 @@ export default function Layout() {
           <h2 className="text-sm font-medium text-gray-400">
             On-Call Schedule & Directory
           </h2>
+          <div className="ml-auto flex items-center gap-2">
+            <span
+              className={`inline-block w-2 h-2 rounded-full ${
+                isConnected ? 'bg-green-500' : 'bg-gray-600'
+              }`}
+              title={isConnected ? 'Connected (live updates)' : 'Offline'}
+            />
+            <span className="text-xs text-gray-600 hidden sm:inline">
+              {isConnected ? 'Live' : 'Offline'}
+            </span>
+          </div>
         </header>
 
         <main className="flex-1 p-6 overflow-auto">

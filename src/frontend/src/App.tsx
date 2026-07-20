@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import Layout from '@/components/Layout'
+import { SignalRProvider } from '@/hooks/useSignalR'
 import LoginPage from '@/pages/LoginPage'
 import Dashboard from '@/pages/Dashboard'
 import SchedulePage from '@/pages/SchedulePage'
@@ -26,7 +27,9 @@ export default function App() {
         path="/"
         element={
           <ProtectedRoute>
-            <Layout />
+            <SignalRProvider>
+              <Layout />
+            </SignalRProvider>
           </ProtectedRoute>
         }
       >
