@@ -9,6 +9,13 @@ import type {
   PhoneTree,
 } from '@/types'
 
+interface ImportResult {
+  totalRows: number
+  imported: number
+  errors: string[]
+  isVAlid: boolean
+}
+
 const API_BASE = '/api'
 
 async function fetchApi<T>(
@@ -89,6 +96,39 @@ export const scheduleApi = {
       method: 'POST',
       body: JSON.stringify(timeOff),
     }),
+}
+
+// ── Bulk Import ──
+async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
+  const accessToken = sessionStorage.getItem('accessToken')
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const headers: HeadersInit = {
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  }
+
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const error = await res.text()
+    throw new Error(error || `API error: ${res.status}`)
+  }
+
+  return res.json()
+}
+
+export const importApi = {
+  validateEmployees: (file: File) => uploadFile<ImportResult>('/import/validate/employees', file),
+  importEmployees: (file: File) => uploadFile<ImportResult>('/import/employees', file),
+  validateShifts: (scheduleId: number, file: File) =>
+    uploadFile<ImportResult>(`/import/validate/schedule/${scheduleId}`, file),
+  importShifts: (scheduleId: number, file: File) =>
+    uploadFile<ImportResult>(`/import/schedule/${scheduleId}`, file),
 }
 
 // ── Settings ──

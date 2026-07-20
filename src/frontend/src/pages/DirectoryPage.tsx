@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Search, Phone, Mail, MapPin, ShieldCheck } from 'lucide-react'
-import { directoryApi } from '@/services/api'
+import { Search, Phone, Mail, MapPin, ShieldCheck, Upload } from 'lucide-react'
+import { directoryApi, importApi } from '@/services/api'
+import ImportModal from '@/components/ImportModal'
 import type { Employee } from '@/types'
 
 export default function DirectoryPage() {
@@ -8,6 +9,7 @@ export default function DirectoryPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [loading, setLoading] = useState(true)
+  const [showImport, setShowImport] = useState(false)
 
   useEffect(() => {
     directoryApi
@@ -43,7 +45,16 @@ export default function DirectoryPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Phone Directory</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Phone Directory</h1>
+        <button
+          onClick={() => setShowImport(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+        >
+          <Upload className="w-4 h-4" />
+          Import CSV
+        </button>
+      </div>
 
       {/* Search */}
       <div className="relative">
@@ -188,6 +199,16 @@ export default function DirectoryPage() {
           )}
         </div>
       </div>
+
+      {/* Import Modal */}
+      <ImportModal
+        isOpen={showImport}
+        onClose={() => setShowImport(false)}
+        title="Import Employees"
+        description="Upload a CSV file with employee data. Columns: azureAdObjectId, firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId"
+        onValidate={(file) => importApi.validateEmployees(file)}
+        onImport={(file) => importApi.importEmployees(file)}
+      />
     </div>
   )
 }

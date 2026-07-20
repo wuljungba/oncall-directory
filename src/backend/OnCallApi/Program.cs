@@ -59,6 +59,7 @@ builder.Services.AddResponseCompression(options =>
 builder.Services.AddScoped<IGraphApiService, GraphApiService>();
 builder.Services.AddScoped<IScheduleService, ScheduleService>();
 builder.Services.AddScoped<IDirectoryService, DirectoryService>();
+builder.Services.AddScoped<BulkImportService>();
 builder.Services.AddHostedService<AdSyncBackgroundService>();
 
 // ── SignalR (real-time notifications) ──
