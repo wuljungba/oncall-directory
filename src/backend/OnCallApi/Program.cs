@@ -153,3 +153,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.Run();
+
+// Make Program accessible to integration tests
+public partial class Program { }
