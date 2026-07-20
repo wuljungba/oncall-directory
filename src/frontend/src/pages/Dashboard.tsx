@@ -82,7 +82,7 @@ export default function Dashboard() {
       </div>
 
       {/* Currently On Call */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl" aria-live="polite">
         <div className="px-5 py-4 border-b border-gray-800">
           <h2 className="font-semibold">Currently On Call</h2>
         </div>

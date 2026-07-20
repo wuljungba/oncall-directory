@@ -31,7 +31,7 @@ export default function Layout() {
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
       {/* Sidebar */}
-      <aside
+      <aside role="navigation" aria-label="Main navigation"
         className={`${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         } fixed inset-y-0 left-0 z-50 w-64 bg-gray-900 border-r border-gray-800 transition-transform lg:translate-x-0 lg:static lg:inset-auto`}
@@ -117,7 +117,7 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="flex-1 p-6 overflow-auto">
+        <main role="main" className="flex-1 p-6 overflow-auto" aria-label="Main content">
           <Outlet />
         </main>
       </div>

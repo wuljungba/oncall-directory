@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "staging"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "sqlAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-staging/providers/Microsoft.KeyVault/vaults/kv-oncall-staging"
+        },
+        "secretName": "sql-admin-password"
+      }
+    }
+  }
+}
