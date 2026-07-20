@@ -88,6 +88,9 @@ builder.Services.AddApplicationInsightsTelemetry(options =>
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<AppDbContext>("database");
 
+// ── FluentValidation ──
+builder.Services.AddValidatorsFromAssemblyContaining<OnCallApi.Validators.ScheduleValidator>();
+
 // ── Swagger ──
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

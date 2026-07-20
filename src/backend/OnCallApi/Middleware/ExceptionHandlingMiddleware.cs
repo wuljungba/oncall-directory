@@ -1,4 +1,4 @@
-using System.ComponentModel.DataAnnotations;
+using ValidationException = System.ComponentModel.DataAnnotations.ValidationException;
 using System.Text.Json;
 
 namespace OnCallApi.Middleware;
