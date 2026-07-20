@@ -6,7 +6,8 @@ namespace OnCallApi.Models;
 /// </summary>
 public class AppSetting
 {
-    /// <summary>The setting key, used as the lookup identifier.</summary>
+    /// <summary>The setting key, used as the lookup identifier and primary key.</summary>
+    [Key]
     [Required(AllowEmptyStrings = false)]
     [MaxLength(100)]
     public string Key { get; set; } = string.Empty;
