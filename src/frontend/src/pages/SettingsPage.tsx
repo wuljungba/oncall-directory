@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Save, AlertTriangle } from 'lucide-react'
-import { settingsApi } from '@/services/api'
+import { Save, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { settingsApi, integrationsApi } from '@/services/api'
+import { useToast } from '@/components/Toast'
 
 interface AppSettings {
   adSyncInterval: number
@@ -38,6 +39,9 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ synced: number; timestamp: string } | null>(null)
+  const { addToast } = useToast()
 
   useEffect(() => {
     loadSettings()
@@ -114,6 +118,23 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSyncNow() {
+    setSyncing(true)
+    setError(null)
+    try {
+      const result = await integrationsApi.syncAd()
+      const timestamp = new Date().toLocaleString()
+      setSyncResult({ synced: result.synced, timestamp })
+      addToast({ type: 'success', title: 'AD Sync Complete', description: `${result.synced} users synced successfully.` })
+    } catch (err) {
+      console.error('Failed to sync AD:', err)
+      setError('AD sync failed. Please check the Graph API configuration.')
+      addToast({ type: 'error', title: 'Sync Failed', description: 'Could not sync with Active Directory.' })
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -153,17 +174,35 @@ export default function SettingsPage() {
                 Automatically sync users every {settings.adSyncInterval} minutes
               </p>
             </div>
-            <input
-              type="range"
-              min="5"
-              max="60"
-              value={settings.adSyncInterval}
-              onChange={(e) =>
-                setSettings({ ...settings, adSyncInterval: Number(e.target.value) })
-              }
-              className="w-24"
-            />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSyncNow}
+                disabled={syncing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-xs transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+                {syncing ? 'Syncing...' : 'Sync Now'}
+              </button>
+              <input
+                type="range"
+                min="5"
+                max="60"
+                value={settings.adSyncInterval}
+                onChange={(e) =>
+                  setSettings({ ...settings, adSyncInterval: Number(e.target.value) })
+                }
+                className="w-24"
+              />
+            </div>
           </div>
+
+          {/* Sync history */}
+          {syncResult && (
+            <div className="flex items-center gap-2 text-xs text-green-400 bg-green-600/10 rounded-lg px-3 py-2">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              <span>Last sync: {syncResult.timestamp} — {syncResult.synced} users processed</span>
+            </div>
+          )}
 
           <div className="flex items-center justify-between">
             <div>

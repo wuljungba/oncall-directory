@@ -178,6 +178,24 @@ export const settingsApi = {
     }),
 }
 
+// ── Integrations ──
+export const integrationsApi = {
+  syncAd: () =>
+    fetchApi<{ synced: number }>('/integrations/sync/ad', { method: 'POST' }),
+  sendTeamsNotification: (userId: string, title: string, message: string) =>
+    fetchApi<{ sent: boolean }>('/integrations/notify/teams', {
+      method: 'POST',
+      body: JSON.stringify({ userId, title, message }),
+    }),
+  pushToCalendar: (userId: string, subject: string, startTime: string, endTime: string) =>
+    fetchApi<{ pushed: boolean }>('/integrations/calendar/push', {
+      method: 'POST',
+      body: JSON.stringify({ userId, subject, startTime, endTime }),
+    }),
+  getPresence: (userId: string) =>
+    fetchApi<{ userId: string; presence: string }>(`/integrations/presence/${userId}`),
+}
+
 // ── Directory ──
 export const directoryApi = {
   search: (q: string, departmentId?: number) => {

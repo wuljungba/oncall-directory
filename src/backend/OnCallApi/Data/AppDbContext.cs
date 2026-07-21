@@ -19,6 +19,8 @@ public class AppDbContext : DbContext
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<DutyHourRule> DutyHourRules => Set<DutyHourRule>();
     public DbSet<DutyHourViolation> DutyHourViolations => Set<DutyHourViolation>();
+    public DbSet<EscalationPolicy> EscalationPolicies => Set<EscalationPolicy>();
+    public DbSet<EscalationEvent> EscalationEvents => Set<EscalationEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

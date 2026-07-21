@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import Layout from '@/components/Layout'
+import { ToastProvider } from '@/components/Toast'
 import { SignalRProvider } from '@/hooks/useSignalR'
 import LoginPage from '@/pages/LoginPage'
 import Dashboard from '@/pages/Dashboard'
@@ -22,26 +23,28 @@ export default function App() {
   const auth = useAuth()
 
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage {...auth} />} />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <SignalRProvider>
-              <Layout />
-            </SignalRProvider>
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<Dashboard />} />
-        <Route path="schedule" element={<SchedulePage />} />
-        <Route path="directory" element={<DirectoryPage />} />
-        <Route path="phone-trees" element={<PhoneTreePage />} />
-        <Route path="time-off" element={<TimeOffPage />} />
-        <Route path="settings" element={<SettingsPage />} />
-        <Route path="compliance" element={<CompliancePage />} />
-      </Route>
-    </Routes>
+    <ToastProvider>
+      <Routes>
+        <Route path="/login" element={<LoginPage {...auth} />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <SignalRProvider>
+                <Layout />
+              </SignalRProvider>
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Dashboard />} />
+          <Route path="schedule" element={<SchedulePage />} />
+          <Route path="directory" element={<DirectoryPage />} />
+          <Route path="phone-trees" element={<PhoneTreePage />} />
+          <Route path="time-off" element={<TimeOffPage />} />
+          <Route path="settings" element={<SettingsPage />} />
+          <Route path="compliance" element={<CompliancePage />} />
+        </Route>
+      </Routes>
+    </ToastProvider>
   )
 }

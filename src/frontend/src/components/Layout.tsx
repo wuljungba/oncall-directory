@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import OnboardingWizard, { useOnboarding } from '@/components/OnboardingWizard'
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: Clock },
@@ -29,9 +30,14 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { user, signOut } = useAuth()
   const { isConnected } = useSignalR()
+  const { showOnboarding, checking, dismiss } = useOnboarding()
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
+      {/* Onboarding wizard for new users */}
+      {!checking && showOnboarding && (
+        <OnboardingWizard onComplete={dismiss} />
+      )}
       {/* Sidebar */}
       <aside role="navigation" aria-label="Main navigation"
         className={`${

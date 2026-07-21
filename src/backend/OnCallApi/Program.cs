@@ -55,16 +55,29 @@ builder.Services.AddResponseCompression(options =>
     options.Providers.Add<GzipCompressionProvider>();
 });
 
+// ── Graph API Configuration ──
+builder.Services.Configure<OnCallApi.Configuration.GraphApiOptions>(
+    builder.Configuration.GetSection("GraphApi"));
+
 // ── Application Services ──
 builder.Services.AddScoped<IGraphApiService, GraphApiService>();
 builder.Services.AddScoped<IScheduleService, ScheduleService>();
 builder.Services.AddScoped<IDirectoryService, DirectoryService>();
 builder.Services.AddScoped<IDutyHourService, DutyHourService>();
 builder.Services.AddScoped<BulkImportService>();
+builder.Services.AddScoped<TeamsNotificationService>();
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
 builder.Services.AddHostedService<AuditBackgroundService>();
 builder.Services.AddHostedService<AdSyncBackgroundService>();
+builder.Services.AddHostedService<DepartmentSyncService>();
+builder.Services.AddHostedService<PresenceSyncService>();
+builder.Services.AddHostedService<CalendarSyncService>();
+builder.Services.AddScoped<AvailabilityService>();
+builder.Services.AddScoped<EscalationService>();
+builder.Services.AddScoped<TeamsBotService>();
+builder.Services.AddScoped<SharePointPublishingService>();
+builder.Services.AddHostedService<EscalationBackgroundService>();
 
 // ── SignalR (real-time notifications) ──
 builder.Services.AddSignalR();

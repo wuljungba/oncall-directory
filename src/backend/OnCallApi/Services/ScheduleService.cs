@@ -8,11 +8,13 @@ public class ScheduleService : IScheduleService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<ScheduleService> _logger;
+    private readonly TeamsNotificationService? _teams;
 
-    public ScheduleService(AppDbContext db, ILogger<ScheduleService> logger)
+    public ScheduleService(AppDbContext db, ILogger<ScheduleService> logger, TeamsNotificationService? teams = null)
     {
         _db = db;
         _logger = logger;
+        _teams = teams;
     }
 
     public async Task<List<Schedule>> GetSchedulesAsync(int? departmentId = null)
@@ -72,6 +74,22 @@ public class ScheduleService : IScheduleService
         _db.Shifts.Add(shift);
         await _db.SaveChangesAsync();
         _logger.LogInformation("Assigned shift to employee {EmpId} on schedule {ScheduleId}", employeeId, scheduleId);
+
+        // Notify via Teams
+        if (_teams != null)
+        {
+            var employee = await _db.Employees.FindAsync(employeeId);
+            if (employee != null && !string.IsNullOrEmpty(employee.AzureAdObjectId))
+            {
+                _ = _teams.SendShiftStartingAsync(
+                    employee.AzureAdObjectId,
+                    $"{employee.FirstName} {employee.LastName}",
+                    tier,
+                    start,
+                    $"Schedule {scheduleId}");
+            }
+        }
+
         return shift;
     }
 
@@ -110,6 +128,20 @@ public class ScheduleService : IScheduleService
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("Shift swap {SwapId} approved by {ApproverId}", swapId, approvedById);
+
+        // Notify requester via Teams
+        if (_teams != null)
+        {
+            var requester = await _db.Employees.FindAsync(swap.RequestedById);
+            if (requester != null && !string.IsNullOrEmpty(requester.AzureAdObjectId))
+            {
+                _ = _teams.SendSwapApprovedAsync(
+                    requester.AzureAdObjectId,
+                    $"{requester.FirstName} {requester.LastName}",
+                    $"Swap {swapId}");
+            }
+        }
+
         return swap;
     }
 

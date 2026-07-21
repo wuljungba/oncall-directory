@@ -1,6 +1,7 @@
-import { useState, useEffect, createContext, useContext } from 'react'
+import { useState, useEffect, createContext, useContext, useRef } from 'react'
 import { connectSignalR, disconnectSignalR, subscribe, type NotificationEvent } from '@/services/signalr'
 import { getAccessToken } from '@/services/auth'
+import { useToast, getToastForSignalEvent } from '@/components/Toast'
 
 interface SignalRContextValue {
   isConnected: boolean
@@ -19,6 +20,8 @@ export function useSignalR() {
 export function SignalRProvider({ children }: { children: React.ReactNode }) {
   const [isConnected, setIsConnected] = useState(false)
   const [lastEvent, setLastEvent] = useState<NotificationEvent | null>(null)
+  const { addToast } = useToast()
+  const lastEventRef = useRef<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -37,7 +40,21 @@ export function SignalRProvider({ children }: { children: React.ReactNode }) {
     init()
 
     const unsub = subscribe((event) => {
-      if (!cancelled) setLastEvent(event)
+      if (cancelled) return
+      setLastEvent(event)
+
+      // Show a toast notification for the event
+      // Deduplicate identical events within 2 seconds to avoid spam
+      const eventKey = `${event.type}-${JSON.stringify(event.payload)}`
+      if (eventKey !== lastEventRef.current) {
+        lastEventRef.current = eventKey
+        const toast = getToastForSignalEvent(event)
+        addToast(toast)
+        // Clear the dedup reference after 2 seconds
+        setTimeout(() => {
+          lastEventRef.current = null
+        }, 2000)
+      }
     })
 
     return () => {
@@ -45,7 +62,7 @@ export function SignalRProvider({ children }: { children: React.ReactNode }) {
       unsub()
       disconnectSignalR()
     }
-  }, [])
+  }, [addToast])
 
   return (
     <SignalRContext.Provider value={{ isConnected, lastEvent }}>

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:type="TaskPaneApp">
+  <Id>a8c6b8e0-2f4a-4a8a-8a8a-8a8a8a8a8a8a</Id>
+  <Version>1.0.0</Version>
+  <ProviderName>OnCall</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="OnCall Schedule"/>
+  <Description DefaultValue="See who's on call directly from your Outlook calendar."/>
+  <IconUrl DefaultValue="https://localhost:5173/outlook-addin/icon-32.png"/>
+  <HighResolutionIconUrl DefaultValue="https://localhost:5173/outlook-addin/icon-80.png"/>
+  <SupportUrl DefaultValue="https://localhost:5173"/>
+  <AppDomains>
+    <AppDomain>localhost</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="https://localhost:5173/outlook-addin/index.html"/>
+        <RequestedHeight>250</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+  <Permissions>ReadItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Appointment"/>
+  </Rule>
+</OfficeApp>

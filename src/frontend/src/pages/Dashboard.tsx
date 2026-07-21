@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Clock, Phone, Users, AlertTriangle } from 'lucide-react'
+import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail } from 'lucide-react'
 import { scheduleApi, directoryApi } from '@/services/api'
 import type { Shift } from '@/types'
 
@@ -10,6 +10,8 @@ interface OnCallSummary {
   tier: string
   until: string
   presence: string
+  email?: string
+  phone?: string
 }
 
 export default function Dashboard() {
@@ -31,6 +33,8 @@ export default function Dashboard() {
           tier: s.tier,
           until: new Date(s.endTime).toLocaleTimeString(),
           presence: s.employee?.presence || 'unknown',
+          email: s.employee?.email,
+          phone: s.employee?.officePhone || s.employee?.mobilePhone,
         }))
 
         setOnCallNow(summaries)
@@ -97,11 +101,11 @@ export default function Dashboard() {
               {onCallNow.map((person, i) => (
                 <div
                   key={i}
-                  className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg"
+                  className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg group"
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`w-2 h-2 rounded-full ${
+                      className={`w-2 h-2 rounded-full flex-shrink-0 ${
                         person.presence === 'available'
                           ? 'bg-green-500'
                           : person.presence === 'busy'
@@ -116,21 +120,46 @@ export default function Dashboard() {
                       </p>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-full ${
-                        person.tier === 'primary'
-                          ? 'bg-amber-600/20 text-amber-500'
-                          : person.tier === 'secondary'
-                          ? 'bg-blue-600/20 text-blue-500'
-                          : 'bg-gray-600/20 text-gray-400'
-                      }`}
-                    >
-                      {person.tier}
-                    </span>
-                    <p className="text-xs text-gray-500 mt-1">
-                      until {person.until}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    {/* Action buttons — visible on hover */}
+                    <div className="hidden group-hover:flex items-center gap-1">
+                      {person.email && (
+                        <a
+                          href={`https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(person.email)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Chat in Teams"
+                        >
+                          <MessageSquare className="w-4 h-4 text-gray-400 hover:text-blue-400" />
+                        </a>
+                      )}
+                      {person.email && (
+                        <a
+                          href={`mailto:${person.email}`}
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Send email"
+                        >
+                          <Mail className="w-4 h-4 text-gray-400 hover:text-amber-400" />
+                        </a>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <span
+                        className={`text-xs px-2 py-0.5 rounded-full ${
+                          person.tier === 'primary'
+                            ? 'bg-amber-600/20 text-amber-500'
+                            : person.tier === 'secondary'
+                            ? 'bg-blue-600/20 text-blue-500'
+                            : 'bg-gray-600/20 text-gray-400'
+                        }`}
+                      >
+                        {person.tier}
+                      </span>
+                      <p className="text-xs text-gray-500 mt-1">
+                        until {person.until}
+                      </p>
+                    </div>
                   </div>
                 </div>
               ))}

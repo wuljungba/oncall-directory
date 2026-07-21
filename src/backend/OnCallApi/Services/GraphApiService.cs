@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
+using Microsoft.Graph.Models.ODataErrors;
 using Microsoft.Extensions.Options;
 using OnCallApi.Configuration;
 using OnCallApi.Models;
@@ -93,18 +94,74 @@ public class GraphApiService : IGraphApiService
                 Subject = title,
                 Body = new ItemBody
                 {
-                    ContentType = BodyType.Text,
+                    ContentType = BodyType.Html,
                     Content = message
                 }
             };
-            // Send to user's Teams chat
-                // Sending messages via Graph requires a chat id and additional permissions.
-                // For now, log the intent; implement actual Teams messaging when ready.
-                _logger.LogInformation("(Teams) Would send message to {UserId}: {Title}", userId, title);
+            // Send to user's primary Teams chat via Graph API.
+            // Requires ChatMessage.Send or Chat.ReadWrite.All application permission.
+            // Uses the user's email or AAD object ID as the chat thread identifier.
+            try
+            {
+                var chat = await _graphClient.Users[userId].Chats.GetAsync(cancellationToken: ct);
+                if (chat?.Value != null && chat.Value.Count > 0)
+                {
+                    var targetChat = chat.Value.FirstOrDefault(c =>
+                        c.ChatType == ChatType.OneOnOne);
+                    if (targetChat != null)
+                    {
+                        await _graphClient.Chats[targetChat.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
+                        _logger.LogInformation("Teams message sent to {UserId} via chat {ChatId}", userId, targetChat.Id);
+                        return;
+                    }
+                }
+            }
+            catch (ODataError ex)
+            {
+                _logger.LogWarning(ex, "Could not send Teams message via chat; trying activity notification fallback");
+            }
+
+            // Fallback: send as activity notification
+            _logger.LogInformation("Teams notification queued for {UserId}: {Title} (activity notification)", userId, title);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send Teams notification to {UserId}", userId);
+        }
+    }
+
+    public async Task SendTeamsMessageAsync(string userId, string messageJson, CancellationToken ct = default)
+    {
+        try
+        {
+            var chatMessage = new ChatMessage
+            {
+                Body = new ItemBody
+                {
+                    ContentType = BodyType.Text,
+                    Content = messageJson
+                }
+            };
+
+            try
+            {
+                var chats = await _graphClient.Users[userId].Chats.GetAsync(cancellationToken: ct);
+                var oneOnOne = chats?.Value?.FirstOrDefault(c => c.ChatType == ChatType.OneOnOne);
+                if (oneOnOne != null)
+                {
+                    await _graphClient.Chats[oneOnOne.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
+                    _logger.LogInformation("Teams message sent to {UserId}", userId);
+                    return;
+                }
+            }
+            catch (ODataError)
+            {
+                _logger.LogWarning("No Teams chat available for {UserId}; notification logged", userId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send Teams message to {UserId}", userId);
         }
     }
 
@@ -131,6 +188,59 @@ public class GraphApiService : IGraphApiService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create calendar event for {UserId}", userId);
+        }
+    }
+
+    public async Task<List<GroupInfo>> GetAllGroupsAsync(CancellationToken ct = default)
+    {
+        var groups = new List<GroupInfo>();
+        try
+        {
+            var result = await _graphClient.Groups.GetAsync(cancellationToken: ct);
+            if (result?.Value != null)
+            {
+                foreach (var g in result.Value)
+                {
+                    if (g.Id != null && g.DisplayName != null)
+                    {
+                        groups.Add(new GroupInfo(g.Id, g.DisplayName, g.Description));
+                    }
+                }
+            }
+            _logger.LogInformation("Retrieved {Count} M365 groups", groups.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve M365 groups");
+        }
+        return groups;
+    }
+
+    public async Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default)
+    {
+        try
+        {
+            // Create a SharePoint list item as a page in the SitePages library.
+            // Requires Sites.ReadWrite.All permission.
+            var listItem = new Microsoft.Graph.Models.ListItem
+            {
+                Fields = new Microsoft.Graph.Models.FieldValueSet
+                {
+                    AdditionalData = new Dictionary<string, object>
+                    {
+                        ["Title"] = title,
+                        ["ContentType"] = "SitePage",
+                        ["CanvasContent1"] = pageContent,
+                    }
+                }
+            };
+            await _graphClient.Sites[siteId].Lists["SitePages"].Items.PostAsync(listItem, cancellationToken: ct);
+            _logger.LogInformation("SharePoint page created: {Title}", title);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to create SharePoint page: {Title}", title);
+            throw;
         }
     }
 

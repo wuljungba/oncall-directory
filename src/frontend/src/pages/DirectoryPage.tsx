@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Phone, Mail, MapPin, ShieldCheck, Upload } from 'lucide-react'
+import { Search, Phone, Mail, MapPin, ShieldCheck, Upload, MessageSquare } from 'lucide-react'
 import { directoryApi, importApi } from '@/services/api'
 import ImportModal from '@/components/ImportModal'
 import type { Employee } from '@/types'
@@ -187,6 +187,15 @@ export default function DirectoryPage() {
                   className="flex-1 text-center px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
                 >
                   Email
+                </a>
+                <a
+                  href={`https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(selectedEmployee.email)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-1 text-center px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
+                  title="Chat in Microsoft Teams"
+                >
+                  <MessageSquare className="w-4 h-4 inline-block" />
                 </a>
               </div>
             </div>

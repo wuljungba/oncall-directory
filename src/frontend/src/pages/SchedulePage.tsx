@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
-  ChevronLeft, ChevronRight, Clock, Plus, Save, X, Trash2, AlertTriangle, Sparkles
+  ChevronLeft, ChevronRight, Clock, Plus, Save, X, Trash2, AlertTriangle, Sparkles, Repeat, Download
 } from 'lucide-react'
 import { scheduleApi, departmentsApi } from '@/services/api'
 import type { Schedule, Shift, Department } from '@/types'
@@ -13,6 +13,8 @@ export default function SchedulePage() {
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [swapTargetShift, setSwapTargetShift] = useState<Shift | null>(null)
+  const [showSwapModal, setShowSwapModal] = useState(false)
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const d = new Date()
     d.setDate(d.getDate() - d.getDay())
@@ -48,26 +50,42 @@ export default function SchedulePage() {
     return d
   })
 
-  const getShiftForCell = (day: Date, hour: number) => {
+  // 4-hour time blocks covering a full day continuously
+  const TIME_BLOCKS = [
+    { label: '00:00', hour: 0 },
+    { label: '04:00', hour: 4 },
+    { label: '08:00', hour: 8 },
+    { label: '12:00', hour: 12 },
+    { label: '16:00', hour: 16 },
+    { label: '20:00', hour: 20 },
+  ]
+
+  const getShiftForCell = (day: Date, blockHour: number) => {
     return shifts.find((s) => {
       const start = new Date(s.startTime)
       const end = new Date(s.endTime)
       const cellStart = new Date(day)
-      cellStart.setHours(hour, 0, 0, 0)
+      cellStart.setHours(blockHour, 0, 0, 0)
       const cellEnd = new Date(cellStart)
-      cellEnd.setHours(hour + 1, 0, 0, 0)
+      // Each block spans 4 hours; the 20:00 block wraps to next day 00:00
+      cellEnd.setHours(blockHour === 20 ? 24 : blockHour + 4, 0, 0, 0)
       return start < cellEnd && end > cellStart
     })
   }
 
-  const hasGap = (day: Date): boolean => {
-    // Check if this day has no assigned shifts for any tier
-    const dayShifts = shifts.filter((s) => {
-      const start = new Date(s.startTime)
-      return start.toDateString() === day.toDateString()
-    })
-    // If there are shifts and any are "gap" status or missing employee, highlight
-    return dayShifts.length > 0 && dayShifts.some(s => s.status === 'gap' || !s.employeeId)
+  const getGapDays = (): Date[] => {
+    // Returns days that have coverage gaps (unassigned shifts)
+    const gapDays: Date[] = []
+    for (const day of weekDays) {
+      const dayShifts = shifts.filter((s) => {
+        const start = new Date(s.startTime)
+        return start.toDateString() === day.toDateString()
+      })
+      if (dayShifts.length > 0 && dayShifts.some(s => s.status === 'gap' || !s.employeeId)) {
+        gapDays.push(day)
+      }
+    }
+    return gapDays
   }
 
   const tierColor = (tier: string) => {
@@ -94,6 +112,59 @@ export default function SchedulePage() {
     } finally {
       setGenerating(false)
     }
+  }
+
+  async function handleRequestSwap(shiftId: number, replacementUserId: string, reason: string) {
+    try {
+      await scheduleApi.requestSwap({
+        originalShiftId: shiftId,
+        replacementUserId,
+        reason,
+        status: 'pending',
+      } as any)
+      setShowSwapModal(false)
+      setSwapTargetShift(null)
+    } catch (err) {
+      console.error('Failed to request swap:', err)
+    }
+  }
+
+  function handleDownloadIcs() {
+    if (!selectedSchedule || shifts.length === 0) return
+
+    const lines: string[] = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//OnCall//Schedule//EN',
+      'CALSCALE:GREGORIAN',
+    ]
+
+    for (const s of shifts) {
+      const start = new Date(s.startTime)
+      const end = new Date(s.endTime)
+      const uid = `shift-${s.id}@oncall`
+
+      const fmt = (d: Date) =>
+        d.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
+
+      lines.push('BEGIN:VEVENT')
+      lines.push(`UID:${uid}`)
+      lines.push(`DTSTART:${fmt(start)}`)
+      lines.push(`DTEND:${fmt(end)}`)
+      lines.push(`SUMMARY:On-Call (${s.tier}) - ${s.employee?.firstName || ''} ${s.employee?.lastName || ''}`.trim())
+      if (s.notes) lines.push(`DESCRIPTION:${s.notes}`)
+      lines.push('END:VEVENT')
+    }
+
+    lines.push('END:VCALENDAR')
+
+    const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `oncall-schedule-${selectedSchedule}.ics`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   async function handleCreateSchedule(data: Partial<Schedule>) {
@@ -144,6 +215,14 @@ export default function SchedulePage() {
                 {generating ? 'Generating...' : 'Auto-Generate Shifts'}
               </button>
               <button
+                onClick={handleDownloadIcs}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+                title="Download as .ics (import into Outlook/Google Calendar)"
+              >
+                <Download className="w-4 h-4" />
+                Export
+              </button>
+              <button
                 onClick={() => handleDeleteSchedule(selectedSchedule)}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-sm transition-colors"
               >
@@ -192,10 +271,30 @@ export default function SchedulePage() {
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
-            <span className="text-sm font-medium">
-              {weekDays[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} —{' '}
-              {weekDays[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-sm font-medium">
+                {weekDays[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} —{' '}
+                {weekDays[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              </span>
+              {(() => {
+                const gaps = getGapDays()
+                if (gaps.length > 0) {
+                  return (
+                    <button
+                      onClick={() => {
+                        const gapDate = gaps[0].toLocaleDateString('en-US', { weekday: 'long' })
+                        alert(`Coverage needed for: ${gapDate} (${gaps.length} day${gaps.length > 1 ? 's' : ''} with gaps)`)
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-xs transition-colors"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {gaps.length} gap{gaps.length > 1 ? 's' : ''} — Find Coverage
+                    </button>
+                  )
+                }
+                return null
+              })()}
+            </div>
             <button
               onClick={() => {
                 const d = new Date(currentWeekStart)
@@ -227,41 +326,66 @@ export default function SchedulePage() {
                   </p>
                   <p className="text-sm font-medium mt-1">{day.getDate()}</p>
                   {/* Gap indicator */}
-                  {hasGap(day) && (
+                  {(() => {
+                    const dayShifts = shifts.filter((s) => {
+                      const start = new Date(s.startTime)
+                      return start.toDateString() === day.toDateString()
+                    })
+                    return dayShifts.length > 0 && dayShifts.some(s => s.status === 'gap' || !s.employeeId)
+                  })() && (
                     <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" title="Coverage gap" />
                   )}
                 </div>
               ))}
             </div>
 
-            {/* Time rows */}
-            {[0, 4, 8, 12, 16, 20].map((hour) => (
+            {/* Time rows — continuous 4-hour blocks */}
+            {TIME_BLOCKS.map((block) => (
               <div
-                key={hour}
+                key={block.hour}
                 className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-800/50"
               >
                 <div className="p-2 text-xs text-gray-600 border-r border-gray-800/50">
-                  {hour.toString().padStart(2, '0')}:00
+                  {block.label}{block.hour === 20 ? <span className="block text-[9px] text-gray-700">→ 00:00</span> : ''}
                 </div>
                 {weekDays.map((day, i) => {
-                  const shift = getShiftForCell(day, hour)
+                  const shift = getShiftForCell(day, block.hour)
                   const isGapCell = !shift || shift.status === 'gap'
                   return (
                     <div
                       key={i}
                       className={`p-1 min-h-[48px] border-r border-gray-800/50 last:border-r-0 ${
-                        isGapCell ? 'bg-red-600/5' : ''
+                        isGapCell ? 'bg-red-600/5' : 'group/cell'
                       }`}
                     >
                       {shift ? (
-                        <div
-                          className={`text-[10px] p-1 rounded border ${tierColor(shift.tier)}`}
-                          title={`${shift.employee?.firstName || 'Unassigned'} ${shift.employee?.lastName || ''} - ${shift.tier}`}
-                        >
-                          {shift.employee?.firstName?.charAt(0)}.{shift.employee?.lastName}
-                          {shift.status === 'gap' && (
-                            <span className="ml-1 text-red-400">(gap)</span>
-                          )}
+                        <div className="relative">
+                          <div
+                            className={`text-[10px] p-1 rounded border ${tierColor(shift.tier)}`}
+                            title={`${shift.employee?.firstName || 'Unassigned'} ${shift.employee?.lastName || ''} - ${shift.tier}`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="truncate">
+                                {shift.employee?.firstName?.charAt(0)}.{shift.employee?.lastName}
+                                {shift.status === 'gap' && (
+                                  <span className="ml-1 text-red-400">(gap)</span>
+                                )}
+                              </span>
+                              {shift.status !== 'gap' && shift.tier !== 'tertiary' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSwapTargetShift(shift)
+                                    setShowSwapModal(true)
+                                  }}
+                                  className="opacity-0 group-hover/cell:opacity-100 p-0.5 hover:bg-gray-700 rounded transition-all ml-1"
+                                  title="Request swap"
+                                >
+                                  <Repeat className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       ) : null}
                     </div>
@@ -305,6 +429,20 @@ export default function SchedulePage() {
           departments={departments}
           onSave={handleCreateSchedule}
           onClose={() => setShowCreateModal(false)}
+        />
+      )}
+
+      {/* Swap Request Modal */}
+      {showSwapModal && swapTargetShift && (
+        <SwapModal
+          shift={swapTargetShift}
+          onRequest={(replacementUserId, reason) =>
+            handleRequestSwap(swapTargetShift.id, replacementUserId, reason)
+          }
+          onClose={() => {
+            setShowSwapModal(false)
+            setSwapTargetShift(null)
+          }}
         />
       )}
     </div>
@@ -460,6 +598,110 @@ function CreateScheduleModal({
                 <Save className="w-4 h-4" />
               )}
               {saving ? 'Creating...' : 'Create Schedule'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function SwapModal({
+  shift,
+  onRequest,
+  onClose,
+}: {
+  shift: Shift
+  onRequest: (replacementUserId: string, reason: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [replacementUserId, setReplacementUserId] = useState('')
+  const [reason, setReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!replacementUserId) { setError('Please select a replacement.'); return }
+    setSubmitting(true)
+    setError(null)
+    try {
+      await onRequest(replacementUserId, reason)
+    } catch {
+      setError('Failed to submit swap request.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-md mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 className="text-lg font-medium">Request Shift Swap</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <div className="text-sm text-gray-400 bg-gray-800 rounded-lg p-3">
+            <p><span className="text-gray-500">Shift:</span> {shift.tier} — {new Date(shift.startTime).toLocaleDateString()} {new Date(shift.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            {shift.employee && <p><span className="text-gray-500">Currently assigned:</span> {shift.employee.firstName} {shift.employee.lastName}</p>}
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Replacement (who should take this shift?)</label>
+            <input
+              type="text"
+              required
+              value={replacementUserId}
+              onChange={(e) => setReplacementUserId(e.target.value)}
+              placeholder="Enter employee name or email"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Reason (optional)</label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              placeholder="e.g., Scheduling conflict, personal time"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 resize-none"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {submitting ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+              ) : (
+                <Repeat className="w-4 h-4" />
+              )}
+              {submitting ? 'Submitting...' : 'Request Swap'}
             </button>
           </div>
         </form>

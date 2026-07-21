@@ -16,7 +16,7 @@ public class HipaaAuditMiddleware
     // Endpoints that access PHI (personally identifiable health information)
     private static readonly HashSet<string> PhiPhoneEndpoints = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/api/employee", "/api/directory", "/api/schedule/time-off", "/api/settings"
+        "/api/directory", "/api/schedule", "/api/phone-trees", "/api/settings"
     };
 
     public HipaaAuditMiddleware(RequestDelegate next, ILogger<HipaaAuditMiddleware> logger)
