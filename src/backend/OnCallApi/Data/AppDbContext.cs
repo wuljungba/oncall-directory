@@ -139,6 +139,34 @@ public class AppDbContext : DbContext
             a.Property(x => x.ResourceType).HasMaxLength(50);
         });
 
+        // ── EscalationPolicy ──
+        modelBuilder.Entity<EscalationPolicy>(e =>
+        {
+            e.HasOne(x => x.Department)
+                .WithMany()
+                .HasForeignKey(x => x.DepartmentId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // ── EscalationEvent ──
+        modelBuilder.Entity<EscalationEvent>(e =>
+        {
+            e.HasOne(x => x.Policy)
+                .WithMany()
+                .HasForeignKey(x => x.PolicyId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasOne(x => x.Employee)
+                .WithMany()
+                .HasForeignKey(x => x.EmployeeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(x => x.Shift)
+                .WithMany()
+                .HasForeignKey(x => x.ShiftId)
+                .OnDelete(DeleteBehavior.Restrict);
+        });
+
         // ── Seed Data ──
         modelBuilder.Entity<Department>().HasData(
             new Department { Id = 1, Name = "Emergency Medicine", Description = "Emergency Department" },

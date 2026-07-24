@@ -11,26 +11,30 @@ import {
   LogOut,
   Menu,
   X,
+  Shield,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
 import OnboardingWizard, { useOnboarding } from '@/components/OnboardingWizard'
 
 const navItems = [
-  { path: '/', label: 'Dashboard', icon: Clock },
-  { path: '/schedule', label: 'On-Call Schedule', icon: Calendar },
-  { path: '/directory', label: 'Phone Directory', icon: Phone },
-  { path: '/phone-trees', label: 'Phone Trees', icon: PhoneCall },
-  { path: '/time-off', label: 'Time Off', icon: Users },
-  { path: '/compliance', label: 'Compliance', icon: ShieldCheck },
-  { path: '/settings', label: 'Settings', icon: Settings },
+  { path: '/dashboard', label: 'Dashboard', icon: Clock },
+  { path: '/dashboard/schedule', label: 'On-Call Schedule', icon: Calendar },
+  { path: '/dashboard/directory', label: 'Phone Directory', icon: Phone },
+  { path: '/dashboard/phone-trees', label: 'Code Calls', icon: PhoneCall },
+  { path: '/dashboard/time-off', label: 'Time Off', icon: Users },
+  { path: '/dashboard/compliance', label: 'Compliance', icon: ShieldCheck },
+  { path: '/dashboard/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { user, signOut } = useAuth()
+  const { user, signOut, isAdmin } = useAuth()
   const { isConnected } = useSignalR()
   const { showOnboarding, checking, dismiss } = useOnboarding()
+  const visibleNavItems = isAdmin
+    ? [...navItems, { path: '/admin', label: 'Admin', icon: Shield }]
+    : navItems
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
@@ -55,11 +59,11 @@ export default function Layout() {
         </div>
 
         <nav className="p-4 space-y-1">
-          {navItems.map((item) => (
+          {visibleNavItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
-              end={item.path === '/'}
+              end={item.path === '/dashboard'}
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm transition-colors ${

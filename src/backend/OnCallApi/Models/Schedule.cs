@@ -8,7 +8,7 @@ public class Schedule
     public string Name { get; set; } = string.Empty;
 
     public int DepartmentId { get; set; }
-    public Department Department { get; set; } = null!;
+    public Department? Department { get; set; }
 
     [Required(AllowEmptyStrings = false)]
     [MaxLength(20)]

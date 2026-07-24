@@ -19,7 +19,7 @@ export interface Employee {
   mobilePhone?: string
   pagerNumber?: string
   officeLocation?: string
-  departmentId?: string
+  departmentId?: number
   department?: Department
   managerId?: string
   manager?: Employee
@@ -88,9 +88,10 @@ export interface TimeOff {
 export interface PhoneTree {
   id: number
   name: string
-  treeType: 'emergency' | 'department' | 'oncall' | 'admin'
+  treeType: 'emergency' | 'department' | 'oncall' | 'admin' | 'code-blue' | 'code-red' | 'code-green' | 'code-silver' | 'code-grey' | 'code-pink'
   departmentId?: number
   department?: Department
+  procedure?: string
   fallbackProcedure?: string
   nodes: PhoneTreeNode[]
 }
@@ -145,4 +146,31 @@ export interface OnCallStatus {
   startTime: string
   endTime: string
   role: string
+}
+
+export interface EscalationPolicy {
+  id: number
+  departmentId?: number
+  department?: Department
+  name: string
+  maxResponseMinutes: number
+  escalationTierCount: number
+  notificationChannels: string
+  isActive: boolean
+  createdAt: string
+}
+
+export interface EscalationEvent {
+  id: number
+  policyId: number
+  policy?: EscalationPolicy
+  employeeId: string
+  employee?: Employee
+  shiftId: number
+  shift?: Shift
+  tier: number
+  status: 'pending' | 'resolved'
+  triggeredAt: string
+  resolvedAt?: string
+  details: string
 }

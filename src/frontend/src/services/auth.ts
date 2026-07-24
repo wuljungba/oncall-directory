@@ -7,9 +7,7 @@ import {
 const MSAL_CONFIG = {
   auth: {
     clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'your-api-client-id',
-    authority: `https://login.microsoftonline.com/${
-      import.meta.env.VITE_AZURE_TENANT_ID || 'your-tenant-id'
-    }`,
+    authority: 'https://login.microsoftonline.com/organizations',
     redirectUri: window.location.origin,
   },
   cache: {

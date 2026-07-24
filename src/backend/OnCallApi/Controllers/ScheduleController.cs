@@ -9,7 +9,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireScheduleRead")]
 public class ScheduleController : ControllerBase
 {
     private readonly IScheduleService _scheduleService;
@@ -39,7 +39,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>Create a new schedule.</summary>
     [HttpPost]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<Schedule>> CreateSchedule(Schedule schedule)
     {
         var created = await _scheduleService.CreateScheduleAsync(schedule);
@@ -50,7 +50,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>Update an existing schedule.</summary>
     [HttpPut("{id}")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<Schedule>> UpdateSchedule(int id, Schedule schedule)
     {
         if (id != schedule.Id)
@@ -62,7 +62,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>Delete a schedule.</summary>
     [HttpDelete("{id}")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> DeleteSchedule(int id)
     {
         await _scheduleService.DeleteScheduleAsync(id);
@@ -71,7 +71,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>Auto-generate shifts for a schedule for N weeks.</summary>
     [HttpPost("{scheduleId}/generate")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<List<Shift>>> GenerateShifts(int scheduleId, [FromQuery] int weeks = 4)
     {
         var shifts = await _scheduleService.GenerateShiftsAsync(scheduleId, weeks);
@@ -89,7 +89,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>Assign a shift to an employee.</summary>
     [HttpPost("{scheduleId}/shifts")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<Shift>> AssignShift(int scheduleId, [FromBody] AssignShiftRequest request)
     {
         var shift = await _scheduleService.AssignShiftAsync(
@@ -119,7 +119,7 @@ public class ScheduleController : ControllerBase
 
     /// <summary>Approve a shift swap.</summary>
     [HttpPost("swaps/{id}/approve")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<ShiftSwap>> ApproveSwap(int id)
     {
         var userId = Guid.Parse(User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")!.Value);
@@ -153,19 +153,3 @@ public class ScheduleController : ControllerBase
         return CreatedAtAction(nameof(GetTimeOff), new { employeeId = timeOff.EmployeeId }, created);
     }
 }
-
-// ── Request DTOs ──
-
-public record AssignShiftRequest(
-    [Required] Guid EmployeeId,
-    [Required] DateTime StartTime,
-    [Required] DateTime EndTime,
-    [MaxLength(20)] string Tier = "primary"
-);
-
-public record SwapRequest(
-    [Required] int ShiftId,
-    [Required] Guid RequestedById,
-    Guid? ReplacementUserId,
-    [MaxLength(500)] string? Reason
-);

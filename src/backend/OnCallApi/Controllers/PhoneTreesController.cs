@@ -7,7 +7,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/phone-trees")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireDirectoryRead")]
 public class PhoneTreesController : ControllerBase
 {
     private readonly IDirectoryService _directoryService;
@@ -32,7 +32,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<PhoneTree>> Create(PhoneTree tree)
     {
         var created = await _directoryService.CreatePhoneTreeAsync(tree);
@@ -40,7 +40,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpPut("{id}")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<PhoneTree>> Update(int id, PhoneTree tree)
     {
         if (id != tree.Id) return BadRequest();
@@ -48,7 +48,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> Delete(int id)
     {
         await _directoryService.DeletePhoneTreeAsync(id);
@@ -56,7 +56,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpPost("{treeId}/nodes")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<PhoneTreeNode>> AddNode(int treeId, PhoneTreeNode node)
     {
         var created = await _directoryService.AddNodeAsync(treeId, node);
@@ -64,7 +64,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpPut("nodes/{nodeId}")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult> UpdateNode(int nodeId, PhoneTreeNode node)
     {
         if (nodeId != node.Id) return BadRequest();
@@ -73,7 +73,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpDelete("nodes/{nodeId}")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> RemoveNode(int nodeId)
     {
         await _directoryService.RemoveNodeAsync(nodeId);
@@ -81,7 +81,7 @@ public class PhoneTreesController : ControllerBase
     }
 
     [HttpPost("{treeId}/reorder")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult> Reorder(int treeId, [FromBody] List<int> nodeIds)
     {
         await _directoryService.ReorderNodesAsync(treeId, nodeIds);

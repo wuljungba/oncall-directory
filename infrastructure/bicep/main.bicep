@@ -1,6 +1,11 @@
 param location string = 'eastus'
 param environmentName string = 'dev'
+@secure()
 param sqlAdminPassword string
+param sqlAdminLogin string = 'oncalladmin'
+param entraTenantId string
+param entraClientId string
+param entraDomain string
 
 var resourceGroupName = 'rg-oncall-${environmentName}'
 var appName = 'app-oncall-${environmentName}'
@@ -8,6 +13,8 @@ var sqlServerName = 'sql-oncall-${environmentName}'
 var sqlDbName = 'sqldb-oncall-${environmentName}'
 var kvName = 'kv-oncall-${environmentName}'
 var aiName = 'ai-oncall-${environmentName}'
+var logName = 'log-oncall-${environmentName}'
+var connectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};TrustServerCertificate=False;Encrypt=True;'
 
 // ── Resource Group ──
 resource rg 'Microsoft.Resources/resourceGroups@2023-07-01' = {
@@ -16,14 +23,24 @@ resource rg 'Microsoft.Resources/resourceGroups@2023-07-01' = {
 }
 
 // ── Application Insights ──
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: logName
+  location: location
+  properties: {
+    sku: { name: 'PerGB2018' }
+    retentionInDays: 90
+  }
+}
+
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: aiName
   location: location
   kind: 'web'
   properties: {
     Application_Type: 'web'
-    WorkspaceResourceId: null
+    WorkspaceResourceId: logAnalytics.id
   }
+  dependsOn: [logAnalytics]
 }
 
 // ── Azure SQL Database ──
@@ -31,10 +48,19 @@ resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   name: sqlServerName
   location: location
   properties: {
-    administratorLogin: 'oncalladmin'
+    administratorLogin: sqlAdminLogin
     administratorLoginPassword: sqlAdminPassword
     minimalTlsVersion: '1.2'
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: 'Disabled'
+  }
+}
+
+resource sqlFirewallRule 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
+  parent: sqlServer
+  name: 'AllowAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
   }
 }
 
@@ -67,6 +93,15 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+// ── Key Vault Secret: SQL Connection String ──
+resource sqlConnectionStringSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'SqlConnectionString'
+  properties: {
+    value: connectionString
+  }
+}
+
 // ── App Service Plan + Web App ──
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'plan-oncall-${environmentName}'
@@ -92,13 +127,41 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       alwaysOn: true
       minTlsVersion: '1.2'
       appSettings: [
-        { name: 'ConnectionStrings__DefaultConnection', value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=oncalladmin;Password=${sqlAdminPassword};TrustServerCertificate=False;Encrypt=True;' }
+        { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString/)' }
         { name: 'AzureAd__Instance', value: 'https://login.microsoftonline.com/' }
-        { name: 'AzureAd__Domain', value: 'your-tenant.onmicrosoft.com' }
-        { name: 'AzureAd__TenantId', value: 'your-tenant-id' }
-        { name: 'AzureAd__ClientId', value: 'your-api-client-id' }
+        { name: 'AzureAd__Domain', value: entraDomain }
+        { name: 'AzureAd__TenantId', value: entraTenantId }
+        { name: 'AzureAd__ClientId', value: entraClientId }
         { name: 'Cors__Origin', value: 'https://${appName}.azurewebsites.net' }
-        { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.InstrumentationKey }
+        { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+      ]
+    }
+  }
+}
+
+// ── Staging Slot (for zero-downtime deployments) ──
+resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
+  name: '${appName}/staging'
+  location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    serverFarmId: appPlan.id
+    httpsOnly: true
+    siteConfig: {
+      netFrameworkVersion: 'v8.0'
+      alwaysOn: true
+      minTlsVersion: '1.2'
+      appSettings: [
+        { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString/)' }
+        { name: 'AzureAd__Instance', value: 'https://login.microsoftonline.com/' }
+        { name: 'AzureAd__Domain', value: entraDomain }
+        { name: 'AzureAd__TenantId', value: entraTenantId }
+        { name: 'AzureAd__ClientId', value: entraClientId }
+        { name: 'Cors__Origin', value: 'https://${appName}.azurewebsites.net' }
+        { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
       ]
     }
@@ -118,6 +181,49 @@ resource kvAccessPolicy 'Microsoft.KeyVault/vaults/accessPolicies@2023-07-01' = 
         }
         tenantId: subscription().tenantId
       }
+    ]
+  }
+}
+
+// ── Diagnostic Settings for Audit Logging ──
+resource sqlDiagnostics 'Microsoft.Sql/servers/databases/providers/diagnosticSettings@2021-05-01-preview' = {
+  name: '${sqlDbName}/Microsoft.Insights/sqlauditlogs'
+  properties: {
+    workspaceId: logAnalytics.id
+    logs: [
+      { category: 'SQLSecurityAuditEvents', enabled: true, retentionPolicy: { enabled: true, days: 365 } }
+    ]
+    metrics: [
+      { category: 'AllMetrics', enabled: true, retentionPolicy: { enabled: true, days: 365 } }
+    ]
+  }
+}
+
+resource appDiagnostics 'Microsoft.Web/sites/providers/diagnosticSettings@2021-05-01-preview' = {
+  name: '${appName}/Microsoft.Insights/appservice'
+  properties: {
+    workspaceId: logAnalytics.id
+    logs: [
+      { category: 'AppServiceHTTPLogs', enabled: true, retentionPolicy: { enabled: true, days: 90 } }
+      { category: 'AppServiceConsoleLogs', enabled: true, retentionPolicy: { enabled: true, days: 90 } }
+      { category: 'AppServiceAppLogs', enabled: true, retentionPolicy: { enabled: true, days: 90 } }
+      { category: 'AppServiceAuditLogs', enabled: true, retentionPolicy: { enabled: true, days: 365 } }
+    ]
+    metrics: [
+      { category: 'AllMetrics', enabled: true, retentionPolicy: { enabled: true, days: 90 } }
+    ]
+  }
+}
+
+resource kvDiagnostics 'Microsoft.KeyVault/vaults/providers/diagnosticSettings@2021-05-01-preview' = {
+  name: '${kvName}/Microsoft.Insights/keyvault'
+  properties: {
+    workspaceId: logAnalytics.id
+    logs: [
+      { category: 'AuditEvent', enabled: true, retentionPolicy: { enabled: true, days: 365 } }
+    ]
+    metrics: [
+      { category: 'AllMetrics', enabled: true, retentionPolicy: { enabled: true, days: 90 } }
     ]
   }
 }

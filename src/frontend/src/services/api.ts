@@ -4,6 +4,8 @@ import type {
   DutyHourRule,
   DutyHourViolation,
   Employee,
+  EscalationEvent,
+  EscalationPolicy,
   Schedule,
   Shift,
   ShiftSwap,
@@ -16,7 +18,7 @@ interface ImportResult {
   totalRows: number
   imported: number
   errors: string[]
-  isVAlid: boolean
+  isValid: boolean
 }
 
 const API_BASE = '/api'
@@ -237,4 +239,79 @@ export const phoneTreesApi = {
   removeNode: (nodeId: number) => fetchApi<void>(`/phone-trees/nodes/${nodeId}`, { method: 'DELETE' }),
   reorder: (treeId: number, nodeIds: number[]) =>
     fetchApi<void>(`/phone-trees/${treeId}/reorder`, { method: 'POST', body: JSON.stringify(nodeIds) }),
+}
+
+// ── Escalation ──
+export const escalationApi = {
+  getPolicies: (departmentId?: number) =>
+    fetchApi<EscalationPolicy[]>(`/escalation/policies${departmentId ? `?departmentId=${departmentId}` : ''}`),
+  createPolicy: (policy: Partial<EscalationPolicy>) =>
+    fetchApi<EscalationPolicy>('/escalation/policies', { method: 'POST', body: JSON.stringify(policy) }),
+  updatePolicy: (id: number, policy: Partial<EscalationPolicy>) =>
+    fetchApi<EscalationPolicy>(`/escalation/policies/${id}`, { method: 'PUT', body: JSON.stringify(policy) }),
+  deletePolicy: (id: number) =>
+    fetchApi<void>(`/escalation/policies/${id}`, { method: 'DELETE' }),
+  getEvents: (policyId?: number, limit?: number) => {
+    const params = new URLSearchParams()
+    if (policyId) params.set('policyId', String(policyId))
+    if (limit) params.set('limit', String(limit))
+    const qs = params.toString()
+    return fetchApi<EscalationEvent[]>(`/escalation/events${qs ? `?${qs}` : ''}`)
+  },
+  acknowledgeEvent: (id: number) =>
+    fetchApi<EscalationEvent>(`/escalation/events/${id}/acknowledge`, { method: 'POST' }),
+}
+
+// ── Auth (current user info + dev role-switching) ──
+export const authApi = {
+  me: () => fetchApi<CurrentUserResponse>('/auth/me'),
+  devSetRole: (role: string) =>
+    fetchApi<{ role: string; permissions: string[]; message: string }>(
+      `/auth/dev/set-role?role=${role}`,
+      { method: 'POST' }
+    ),
+  devClearRole: () =>
+    fetchApi<{ role: string; permissions: string[]; message: string }>(
+      '/auth/dev/clear-role',
+      { method: 'POST' }
+    ),
+}
+
+export interface CurrentUserResponse {
+  id: string
+  name: string
+  email: string
+  roles: string[]
+  permissions: string[]
+}
+
+// ── Admin (account & department management) ──
+export const adminApi = {
+  // Employees
+  getAllEmployees: (includeInactive = false) =>
+    fetchApi<Employee[]>(`/admin/employees${includeInactive ? '?includeInactive=true' : ''}`),
+  getEmployee: (id: string) =>
+    fetchApi<Employee>(`/admin/employees/${id}`),
+  createEmployee: (data: Record<string, unknown>) =>
+    fetchApi<Employee>('/admin/employees', { method: 'POST', body: JSON.stringify(data) }),
+  updateEmployee: (id: string, data: Record<string, unknown>) =>
+    fetchApi<Employee>(`/admin/employees/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deactivateEmployee: (id: string) =>
+    fetchApi<void>(`/admin/employees/${id}`, { method: 'DELETE' }),
+  reactivateEmployee: (id: string) =>
+    fetchApi<void>(`/admin/employees/${id}/reactivate`, { method: 'POST' }),
+  getDirectReports: (id: string) =>
+    fetchApi<Employee[]>(`/admin/employees/${id}/direct-reports`),
+
+  // Departments
+  getAllDepartments: (includeInactive = false) =>
+    fetchApi<Department[]>(`/admin/departments${includeInactive ? '?includeInactive=true' : ''}`),
+  createDepartment: (data: Record<string, unknown>) =>
+    fetchApi<Department>('/admin/departments', { method: 'POST', body: JSON.stringify(data) }),
+  updateDepartment: (id: number, data: Record<string, unknown>) =>
+    fetchApi<Department>(`/admin/departments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deactivateDepartment: (id: number) =>
+    fetchApi<void>(`/admin/departments/${id}`, { method: 'DELETE' }),
+  getDepartmentMembers: (id: number) =>
+    fetchApi<Employee[]>(`/admin/departments/${id}/members`),
 }

@@ -1,21 +1,31 @@
 import { useState, useEffect } from 'react'
-import { Search, Phone, Mail, MapPin, ShieldCheck, Upload, MessageSquare } from 'lucide-react'
-import { directoryApi, importApi } from '@/services/api'
+import { Search, Phone, Mail, MapPin, ShieldCheck, Upload, Download, MessageSquare, AlertTriangle, X, Save, Pencil, Plus } from 'lucide-react'
+import { directoryApi, importApi, adminApi, departmentsApi } from '@/services/api'
+import { useAuth } from '@/hooks/useAuth'
 import ImportModal from '@/components/ImportModal'
-import type { Employee } from '@/types'
+import { isValidE164 } from '@/utils/validation'
+import type { Employee, Department } from '@/types'
 
 export default function DirectoryPage() {
+  const { canDirectoryWrite } = useAuth()
   const [query, setQuery] = useState('')
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [loading, setLoading] = useState(true)
   const [showImport, setShowImport] = useState(false)
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
 
   useEffect(() => {
-    directoryApi
-      .search('')
-      .then((data) => {
-        setEmployees(data)
+    Promise.all([
+      directoryApi.search(''),
+      departmentsApi.getAll(),
+    ])
+      .then(([emps, depts]) => {
+        setEmployees(emps)
+        setDepartments(depts)
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -33,6 +43,60 @@ export default function DirectoryPage() {
     setLoading(false)
   }
 
+  function handleDownloadTemplate() {
+    const headers = [
+      'azureAdObjectId', 'firstName', 'lastName', 'email', 'title',
+      'officePhone', 'mobilePhone', 'officeLocation', 'departmentId',
+    ]
+    const sampleRow = [
+      '', 'Jane', 'Smith', 'jane.smith@hospital.org', 'Attending Physician',
+      '+12025551234', '+12025555678', 'Floor 3 - West Wing', '1',
+    ]
+
+    const escape = (val: string) => {
+      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+        return `"${val.replace(/"/g, '""')}"`
+      }
+      return val
+    }
+
+    const csv = [
+      headers.join(','),
+      sampleRow.map(escape).join(','),
+    ].join('\n')
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'employee-import-template.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleUpdateEmployee(id: string, data: Partial<Employee>) {
+    try {
+      const updated = await adminApi.updateEmployee(id, data as Record<string, unknown>)
+      setEmployees(prev => prev.map(e => e.id === id ? updated : e))
+      setSelectedEmployee(updated)
+      setShowEditModal(false)
+      setEditingEmployee(null)
+    } catch (err) {
+      console.error('Failed to update employee:', err)
+    }
+  }
+
+  async function handleCreateEmployee(data: Partial<Employee>) {
+    try {
+      const created = await adminApi.createEmployee(data as Record<string, unknown>)
+      setEmployees(prev => [...prev, created])
+      setSelectedEmployee(created)
+      setShowAddModal(false)
+    } catch (err) {
+      console.error('Failed to create employee:', err)
+    }
+  }
+
   const presenceColor = (presence: string) => {
     switch (presence) {
       case 'available': return 'bg-green-500'
@@ -47,13 +111,33 @@ export default function DirectoryPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Phone Directory</h1>
-        <button
-          onClick={() => setShowImport(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
-        >
-          <Upload className="w-4 h-4" />
-          Import CSV
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+          >
+            <Download className="w-4 h-4" />
+            Download Template
+          </button>
+          {canDirectoryWrite && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Add Employee
+            </button>
+          )}
+          {canDirectoryWrite && (
+            <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              Import CSV
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Search */}
@@ -149,12 +233,24 @@ export default function DirectoryPage() {
                   <div className="flex items-center gap-3 text-sm">
                     <Phone className="w-4 h-4 text-gray-500" />
                     <span>{selectedEmployee.officePhone}</span>
+                    {!isValidE164(selectedEmployee.officePhone) && (
+                      <span className="flex items-center gap-1 text-xs text-yellow-500" title="Not in E.164 format">
+                        <AlertTriangle className="w-3 h-3" /> Invalid format
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-600">(office)</span>
                   </div>
                 )}
                 {selectedEmployee.mobilePhone && (
                   <div className="flex items-center gap-3 text-sm">
                     <Phone className="w-4 h-4 text-gray-500" />
                     <span>{selectedEmployee.mobilePhone}</span>
+                    {!isValidE164(selectedEmployee.mobilePhone) && (
+                      <span className="flex items-center gap-1 text-xs text-yellow-500" title="Not in E.164 format">
+                        <AlertTriangle className="w-3 h-3" /> Invalid format
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-600">(mobile)</span>
                   </div>
                 )}
                 <div className="flex items-center gap-3 text-sm">
@@ -176,6 +272,18 @@ export default function DirectoryPage() {
               </div>
 
               <div className="flex gap-2">
+                {canDirectoryWrite && (
+                  <button
+                    onClick={() => {
+                      setEditingEmployee(selectedEmployee)
+                      setShowEditModal(true)
+                    }}
+                    className="flex-1 text-center px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <Pencil className="w-4 h-4 inline-block mr-1" />
+                    Edit
+                  </button>
+                )}
                 <a
                   href={`tel:${selectedEmployee.officePhone || selectedEmployee.mobilePhone}`}
                   className="flex-1 text-center px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
@@ -214,10 +322,255 @@ export default function DirectoryPage() {
         isOpen={showImport}
         onClose={() => setShowImport(false)}
         title="Import Employees"
-        description="Upload a CSV file with employee data. Columns: azureAdObjectId, firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId"
+        description="Upload a CSV file with employee data. Columns: azureAdObjectId (optional, leave blank for manual accounts), firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId. Phone numbers must be in E.164 format (e.g. +12025551234)."
         onValidate={(file) => importApi.validateEmployees(file)}
         onImport={(file) => importApi.importEmployees(file)}
       />
+
+      {/* Add Employee Modal */}
+      {showAddModal && (
+        <EditEmployeeModal
+          employee={null}
+          departments={departments}
+          onSave={(_, data) => handleCreateEmployee(data)}
+          onClose={() => setShowAddModal(false)}
+        />
+      )}
+
+      {/* Edit Employee Modal */}
+      {showEditModal && editingEmployee && (
+        <EditEmployeeModal
+          employee={editingEmployee}
+          departments={departments}
+          onSave={handleUpdateEmployee}
+          onClose={() => {
+            setShowEditModal(false)
+            setEditingEmployee(null)
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function EditEmployeeModal({
+  employee,
+  departments,
+  onSave,
+  onClose,
+}: {
+  employee: Employee | null
+  departments: Department[]
+  onSave: (id: string, data: Partial<Employee>) => Promise<void>
+  onClose: () => void
+}) {
+  const isEditing = employee !== null
+  const [firstName, setFirstName] = useState(employee?.firstName || '')
+  const [lastName, setLastName] = useState(employee?.lastName || '')
+  const [email, setEmail] = useState(employee?.email || '')
+  const [title, setTitle] = useState(employee?.title || '')
+  const [specialty, setSpecialty] = useState(employee?.specialty || '')
+  const [clinicalRole, setClinicalRole] = useState(employee?.clinicalRole || '')
+  const [officePhone, setOfficePhone] = useState(employee?.officePhone || '')
+  const [mobilePhone, setMobilePhone] = useState(employee?.mobilePhone || '')
+  const [officeLocation, setOfficeLocation] = useState(employee?.officeLocation || '')
+  const [departmentId, setDepartmentId] = useState<number | ''>(employee?.departmentId ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!firstName.trim() || !lastName.trim()) { setError('First and last name are required.'); return }
+    if (!email.trim()) { setError('Email is required.'); return }
+
+    setSaving(true)
+    setError(null)
+    try {
+      const data: Partial<Employee> = {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+        title: title.trim() || undefined,
+        specialty: specialty.trim() || undefined,
+        clinicalRole: clinicalRole.trim() || undefined,
+        officePhone: officePhone.trim() || undefined,
+        mobilePhone: mobilePhone.trim() || undefined,
+        officeLocation: officeLocation.trim() || undefined,
+        departmentId: departmentId || undefined,
+      }
+      if (isEditing) {
+        await onSave(employee.id, data)
+      } else {
+        await onSave('', data)
+      }
+    } catch {
+      setError(isEditing ? 'Failed to update employee.' : 'Failed to create employee.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 className="text-lg font-medium">{isEditing ? 'Edit Employee' : 'Add Employee'}</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">First Name</label>
+              <input
+                type="text"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Last Name</label>
+              <input
+                type="text"
+                required
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Email</label>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Title</label>
+              <input
+                type="text"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="e.g., Attending Physician"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Specialty</label>
+              <input
+                type="text"
+                value={specialty}
+                onChange={(e) => setSpecialty(e.target.value)}
+                placeholder="e.g., Cardiology"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Clinical Role</label>
+              <input
+                type="text"
+                value={clinicalRole}
+                onChange={(e) => setClinicalRole(e.target.value)}
+                placeholder="e.g., Resident, Fellow"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Department</label>
+              <select
+                value={departmentId}
+                onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              >
+                <option value="">None</option>
+                {departments.map((d) => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Office Phone</label>
+              <input
+                type="tel"
+                value={officePhone}
+                onChange={(e) => setOfficePhone(e.target.value)}
+                placeholder="+12025551234"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Mobile Phone</label>
+              <input
+                type="tel"
+                value={mobilePhone}
+                onChange={(e) => setMobilePhone(e.target.value)}
+                placeholder="+12025555678"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Office Location</label>
+            <input
+              type="text"
+              value={officeLocation}
+              onChange={(e) => setOfficeLocation(e.target.value)}
+              placeholder="e.g., Floor 3 - West Wing"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+            />
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {saving ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              {saving ? 'Saving...' : isEditing ? 'Save Changes' : 'Create Employee'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

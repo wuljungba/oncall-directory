@@ -5,7 +5,7 @@ interface ImportResult {
   totalRows: number
   imported: number
   errors: string[]
-  isVAlid: boolean
+  isValid: boolean
 }
 
 interface ImportModalProps {
@@ -57,7 +57,7 @@ export default function ImportModal({
     try {
       const res = await onImport(file)
       setResult(res)
-      if (res.isVAlid && res.errors.length === 0) {
+      if (res.isValid && res.errors.length === 0) {
         // Auto-close after brief delay on success
         setTimeout(() => {
           setFile(null)
@@ -153,11 +153,11 @@ export default function ImportModal({
           {result && (
             <div className="space-y-3">
               <div className={`flex items-center gap-2 text-sm rounded-lg px-4 py-3 ${
-                result.isVAlid && result.errors.length === 0
+                result.isValid && result.errors.length === 0
                   ? 'bg-green-600/10 text-green-400'
                   : 'bg-yellow-600/10 text-yellow-400'
               }`}>
-                {result.isVAlid && result.errors.length === 0 ? (
+                {result.isValid && result.errors.length === 0 ? (
                   <Check className="w-4 h-4 flex-shrink-0" />
                 ) : (
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />

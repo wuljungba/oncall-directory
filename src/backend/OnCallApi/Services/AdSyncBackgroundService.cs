@@ -27,16 +27,25 @@ public class AdSyncBackgroundService : BackgroundService
         }
 
         // Run initial sync immediately
-        await SyncUsersAsync(stoppingToken);
+        await SyncUsersDeltaAsync(null, stoppingToken);
 
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_intervalMinutes));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            await SyncUsersAsync(stoppingToken);
+            string? deltaToken = null;
+            using (var scope = _services.CreateScope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                var setting = await db.AppSettings
+                    .FirstOrDefaultAsync(s => s.Key == "AdDeltaToken", stoppingToken);
+                deltaToken = setting?.Value;
+            }
+
+            await SyncUsersDeltaAsync(deltaToken, stoppingToken);
         }
     }
 
-    private async Task SyncUsersAsync(CancellationToken ct)
+    private async Task SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct)
     {
         try
         {
@@ -44,11 +53,18 @@ public class AdSyncBackgroundService : BackgroundService
             var graphApi = scope.ServiceProvider.GetRequiredService<IGraphApiService>();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-            // Get delta token from last sync
-            var lastSync = await db.Employees.MaxAsync(e => (DateTime?)e.LastSyncedAt, ct);
+            // Use delta query for efficiency: first call returns all users,
+            // subsequent calls with delta token return only changes
+            var (users, newDeltaToken) = await graphApi.SyncUsersDeltaAsync(deltaToken, ct);
 
-            // Sync all users (would use delta in production for efficiency)
-            var users = await graphApi.SyncUsersAsync(ct);
+            if (users.Count == 0 && deltaToken != null)
+            {
+                // No changes since last sync — just update the token
+                _logger.LogInformation("AD delta sync: no changes");
+                await StoreDeltaTokenAsync(db, newDeltaToken, ct);
+                return;
+            }
+
             var adObjectIds = users.Select(u => u.AzureAdObjectId).ToHashSet();
 
             // Update existing, add new
@@ -90,11 +106,40 @@ public class AdSyncBackgroundService : BackgroundService
             }
 
             await db.SaveChangesAsync(ct);
-            _logger.LogInformation("AD sync completed: {Count} users processed", users.Count);
+
+            // Store the delta token for next sync
+            if (newDeltaToken != null)
+            {
+                await StoreDeltaTokenAsync(db, newDeltaToken, ct);
+            }
+
+            _logger.LogInformation("AD delta sync completed: {Count} users processed", users.Count);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "AD sync cycle failed");
+            _logger.LogError(ex, "AD delta sync cycle failed");
         }
+    }
+
+    private static async Task StoreDeltaTokenAsync(AppDbContext db, string? deltaToken, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(deltaToken)) return;
+
+        var setting = await db.AppSettings
+            .FirstOrDefaultAsync(s => s.Key == "AdDeltaToken", ct);
+        if (setting != null)
+        {
+            setting.Value = deltaToken;
+        }
+        else
+        {
+            db.AppSettings.Add(new Models.AppSetting
+            {
+                Key = "AdDeltaToken",
+                Value = deltaToken,
+                Description = "Azure AD Graph API delta token for incremental user sync"
+            });
+        }
+        await db.SaveChangesAsync(ct);
     }
 }

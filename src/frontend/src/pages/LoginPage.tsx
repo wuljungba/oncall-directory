@@ -17,7 +17,7 @@ export default function LoginPage({
   const navigate = useNavigate()
 
   useEffect(() => {
-    if (isAuthenticated) navigate('/', { replace: true })
+    if (isAuthenticated) navigate('/dashboard', { replace: true })
   }, [isAuthenticated, navigate])
 
   if (isLoading) {

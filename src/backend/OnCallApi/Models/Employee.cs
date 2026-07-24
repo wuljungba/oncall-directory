@@ -1,5 +1,12 @@
 namespace OnCallApi.Models;
 
+/// <summary>E.164 phone number regex: +{country code}{national number}, max 15 digits.</summary>
+public static class PhoneFormats
+{
+    public const string E164Pattern = @"^\+[1-9]\d{1,14}$";
+    public const string E164DisplayName = "E.164 format (+ followed by 2-15 digits, e.g. +1234567890)";
+}
+
 public class Employee
 {
     public Guid Id { get; set; } = Guid.NewGuid();
@@ -28,13 +35,16 @@ public class Employee
 
     [Phone]
     [MaxLength(50)]
+    [RegularExpression(PhoneFormats.E164Pattern, ErrorMessage = "OfficePhone must be in E.164 format (+ followed by 2-15 digits, e.g. +1234567890)")]
     public string? OfficePhone { get; set; }
 
     [Phone]
     [MaxLength(50)]
+    [RegularExpression(PhoneFormats.E164Pattern, ErrorMessage = "MobilePhone must be in E.164 format (+ followed by 2-15 digits, e.g. +1234567890)")]
     public string? MobilePhone { get; set; }
 
     [MaxLength(50)]
+    [RegularExpression(PhoneFormats.E164Pattern, ErrorMessage = "PagerNumber must be in E.164 format (+ followed by 2-15 digits, e.g. +1234567890)")]
     public string? PagerNumber { get; set; }
 
     [MaxLength(200)]

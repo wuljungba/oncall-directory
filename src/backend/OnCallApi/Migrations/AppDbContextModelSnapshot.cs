@@ -126,7 +126,7 @@ namespace OnCallApi.Migrations
                         new
                         {
                             Id = 1,
-                            CreatedAt = new DateTime(2026, 7, 20, 16, 32, 15, 739, DateTimeKind.Utc).AddTicks(1629),
+                            CreatedAt = new DateTime(2026, 7, 21, 13, 55, 59, 802, DateTimeKind.Utc).AddTicks(3278),
                             Description = "Emergency Department",
                             IsActive = true,
                             Name = "Emergency Medicine"
@@ -134,7 +134,7 @@ namespace OnCallApi.Migrations
                         new
                         {
                             Id = 2,
-                            CreatedAt = new DateTime(2026, 7, 20, 16, 32, 15, 739, DateTimeKind.Utc).AddTicks(1634),
+                            CreatedAt = new DateTime(2026, 7, 21, 13, 55, 59, 802, DateTimeKind.Utc).AddTicks(3284),
                             Description = "Heart & Vascular",
                             IsActive = true,
                             Name = "Cardiology"
@@ -142,7 +142,7 @@ namespace OnCallApi.Migrations
                         new
                         {
                             Id = 3,
-                            CreatedAt = new DateTime(2026, 7, 20, 16, 32, 15, 739, DateTimeKind.Utc).AddTicks(1636),
+                            CreatedAt = new DateTime(2026, 7, 21, 13, 55, 59, 802, DateTimeKind.Utc).AddTicks(3285),
                             Description = "General Medicine",
                             IsActive = true,
                             Name = "Internal Medicine"
@@ -150,7 +150,7 @@ namespace OnCallApi.Migrations
                         new
                         {
                             Id = 4,
-                            CreatedAt = new DateTime(2026, 7, 20, 16, 32, 15, 739, DateTimeKind.Utc).AddTicks(1638),
+                            CreatedAt = new DateTime(2026, 7, 21, 13, 55, 59, 802, DateTimeKind.Utc).AddTicks(3287),
                             Description = "Children's Health",
                             IsActive = true,
                             Name = "Pediatrics"
@@ -158,7 +158,7 @@ namespace OnCallApi.Migrations
                         new
                         {
                             Id = 5,
-                            CreatedAt = new DateTime(2026, 7, 20, 16, 32, 15, 739, DateTimeKind.Utc).AddTicks(1639),
+                            CreatedAt = new DateTime(2026, 7, 21, 13, 55, 59, 802, DateTimeKind.Utc).AddTicks(3288),
                             Description = "Surgical Services",
                             IsActive = true,
                             Name = "Surgery"
@@ -166,7 +166,7 @@ namespace OnCallApi.Migrations
                         new
                         {
                             Id = 6,
-                            CreatedAt = new DateTime(2026, 7, 20, 16, 32, 15, 739, DateTimeKind.Utc).AddTicks(1641),
+                            CreatedAt = new DateTime(2026, 7, 21, 13, 55, 59, 802, DateTimeKind.Utc).AddTicks(3289),
                             Description = "Hospital Administration",
                             IsActive = true,
                             Name = "Administration"
@@ -363,6 +363,89 @@ namespace OnCallApi.Migrations
                     b.HasIndex("ManagerId");
 
                     b.ToTable("Employees");
+                });
+
+            modelBuilder.Entity("OnCallApi.Models.EscalationEvent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Details")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<Guid>("EmployeeId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<int>("PolicyId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("ShiftId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("Tier")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("TriggeredAt")
+                        .HasColumnType("datetime2");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EmployeeId");
+
+                    b.HasIndex("PolicyId");
+
+                    b.HasIndex("ShiftId");
+
+                    b.ToTable("EscalationEvents");
+                });
+
+            modelBuilder.Entity("OnCallApi.Models.EscalationPolicy", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int?>("DepartmentId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("EscalationTierCount")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("MaxResponseMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("NotificationChannels")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DepartmentId");
+
+                    b.ToTable("EscalationPolicies");
                 });
 
             modelBuilder.Entity("OnCallApi.Models.PhoneTree", b =>
@@ -672,6 +755,43 @@ namespace OnCallApi.Migrations
                     b.Navigation("Department");
 
                     b.Navigation("Manager");
+                });
+
+            modelBuilder.Entity("OnCallApi.Models.EscalationEvent", b =>
+                {
+                    b.HasOne("OnCallApi.Models.Employee", "Employee")
+                        .WithMany()
+                        .HasForeignKey("EmployeeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("OnCallApi.Models.EscalationPolicy", "Policy")
+                        .WithMany()
+                        .HasForeignKey("PolicyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("OnCallApi.Models.Shift", "Shift")
+                        .WithMany()
+                        .HasForeignKey("ShiftId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Employee");
+
+                    b.Navigation("Policy");
+
+                    b.Navigation("Shift");
+                });
+
+            modelBuilder.Entity("OnCallApi.Models.EscalationPolicy", b =>
+                {
+                    b.HasOne("OnCallApi.Models.Department", "Department")
+                        .WithMany()
+                        .HasForeignKey("DepartmentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Department");
                 });
 
             modelBuilder.Entity("OnCallApi.Models.PhoneTree", b =>

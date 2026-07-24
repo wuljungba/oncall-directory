@@ -57,3 +57,39 @@ public class ShiftSwapValidator : AbstractValidator<ShiftSwap>
             .WithMessage("Status must be pending, approved, rejected, or cancelled.");
     }
 }
+
+public class AssignShiftRequestValidator : AbstractValidator<AssignShiftRequest>
+{
+    public AssignShiftRequestValidator()
+    {
+        RuleFor(x => x.EmployeeId)
+            .NotEmpty().WithMessage("Employee ID is required.");
+
+        RuleFor(x => x.StartTime)
+            .NotEmpty().WithMessage("Start time is required.");
+
+        RuleFor(x => x.EndTime)
+            .NotEmpty().WithMessage("End time is required.")
+            .GreaterThan(x => x.StartTime).WithMessage("End time must be after start time.");
+
+        RuleFor(x => x.Tier)
+            .NotEmpty()
+            .Must(t => t is "primary" or "secondary" or "tertiary")
+            .WithMessage("Tier must be primary, secondary, or tertiary.");
+    }
+}
+
+public class SwapRequestValidator : AbstractValidator<SwapRequest>
+{
+    public SwapRequestValidator()
+    {
+        RuleFor(x => x.ShiftId)
+            .GreaterThan(0).WithMessage("Shift ID is required.");
+
+        RuleFor(x => x.RequestedById)
+            .NotEmpty().WithMessage("Requester ID is required.");
+
+        RuleFor(x => x.Reason)
+            .MaximumLength(500).WithMessage("Reason cannot exceed 500 characters.");
+    }
+}

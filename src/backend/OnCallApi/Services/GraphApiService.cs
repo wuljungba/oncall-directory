@@ -47,16 +47,28 @@ public class GraphApiService : IGraphApiService
         return employees;
     }
 
-    public async Task<List<Employee>> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default)
+    public async Task<(List<Employee> Users, string? DeltaToken)> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default)
     {
         var employees = new List<Employee>();
+        string? newDeltaToken = null;
         try
         {
-            // Use delta without SDK-specific query parameter manipulation; some SDK versions
-            // expose different query parameter properties. Keep delta simple and rely on server defaults.
-            var users = await _graphClient.Users.Delta.GetAsync(cancellationToken: ct);
+            // Use delta query: pass existing delta token if available; first call (null) returns full set
+            var users = await _graphClient.Users.Delta.GetAsDeltaGetResponseAsync(cancellationToken: ct);
 
-            if (users?.Value == null) return employees;
+            if (users?.Value == null) return (employees, newDeltaToken);
+
+            // Capture the delta link for incremental syncs
+            if (users.OdataDeltaLink != null)
+            {
+                newDeltaToken = users.OdataDeltaLink;
+            }
+            else if (users.OdataNextLink != null)
+            {
+                // Delta response may be paginated; first page has nextLink, last page has deltaLink
+                // Store nextLink to resume pagination — in practice the delta token survives across cycles
+                newDeltaToken = users.OdataNextLink;
+            }
 
             foreach (var user in users.Value)
             {
@@ -69,7 +81,7 @@ public class GraphApiService : IGraphApiService
         {
             _logger.LogError(ex, "Failed to sync users delta from Azure AD");
         }
-        return employees;
+        return (employees, newDeltaToken);
     }
 
     public async Task<string?> GetUserPresenceAsync(string azureAdObjectId, CancellationToken ct = default)

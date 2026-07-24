@@ -7,7 +7,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireDirectoryRead")]
 public class DirectoryController : ControllerBase
 {
     private readonly IDirectoryService _directoryService;
@@ -19,7 +19,7 @@ public class DirectoryController : ControllerBase
 
     /// <summary>Search employees by name, title, or email.</summary>
     [HttpGet("search")]
-    public async Task<ActionResult<List<Employee>>> Search([FromQuery] string q, [FromQuery] int? departmentId)
+    public async Task<ActionResult<List<Employee>>> Search([FromQuery] string? q, [FromQuery] int? departmentId)
     {
         if (string.IsNullOrWhiteSpace(q) && !departmentId.HasValue)
             return await _directoryService.SearchEmployeesAsync("");

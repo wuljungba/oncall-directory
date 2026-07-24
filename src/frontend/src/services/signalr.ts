@@ -54,32 +54,26 @@ export async function connectSignalR(accessToken: string): Promise<HubConnection
 
   // Register event handlers
   connection.on('ScheduleCreated', (payload: unknown) => {
-    console.debug('[SignalR] ScheduleCreated', payload)
     notify({ type: 'ScheduleCreated', payload })
   })
 
   connection.on('ShiftAssigned', (payload: unknown) => {
-    console.debug('[SignalR] ShiftAssigned', payload)
     notify({ type: 'ShiftAssigned', payload })
   })
 
   connection.on('ShiftsGenerated', (payload: unknown) => {
-    console.debug('[SignalR] ShiftsGenerated', payload)
     notify({ type: 'ShiftsGenerated', payload })
   })
 
   connection.on('SwapRequested', (payload: unknown) => {
-    console.debug('[SignalR] SwapRequested', payload)
     notify({ type: 'SwapRequested', payload })
   })
 
   connection.on('SwapApproved', (payload: unknown) => {
-    console.debug('[SignalR] SwapApproved', payload)
     notify({ type: 'SwapApproved', payload })
   })
 
   connection.on('TimeOffUpdated', (payload: unknown) => {
-    console.debug('[SignalR] TimeOffUpdated', payload)
     notify({ type: 'TimeOffUpdated', payload })
   })
 
@@ -87,8 +81,8 @@ export async function connectSignalR(accessToken: string): Promise<HubConnection
     console.warn('[SignalR] Reconnecting...', error)
   })
 
-  connection.onreconnected((connectionId) => {
-    console.info('[SignalR] Reconnected as', connectionId)
+  connection.onreconnected((_connectionId) => {
+    // Reconnected
   })
 
   connection.onclose((error) => {
@@ -96,7 +90,6 @@ export async function connectSignalR(accessToken: string): Promise<HubConnection
   })
 
   await connection.start()
-  console.info('[SignalR] Connected')
   return connection
 }
 

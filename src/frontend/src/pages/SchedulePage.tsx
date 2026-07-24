@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
-  ChevronLeft, ChevronRight, Clock, Plus, Save, X, Trash2, AlertTriangle, Sparkles, Repeat, Download
+  ChevronLeft, ChevronRight, Clock, Plus, Save, X, Trash2, AlertTriangle,
+  Sparkles, Repeat, Download, Phone, Mail, MessageSquare,
 } from 'lucide-react'
-import { scheduleApi, departmentsApi } from '@/services/api'
-import type { Schedule, Shift, Department } from '@/types'
+import { scheduleApi, departmentsApi, directoryApi } from '@/services/api'
+import { useAuth } from '@/hooks/useAuth'
+import { useSignalR } from '@/hooks/useSignalR'
+import type { Schedule, Shift, Department, Employee } from '@/types'
 
 export default function SchedulePage() {
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -15,12 +18,27 @@ export default function SchedulePage() {
   const [generating, setGenerating] = useState(false)
   const [swapTargetShift, setSwapTargetShift] = useState<Shift | null>(null)
   const [showSwapModal, setShowSwapModal] = useState(false)
+  const [showAssignModal, setShowAssignModal] = useState(false)
+  const [assignCellStart, setAssignCellStart] = useState<Date | null>(null)
+  const [assignCellEnd, setAssignCellEnd] = useState<Date | null>(null)
+  const [currentOnCall, setCurrentOnCall] = useState<Shift[]>([])
+  const [viewMode, setViewMode] = useState<'weekly' | 'biweekly' | 'monthly'>('weekly')
+  const DAYS_COUNT = viewMode === 'weekly' ? 7 : viewMode === 'biweekly' ? 14 : 28
+  const gridCols = `60px repeat(${DAYS_COUNT}, minmax(100px, 1fr))`
+  const { canScheduleWrite, canAdminFull } = useAuth()
   const [currentWeekStart, setCurrentWeekStart] = useState(() => {
     const d = new Date()
     d.setDate(d.getDate() - d.getDay())
     d.setHours(0, 0, 0, 0)
     return d
   })
+
+  function getWeekStart(date: Date) {
+    const d = new Date(date)
+    d.setDate(d.getDate() - d.getDay())
+    d.setHours(0, 0, 0, 0)
+    return d
+  }
 
   useEffect(() => {
     Promise.all([
@@ -30,21 +48,67 @@ export default function SchedulePage() {
       setSchedules(scheds)
       setDepartments(depts)
       setLoading(false)
-    }).catch(console.error)
+    }).catch(err => {
+      console.error(err)
+      setLoading(false)
+    })
   }, [])
 
   useEffect(() => {
     if (selectedSchedule) {
       const from = currentWeekStart.toISOString()
-      const to = new Date(currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      const to = new Date(currentWeekStart.getTime() + DAYS_COUNT * 24 * 60 * 60 * 1000).toISOString()
       scheduleApi
         .getShifts(selectedSchedule, from, to)
         .then(setShifts)
         .catch(console.error)
     }
-  }, [selectedSchedule, currentWeekStart])
+  }, [selectedSchedule, currentWeekStart, DAYS_COUNT])
 
-  const weekDays = Array.from({ length: 7 }, (_, i) => {
+  useEffect(() => {
+    const currentSchedule = schedules.find(s => s.id === selectedSchedule)
+    scheduleApi.getOnCall(currentSchedule?.departmentId)
+      .then(setCurrentOnCall)
+      .catch(console.error)
+  }, [selectedSchedule, schedules])
+
+  // ── SignalR real-time subscriptions ──
+  const { lastEvent } = useSignalR()
+  const prevLastEventRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    if (!lastEvent || !selectedSchedule) return
+
+    // Deduplicate: skip if this event key was already processed
+    const eventKey = `${lastEvent.type}-${JSON.stringify(lastEvent.payload)}`
+    if (eventKey === prevLastEventRef.current) return
+    prevLastEventRef.current = eventKey
+
+    const refreshOn = ['ShiftAssigned', 'ShiftsGenerated', 'SwapRequested', 'SwapApproved']
+    if (!refreshOn.includes(lastEvent.type)) return
+
+    // Refresh shifts for current view
+    const from = currentWeekStart.toISOString()
+    const to = new Date(currentWeekStart.getTime() + DAYS_COUNT * 24 * 60 * 60 * 1000).toISOString()
+    scheduleApi.getShifts(selectedSchedule, from, to).then(setShifts).catch(console.error)
+
+    // Also refresh on-call data
+    const currentSchedule = schedules.find(s => s.id === selectedSchedule)
+    if (currentSchedule) {
+      scheduleApi.getOnCall(currentSchedule.departmentId).then(setCurrentOnCall).catch(console.error)
+    }
+
+    // If a new schedule was created, refresh the schedule list
+    if (lastEvent.type === 'ScheduleCreated') {
+      scheduleApi.getAll().then(data => {
+        setSchedules(data)
+        // Auto-select if only one schedule
+        if (data.length === 1) setSelectedSchedule(data[0].id)
+      }).catch(console.error)
+    }
+  }, [lastEvent, selectedSchedule, currentWeekStart, DAYS_COUNT, schedules])
+
+  const weekDays = Array.from({ length: DAYS_COUNT }, (_, i) => {
     const d = new Date(currentWeekStart)
     d.setDate(d.getDate() + i)
     return d
@@ -104,7 +168,7 @@ export default function SchedulePage() {
       await scheduleApi.generateShifts(selectedSchedule, 4)
       // Refresh shifts for current view
       const from = currentWeekStart.toISOString()
-      const to = new Date(currentWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      const to = new Date(currentWeekStart.getTime() + DAYS_COUNT * 24 * 60 * 60 * 1000).toISOString()
       const updated = await scheduleApi.getShifts(selectedSchedule, from, to)
       setShifts(updated)
     } catch (err) {
@@ -191,6 +255,28 @@ export default function SchedulePage() {
     }
   }
 
+  async function handleAssignShift(employeeId: string, startTime: string, endTime: string, tier: string) {
+    if (!selectedSchedule) return
+    try {
+      await scheduleApi.assignShift(selectedSchedule, {
+        employeeId,
+        startTime,
+        endTime,
+        tier: tier as 'primary' | 'secondary' | 'tertiary',
+      })
+      // Refresh shifts for current view
+      const from = currentWeekStart.toISOString()
+      const to = new Date(currentWeekStart.getTime() + DAYS_COUNT * 24 * 60 * 60 * 1000).toISOString()
+      const updated = await scheduleApi.getShifts(selectedSchedule, from, to)
+      setShifts(updated)
+      setShowAssignModal(false)
+      setAssignCellStart(null)
+      setAssignCellEnd(null)
+    } catch (err) {
+      console.error('Failed to assign shift:', err)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -206,14 +292,16 @@ export default function SchedulePage() {
         <div className="flex items-center gap-2">
           {selectedSchedule && (
             <>
-              <button
-                onClick={handleGenerateShifts}
-                disabled={generating}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors disabled:opacity-50"
-              >
-                <Sparkles className="w-4 h-4" />
-                {generating ? 'Generating...' : 'Auto-Generate Shifts'}
-              </button>
+              {canScheduleWrite && (
+                <button
+                  onClick={handleGenerateShifts}
+                  disabled={generating}
+                  className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors disabled:opacity-50"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {generating ? 'Generating...' : 'Auto-Generate Shifts'}
+                </button>
+              )}
               <button
                 onClick={handleDownloadIcs}
                 className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
@@ -222,22 +310,26 @@ export default function SchedulePage() {
                 <Download className="w-4 h-4" />
                 Export
               </button>
-              <button
-                onClick={() => handleDeleteSchedule(selectedSchedule)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-sm transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete
-              </button>
+              {canAdminFull && (
+                <button
+                  onClick={() => handleDeleteSchedule(selectedSchedule)}
+                  className="flex items-center gap-2 px-4 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg text-sm transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
+              )}
             </>
           )}
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-            New Schedule
-          </button>
+          {canScheduleWrite && (
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              New Schedule
+            </button>
+          )}
         </div>
       </div>
 
@@ -272,9 +364,47 @@ export default function SchedulePage() {
               <ChevronLeft className="w-5 h-5" />
             </button>
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const d = new Date()
+                  d.setDate(d.getDate() - d.getDay())
+                  d.setHours(0, 0, 0, 0)
+                  setCurrentWeekStart(d)
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                  currentWeekStart.toDateString() === getWeekStart(new Date()).toDateString()
+                    ? 'bg-amber-600/20 text-amber-500 cursor-default'
+                    : 'bg-gray-800 hover:bg-gray-700 text-gray-400'
+                }`}
+              >
+                Today
+              </button>
+              {/* View Mode Toggle */}
+              <div className="flex bg-gray-800 rounded-lg p-0.5">
+                {(['weekly', 'biweekly', 'monthly'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    onClick={() => {
+                      setViewMode(mode)
+                      // Reset to week start when changing view mode
+                      const d = new Date()
+                      d.setDate(d.getDate() - d.getDay())
+                      d.setHours(0, 0, 0, 0)
+                      setCurrentWeekStart(d)
+                    }}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium capitalize transition-colors ${
+                      viewMode === mode
+                        ? 'bg-amber-600 text-white'
+                        : 'text-gray-400 hover:text-gray-200'
+                    }`}
+                  >
+                    {mode === 'weekly' ? 'Week' : mode === 'biweekly' ? '2 Weeks' : 'Month'}
+                  </button>
+                ))}
+              </div>
               <span className="text-sm font-medium">
                 {weekDays[0].toLocaleDateString('en-US', { month: 'long', day: 'numeric' })} —{' '}
-                {weekDays[6].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                {weekDays[weekDays.length - 1].toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
               </span>
               {(() => {
                 const gaps = getGapDays()
@@ -307,10 +437,78 @@ export default function SchedulePage() {
             </button>
           </div>
 
+          {/* Currently On Call Banner */}
+          {currentOnCall.length > 0 && (
+            <div className="bg-gray-900 border border-amber-600/30 rounded-xl px-5 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-amber-500" />
+                <span className="text-sm font-medium text-amber-500">Currently On Call</span>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {currentOnCall.map((s, i) => (
+                  <div key={i} className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-medium">
+                        {s.employee?.firstName?.charAt(0)}{s.employee?.lastName?.charAt(0)}
+                      </div>
+                      <div>
+                        <p className="font-medium">{s.employee?.firstName} {s.employee?.lastName}</p>
+                        <p className="text-xs text-gray-500">
+                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${tierColor(s.tier)}`}>
+                            {s.tier}
+                          </span>
+                          {' '}until {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 ml-2">
+                      {s.employee?.officePhone && (
+                        <a
+                          href={`tel:${s.employee.officePhone}`}
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title={`Call ${s.employee.officePhone}`}
+                        >
+                          <Phone className="w-3.5 h-3.5 text-gray-400 hover:text-green-400" />
+                        </a>
+                      )}
+                      {s.employee?.email && (
+                        <a
+                          href={`mailto:${s.employee.email}`}
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Send email"
+                        >
+                          <Mail className="w-3.5 h-3.5 text-gray-400 hover:text-amber-400" />
+                        </a>
+                      )}
+                      {s.employee?.email && (
+                        <a
+                          href={`https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(s.employee.email)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Chat in Teams"
+                        >
+                          <MessageSquare className="w-3.5 h-3.5 text-gray-400 hover:text-blue-400" />
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {currentOnCall.length === 0 && selectedSchedule && (
+            <div className="flex items-center gap-2 bg-gray-900 border border-gray-800 rounded-xl px-5 py-3 text-sm text-gray-500">
+              <AlertTriangle className="w-4 h-4 text-gray-600" />
+              No one is currently on call for this schedule
+            </div>
+          )}
+
           {/* Weekly Calendar Grid */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-x-auto">
             {/* Header */}
-            <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-800">
+            <div className="grid border-b border-gray-800" style={{ gridTemplateColumns: gridCols }}>
               <div className="p-3 text-xs text-gray-500">Time</div>
               {weekDays.map((day, i) => (
                 <div
@@ -343,7 +541,7 @@ export default function SchedulePage() {
             {TIME_BLOCKS.map((block) => (
               <div
                 key={block.hour}
-                className="grid grid-cols-[60px_repeat(7,1fr)] border-b border-gray-800/50"
+                className="grid border-b border-gray-800/50" style={{ gridTemplateColumns: gridCols }}
               >
                 <div className="p-2 text-xs text-gray-600 border-r border-gray-800/50">
                   {block.label}{block.hour === 20 ? <span className="block text-[9px] text-gray-700">→ 00:00</span> : ''}
@@ -355,8 +553,19 @@ export default function SchedulePage() {
                     <div
                       key={i}
                       className={`p-1 min-h-[48px] border-r border-gray-800/50 last:border-r-0 ${
-                        isGapCell ? 'bg-red-600/5' : 'group/cell'
+                        isGapCell
+                          ? 'bg-red-600/5 cursor-pointer hover:bg-red-600/10 transition-colors'
+                          : 'group/cell'
                       }`}
+                      onClick={isGapCell ? () => {
+                        const start = new Date(day)
+                        start.setHours(block.hour, 0, 0, 0)
+                        const end = new Date(start)
+                        end.setHours(block.hour === 20 ? 24 : block.hour + 4, 0, 0, 0)
+                        setAssignCellStart(start)
+                        setAssignCellEnd(end)
+                        setShowAssignModal(true)
+                      } : undefined}
                     >
                       {shift ? (
                         <div className="relative">
@@ -429,6 +638,20 @@ export default function SchedulePage() {
           departments={departments}
           onSave={handleCreateSchedule}
           onClose={() => setShowCreateModal(false)}
+        />
+      )}
+
+      {/* Assign Shift Modal */}
+      {showAssignModal && selectedSchedule && assignCellStart && assignCellEnd && (
+        <AssignShiftModal
+          defaultStart={assignCellStart}
+          defaultEnd={assignCellEnd}
+          onAssign={handleAssignShift}
+          onClose={() => {
+            setShowAssignModal(false)
+            setAssignCellStart(null)
+            setAssignCellEnd(null)
+          }}
         />
       )}
 
@@ -615,18 +838,40 @@ function SwapModal({
   onRequest: (replacementUserId: string, reason: string) => Promise<void>
   onClose: () => void
 }) {
-  const [replacementUserId, setReplacementUserId] = useState('')
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [loadingEmployees, setLoadingEmployees] = useState(true)
+  const [search, setSearch] = useState('')
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
   const [reason, setReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useEffect(() => {
+    if (shift.schedule?.departmentId) {
+      directoryApi.search('', shift.schedule.departmentId)
+        .then(data => { setEmployees(data); setLoadingEmployees(false) })
+        .catch(() => setLoadingEmployees(false))
+    } else {
+      directoryApi.search('')
+        .then(data => { setEmployees(data); setLoadingEmployees(false) })
+        .catch(() => setLoadingEmployees(false))
+    }
+  }, [shift.schedule?.departmentId])
+
+  const filtered = search
+    ? employees.filter(e =>
+        `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
+        e.email.toLowerCase().includes(search.toLowerCase())
+      )
+    : employees
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!replacementUserId) { setError('Please select a replacement.'); return }
+    if (!selectedEmployee) { setError('Please select a replacement.'); return }
     setSubmitting(true)
     setError(null)
     try {
-      await onRequest(replacementUserId, reason)
+      await onRequest(selectedEmployee.id, reason)
     } catch {
       setError('Failed to submit swap request.')
     } finally {
@@ -662,14 +907,66 @@ function SwapModal({
 
           <div>
             <label className="block text-sm text-gray-500 mb-1">Replacement (who should take this shift?)</label>
-            <input
-              type="text"
-              required
-              value={replacementUserId}
-              onChange={(e) => setReplacementUserId(e.target.value)}
-              placeholder="Enter employee name or email"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
-            />
+            {selectedEmployee ? (
+              <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-lg px-4 py-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-medium">
+                    {selectedEmployee.firstName?.charAt(0)}{selectedEmployee.lastName?.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="text-sm">{selectedEmployee.firstName} {selectedEmployee.lastName}</p>
+                    <p className="text-xs text-gray-500">{selectedEmployee.title || selectedEmployee.email}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmployee(null)}
+                  className="text-xs text-amber-500 hover:text-amber-400"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name or email..."
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+                  autoFocus
+                />
+                <div className="max-h-40 overflow-y-auto space-y-1">
+                  {loadingEmployees ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-600" />
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <p className="text-sm text-gray-500 text-center py-2">No employees found</p>
+                  ) : (
+                    filtered.map((emp) => (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedEmployee(emp)
+                          setSearch('')
+                        }}
+                        className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-medium flex-shrink-0">
+                          {emp.firstName?.charAt(0)}{emp.lastName?.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">{emp.firstName} {emp.lastName}</p>
+                          <p className="text-xs text-gray-500 truncate">{emp.title || emp.email}</p>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div>
@@ -693,7 +990,7 @@ function SwapModal({
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !selectedEmployee}
               className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
             >
               {submitting ? (
@@ -702,6 +999,221 @@ function SwapModal({
                 <Repeat className="w-4 h-4" />
               )}
               {submitting ? 'Submitting...' : 'Request Swap'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function AssignShiftModal({
+  defaultStart,
+  defaultEnd,
+  onAssign,
+  onClose,
+}: {
+  defaultStart: Date
+  defaultEnd: Date
+  onAssign: (employeeId: string, startTime: string, endTime: string, tier: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [loadingEmployees, setLoadingEmployees] = useState(true)
+  const [search, setSearch] = useState('')
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
+  const [startTime, setStartTime] = useState(
+    defaultStart.toLocaleString('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(' ', 'T')
+  )
+  const [endTime, setEndTime] = useState(
+    defaultEnd.toLocaleString('sv-SE', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(' ', 'T')
+  )
+  const [tier, setTier] = useState<'primary' | 'secondary' | 'tertiary'>('primary')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    directoryApi.search('')
+      .then(data => {
+        setEmployees(data)
+        setLoadingEmployees(false)
+      })
+      .catch(() => setLoadingEmployees(false))
+  }, [])
+
+  const filtered = search
+    ? employees.filter(e =>
+        `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
+        e.email.toLowerCase().includes(search.toLowerCase()) ||
+        e.title?.toLowerCase().includes(search.toLowerCase())
+      )
+    : employees
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedEmployee) { setError('Please select an employee.'); return }
+    if (!startTime || !endTime) { setError('Start and end times are required.'); return }
+    if (new Date(endTime) <= new Date(startTime)) { setError('End time must be after start time.'); return }
+
+    setSaving(true)
+    setError(null)
+    try {
+      await onAssign(
+        selectedEmployee.id,
+        new Date(startTime).toISOString(),
+        new Date(endTime).toISOString(),
+        tier,
+      )
+    } catch {
+      setError('Failed to assign shift.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div
+        className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 className="text-lg font-medium">Assign Shift</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {/* Employee Search */}
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Employee</label>
+            {selectedEmployee ? (
+              <div className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-lg px-4 py-2">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-medium">
+                    {selectedEmployee.firstName?.charAt(0)}{selectedEmployee.lastName?.charAt(0)}
+                  </div>
+                  <div>
+                    <p className="text-sm">{selectedEmployee.firstName} {selectedEmployee.lastName}</p>
+                    <p className="text-xs text-gray-500">{selectedEmployee.title || selectedEmployee.email}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedEmployee(null)}
+                  className="text-xs text-amber-500 hover:text-amber-400"
+                >
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name, email, or title..."
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+                  autoFocus
+                />
+                <div className="max-h-48 overflow-y-auto space-y-1">
+                  {loadingEmployees ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-600" />
+                    </div>
+                  ) : filtered.length === 0 ? (
+                    <p className="text-sm text-gray-500 text-center py-2">No employees found</p>
+                  ) : (
+                    filtered.map((emp) => (
+                      <button
+                        key={emp.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedEmployee(emp)
+                          setSearch('')
+                        }}
+                        className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors"
+                      >
+                        <div className="w-8 h-8 rounded-full bg-gray-700 flex items-center justify-center text-xs font-medium flex-shrink-0">
+                          {emp.firstName?.charAt(0)}{emp.lastName?.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-sm truncate">{emp.firstName} {emp.lastName}</p>
+                          <p className="text-xs text-gray-500 truncate">{emp.title || emp.email}</p>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Time Range */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Start Time</label>
+              <input
+                type="datetime-local"
+                required
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">End Time</label>
+              <input
+                type="datetime-local"
+                required
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+          </div>
+
+          {/* Tier */}
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Tier</label>
+            <select
+              value={tier}
+              onChange={(e) => setTier(e.target.value as typeof tier)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+            >
+              <option value="primary">Primary</option>
+              <option value="secondary">Secondary</option>
+              <option value="tertiary">Tertiary</option>
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving || !selectedEmployee}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              {saving ? (
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+              ) : (
+                <Save className="w-4 h-4" />
+              )}
+              {saving ? 'Assigning...' : 'Assign Shift'}
             </button>
           </div>
         </form>

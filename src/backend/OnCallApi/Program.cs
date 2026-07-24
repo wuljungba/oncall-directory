@@ -2,15 +2,55 @@ using OnCallApi.Data;
 using OnCallApi.Services;
 using OnCallApi.Middleware;
 using OnCallApi.Hubs;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Authentication ──
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
+var devAuthEnabled = builder.Configuration.GetValue<bool>("DevAuth:Enabled");
+
+if (devAuthEnabled)
+{
+    // Development mode: auto-authenticate every request as a user with all roles.
+    // No Entra ID, no JWT tokens needed.
+    builder.Services.AddAuthentication(DevelopmentAuthenticationHandler.SchemeName)
+        .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
+            DevelopmentAuthenticationHandler.SchemeName, null);
+}
+else
+{
+    // GraphApiService creates its own GraphServiceClient via ClientSecretCredential,
+    // so we only need the Web API JWT bearer validation here — not downstream token acquisition.
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"));
+
+    // Post-configure JwtBearerOptions for multi-tenant issuer validation.
+    // Runs after Microsoft.Identity.Web's own configuration and safely replaces
+    // the issuer validator to accept any valid Azure AD tenant.
+    builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+        .PostConfigure(options =>
+        {
+            options.TokenValidationParameters.ValidIssuer = null;
+            options.TokenValidationParameters.IssuerValidator = (issuer, token, parameters) =>
+            {
+                // Accept any valid Azure AD v2.0 issuer
+                if (Uri.TryCreate(issuer, UriKind.Absolute, out var uri) &&
+                    uri.Host == "login.microsoftonline.com" &&
+                    uri.Segments.Length >= 3 &&
+                    uri.Segments[2].TrimEnd('/') != "common" &&
+                    Guid.TryParse(uri.Segments[1].TrimEnd('/'), out _))
+                {
+                    return issuer;
+                }
+                throw new SecurityTokenInvalidIssuerException(
+                    $"Issuer '{issuer}' is not a valid Azure AD tenant issuer.");
+            };
+        });
+}
 
 builder.Services.AddAuthorization(options =>
 {
@@ -22,14 +62,37 @@ builder.Services.AddAuthorization(options =>
 
     options.AddPolicy("RequireViewer", policy =>
         policy.RequireRole("OnCall.Viewer", "OnCall.Scheduler", "OnCall.Admin"));
+
+    // ── Granular permission-based policies ──
+    options.AddPolicy("RequireScheduleRead", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.ScheduleRead));
+
+    options.AddPolicy("RequireScheduleWrite", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.ScheduleWrite));
+
+    options.AddPolicy("RequireDirectoryRead", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.DirectoryRead));
+
+    options.AddPolicy("RequireDirectoryWrite", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.DirectoryWrite));
+
+    options.AddPolicy("RequireAdminFull", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.AdminFull));
 });
 
 // ── Database ──
 if (builder.Environment.IsDevelopment())
 {
-    // Use in-memory DB for local development when SQL LocalDB is not available.
+    // Use SQLite for local development - provides persistent file-based storage
+    // Database file: OnCallDb.sqlite in the project directory
+    var dbPath = Path.Combine(AppContext.BaseDirectory, "OnCallDb.sqlite");
     builder.Services.AddDbContext<AppDbContext>(options =>
-        options.UseInMemoryDatabase("OnCallDb"));
+        options.UseSqlite($"Data Source={dbPath}"));
 }
 else
 {
@@ -75,6 +138,7 @@ builder.Services.AddHostedService<PresenceSyncService>();
 builder.Services.AddHostedService<CalendarSyncService>();
 builder.Services.AddScoped<AvailabilityService>();
 builder.Services.AddScoped<EscalationService>();
+builder.Services.AddScoped<IAdminService, AdminService>();
 builder.Services.AddScoped<TeamsBotService>();
 builder.Services.AddScoped<SharePointPublishingService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
@@ -108,7 +172,12 @@ builder.Services.AddValidatorsFromAssemblyContaining<OnCallApi.Validators.Schedu
 // ── Swagger ──
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Prevent circular reference errors from navigation properties (Employee -> Manager -> Employee, etc.)
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+    });
 
 var app = builder.Build();
 
@@ -120,6 +189,16 @@ app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
 app.UseAuthorization();
+
+if (!devAuthEnabled)
+{
+    // JWT scope/claim validation for protected API endpoints (runs after auth)
+    // Skipped in dev mode — DevelopmentAuthenticationHandler provides fake claims.
+    app.UseMiddleware<JwtValidationMiddleware>();
+}
+
+// HIPAA audit logging (runs after auth so User is populated)
+// In dev mode the fake user claims are logged instead of real ones
 app.UseMiddleware<HipaaAuditMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -154,7 +233,7 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 // ── SignalR Hubs ──
 app.MapHub<OnCallNotificationHub>("/hubs/notifications");
 
-// ── Auto-migrate (only for relational providers)
+// ── Auto-setup database in development (EnsureCreated to avoid SQL Server-specific migration SQL)
 if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();
@@ -162,7 +241,10 @@ if (app.Environment.IsDevelopment())
     var provider = db.Database.ProviderName ?? string.Empty;
     if (!provider.Contains("InMemory", StringComparison.OrdinalIgnoreCase))
     {
-        await db.Database.MigrateAsync();
+        // EnsureCreated creates schema from the model directly, bypassing migration SQL.
+        // This works around nvarchar(max) and other SQL Server-specific syntax in migrations
+        // that SQLite cannot parse. HasData() seed values from OnModelCreating are applied.
+        await db.Database.EnsureCreatedAsync();
     }
 }
 

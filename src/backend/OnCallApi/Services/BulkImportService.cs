@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using OnCallApi.Data;
 using OnCallApi.Models;
@@ -26,6 +27,8 @@ public class BulkImportService
     public async Task<ImportResult> ValidateEmployeesAsync(Stream csvStream)
     {
         var (records, errors) = await ParseCsvAsync(csvStream, ParseEmployeeRow);
+        CheckDuplicateEmails(records, errors);
+        await ValidateDepartmentIdsAsync(records, errors);
         return new ImportResult { TotalRows = records.Count, Errors = errors, IsValid = errors.Count == 0 };
     }
 
@@ -36,13 +39,20 @@ public class BulkImportService
         if (errors.Count > 0)
             return new ImportResult { TotalRows = records.Count, Imported = 0, Errors = errors, IsValid = false };
 
+        // Pre-import integrity checks
+        CheckDuplicateEmails(records, errors);
+        await ValidateDepartmentIdsAsync(records, errors);
+        if (errors.Count > 0)
+            return new ImportResult { TotalRows = records.Count, Imported = 0, Errors = errors, IsValid = false };
+
         var imported = 0;
+        var rowIndex = 0;
         foreach (var row in records.OfType<EmployeeRow>())
         {
+            rowIndex++;
             try
             {
-                var existing = await _db.Employees
-                    .FirstOrDefaultAsync(e => e.AzureAdObjectId == row.AzureAdObjectId);
+                var existing = await FindExistingEmployeeAsync(row);
 
                 if (existing != null)
                 {
@@ -55,6 +65,7 @@ public class BulkImportService
                     existing.OfficeLocation = row.OfficeLocation;
                     existing.DepartmentId = row.DepartmentId;
                     existing.UpdatedAt = DateTime.UtcNow;
+                    _logger.LogDebug("Updated employee {AzureAdObjectId}", row.AzureAdObjectId);
                 }
                 else
                 {
@@ -71,18 +82,46 @@ public class BulkImportService
                         DepartmentId = row.DepartmentId,
                         LastSyncedAt = DateTime.UtcNow,
                     });
+                    _logger.LogDebug("Created employee {AzureAdObjectId}", row.AzureAdObjectId);
                 }
                 imported++;
             }
             catch (Exception ex)
             {
-                errors.Add($"Row {imported + 1}: {ex.Message}");
-                _logger.LogWarning(ex, "Error importing employee row {Row}", imported + 1);
+                var errorMsg = $"Row {rowIndex}: {ex.GetType().Name}: {ex.Message}";
+                errors.Add(errorMsg);
+                _logger.LogWarning(ex, "Error importing employee row {Row}: {Error}", rowIndex, ex.Message);
             }
         }
 
+        if (errors.Count > 0)
+        {
+            _logger.LogWarning("Bulk import had {ErrorCount} error(s) — {Imported} row(s) buffered but not committed",
+                errors.Count, imported);
+            return new ImportResult { TotalRows = records.Count, Imported = 0, Errors = errors, IsValid = false };
+        }
+
         if (errors.Count == 0)
-            await _db.SaveChangesAsync();
+        {
+            try
+            {
+                await _db.SaveChangesAsync();
+                _logger.LogInformation("Successfully saved {Imported} employees to database", imported);
+            }
+            catch (DbUpdateException ex)
+            {
+                var message = ex.InnerException?.Message ?? ex.Message;
+                _logger.LogError(ex, "Database constraint violation during bulk import: {Message}", message);
+                errors.Add($"Database error: {message}");
+                return new ImportResult { TotalRows = records.Count, Imported = imported, Errors = errors, IsValid = false };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error saving to database: {Exception}", ex.ToString());
+                errors.Add($"Database error: {ex.Message}");
+                return new ImportResult { TotalRows = records.Count, Imported = imported, Errors = errors, IsValid = false };
+            }
+        }
 
         _logger.LogInformation("Bulk import completed: {Imported} employees processed with {Errors} errors", imported, errors.Count);
         return new ImportResult { TotalRows = records.Count, Imported = imported, Errors = errors, IsValid = errors.Count == 0 };
@@ -100,15 +139,17 @@ public class BulkImportService
     {
         var schedule = await _db.Schedules.FindAsync(scheduleId);
         if (schedule == null)
-            return new ImportResult { Errors = ["Schedule not found."] };
+            return new ImportResult { Errors = ["Schedule not found."], IsValid = false };
 
         var (records, errors) = await ParseCsvAsync(csvStream, row => ParseShiftRow(scheduleId, row));
         if (errors.Count > 0)
             return new ImportResult { TotalRows = records.Count, Imported = 0, Errors = errors, IsValid = false };
 
         var imported = 0;
+        var rowIndex = 0;
         foreach (var row in records.OfType<ShiftRow>())
         {
+            rowIndex++;
             try
             {
                 _db.Shifts.Add(new Shift
@@ -124,12 +165,29 @@ public class BulkImportService
             }
             catch (Exception ex)
             {
-                errors.Add($"Row {imported + 1}: {ex.Message}");
+                errors.Add($"Row {rowIndex}: {ex.Message}");
             }
         }
 
-        if (errors.Count == 0)
+        if (errors.Count > 0)
+        {
+            _logger.LogWarning("Shift bulk import had {ErrorCount} error(s) — {Imported} row(s) buffered but not committed",
+                errors.Count, imported);
+            return new ImportResult { TotalRows = records.Count, Imported = 0, Errors = errors, IsValid = false };
+        }
+
+        try
+        {
             await _db.SaveChangesAsync();
+            _logger.LogInformation("Successfully saved {Imported} shifts to database for schedule {ScheduleId}", imported, scheduleId);
+        }
+        catch (DbUpdateException ex)
+        {
+            var message = ex.InnerException?.Message ?? ex.Message;
+            _logger.LogWarning(ex, "Database constraint violation during bulk shift import: {Message}", message);
+            errors.Add($"Database error: {message}");
+            return new ImportResult { TotalRows = records.Count, Imported = imported, Errors = errors, IsValid = false };
+        }
 
         return new ImportResult { TotalRows = records.Count, Imported = imported, Errors = errors, IsValid = errors.Count == 0 };
     }
@@ -187,6 +245,9 @@ public class BulkImportService
         return (records, errors);
     }
 
+    /// <summary>
+    /// Parses a single CSV line, handling quoted fields and escaped double-quotes ("").
+    /// </summary>
     private static string[] ParseCsvLine(string line)
     {
         var values = new List<string>();
@@ -196,44 +257,147 @@ public class BulkImportService
         for (int i = 0; i < line.Length; i++)
         {
             if (line[i] == '"')
-                inQuotes = !inQuotes;
+            {
+                // Handle escaped double-quotes ("""") inside quoted fields
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    current.Append('"');
+                    i++; // skip the second quote of the pair
+                }
+                else
+                {
+                    inQuotes = !inQuotes;
+                }
+            }
             else if (line[i] == ',' && !inQuotes)
             {
                 values.Add(current.ToString());
                 current.Clear();
             }
             else
+            {
                 current.Append(line[i]);
+            }
         }
         values.Add(current.ToString());
 
         return values.ToArray();
     }
 
+    // ── Pre-import Validation Helpers ──
+
+    /// <summary>Checks for duplicate emails within the CSV data and adds errors.</summary>
+    private static void CheckDuplicateEmails(List<object> records, List<string> errors)
+    {
+        var duplicateEmails = records.OfType<EmployeeRow>()
+            .GroupBy(r => r.Email, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1)
+            .Select(g => g.Key)
+            .ToList();
+
+        foreach (var email in duplicateEmails)
+            errors.Add($"Duplicate email found in CSV: '{email}' appears more than once.");
+    }
+
+    /// <summary>Validates that referenced department IDs exist in the database.</summary>
+    private async Task ValidateDepartmentIdsAsync(List<object> records, List<string> errors)
+    {
+        var deptIds = records.OfType<EmployeeRow>()
+            .Where(r => r.DepartmentId.HasValue)
+            .Select(r => r.DepartmentId!.Value)
+            .Distinct()
+            .ToList();
+
+        if (deptIds.Count == 0) return;
+
+        var validIds = (await _db.Departments
+            .Where(d => deptIds.Contains(d.Id))
+            .Select(d => d.Id)
+            .ToListAsync()).ToHashSet();
+
+        foreach (var row in records.OfType<EmployeeRow>())
+        {
+            if (row.DepartmentId.HasValue && !validIds.Contains(row.DepartmentId.Value))
+                errors.Add($"departmentId {row.DepartmentId} does not exist for '{row.Email}'.");
+        }
+    }
+
+    /// <summary>
+    /// Finds an existing employee by AzureAdObjectId. For synthetic IDs (no Azure AD link),
+    /// falls back to deduplication by email to prevent duplicates on re-import.
+    /// </summary>
+    private async Task<Employee?> FindExistingEmployeeAsync(EmployeeRow row)
+    {
+        // First, try exact match by AzureAdObjectId
+        var existing = await _db.Employees
+            .FirstOrDefaultAsync(e => e.AzureAdObjectId == row.AzureAdObjectId);
+
+        if (existing != null)
+            return existing;
+
+        // For synthetic IDs (no real Azure AD link), deduplicate by email
+        if (row.AzureAdObjectId.StartsWith("csv-import-", StringComparison.Ordinal))
+        {
+            existing = await _db.Employees
+                .FirstOrDefaultAsync(e => e.Email == row.Email);
+            if (existing != null)
+                _logger.LogDebug("Deduplicated by email for synthetic ID on '{Email}'", row.Email);
+        }
+
+        return existing;
+    }
+
     // ── Row Parsers ──
+
+    private static readonly Regex E164Regex = new(@"^\+[1-9]\d{1,14}$", RegexOptions.Compiled);
 
     private static (EmployeeRow? Record, string? Error) ParseEmployeeRow(Dictionary<string, string> row)
     {
-        var azureAdId = row.GetValueOrDefault("azureAdObjectId", "");
+        var azureAdId = row.GetValueOrDefault("azureAdObjectId", "")?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(azureAdId))
-            return (null, "azureAdObjectId is required.");
+            azureAdId = $"csv-import-{Guid.NewGuid():N}";
 
-        var firstName = row.GetValueOrDefault("firstName", "");
-        var lastName = row.GetValueOrDefault("lastName", "");
+        var firstName = row.GetValueOrDefault("firstName", "")?.Trim() ?? "";
+        var lastName = row.GetValueOrDefault("lastName", "")?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
             return (null, "firstName and lastName are required.");
+
+        var officePhone = row.GetValueOrDefault("officePhone")?.Trim();
+        var mobilePhone = row.GetValueOrDefault("mobilePhone")?.Trim();
+
+        // Validate phone numbers
+        if (!string.IsNullOrWhiteSpace(officePhone) && !E164Regex.IsMatch(officePhone))
+            return (null, $"officePhone '{officePhone}' is not valid E.164 format (+ followed by 2-15 digits, e.g. +1234567890).");
+
+        if (!string.IsNullOrWhiteSpace(mobilePhone) && !E164Regex.IsMatch(mobilePhone))
+            return (null, $"mobilePhone '{mobilePhone}' is not valid E.164 format (+ followed by 2-15 digits, e.g. +1234567890).");
+
+        var email = row.GetValueOrDefault("email", "")?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(email))
+            return (null, "email is required.");
+
+        // Parse departmentId
+        var deptIdStr = row.GetValueOrDefault("departmentId")?.Trim();
+        int? departmentId = null;
+        if (!string.IsNullOrWhiteSpace(deptIdStr))
+        {
+            if (int.TryParse(deptIdStr, out var did))
+                departmentId = did;
+            else
+                return (null, $"departmentId '{deptIdStr}' is not a valid integer.");
+        }
 
         return (new EmployeeRow
         {
             AzureAdObjectId = azureAdId,
             FirstName = firstName,
             LastName = lastName,
-            Title = row.GetValueOrDefault("title"),
-            Email = row.GetValueOrDefault("email", ""),
-            OfficePhone = row.GetValueOrDefault("officePhone"),
-            MobilePhone = row.GetValueOrDefault("mobilePhone"),
-            OfficeLocation = row.GetValueOrDefault("officeLocation"),
-            DepartmentId = int.TryParse(row.GetValueOrDefault("departmentId"), out var did) ? did : null
+            Title = row.GetValueOrDefault("title")?.Trim(),
+            Email = email,
+            OfficePhone = string.IsNullOrWhiteSpace(officePhone) ? null : officePhone,
+            MobilePhone = string.IsNullOrWhiteSpace(mobilePhone) ? null : mobilePhone,
+            OfficeLocation = row.GetValueOrDefault("officeLocation")?.Trim(),
+            DepartmentId = departmentId
         }, null);
     }
 

@@ -8,6 +8,30 @@
     "location": {
       "value": "eastus"
     },
+    "entraTenantId": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-dev/providers/Microsoft.KeyVault/vaults/kv-oncall-dev"
+        },
+        "secretName": "entra-tenant-id"
+      }
+    },
+    "entraClientId": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-dev/providers/Microsoft.KeyVault/vaults/kv-oncall-dev"
+        },
+        "secretName": "entra-client-id"
+      }
+    },
+    "entraDomain": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-dev/providers/Microsoft.KeyVault/vaults/kv-oncall-dev"
+        },
+        "secretName": "entra-domain"
+      }
+    },
     "sqlAdminPassword": {
       "reference": {
         "keyVault": {

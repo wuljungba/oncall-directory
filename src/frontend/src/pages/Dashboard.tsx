@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail } from 'lucide-react'
 import { scheduleApi, directoryApi } from '@/services/api'
-import type { Shift } from '@/types'
+import type { Employee, Shift } from '@/types'
 
 interface OnCallSummary {
   employeeName: string
@@ -40,7 +40,7 @@ export default function Dashboard() {
         setOnCallNow(summaries)
         setStats({
           onCall: shifts.length,
-          departments: 6,
+          departments: new Set(employees.map((e: Employee) => e.departmentId)).size,
           employees: employees.length,
         })
       } catch (err) {

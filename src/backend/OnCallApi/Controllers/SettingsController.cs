@@ -8,7 +8,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireScheduleRead")]
 public class SettingsController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -33,7 +33,7 @@ public class SettingsController : ControllerBase
 
     /// <summary>Create or update a setting.</summary>
     [HttpPut("{key}")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult<AppSetting>> Upsert(string key, [FromBody] UpsertSettingRequest request)
     {
         var existing = await _db.AppSettings.FindAsync(key);

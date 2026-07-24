@@ -9,9 +9,10 @@ public class PhoneTree
 
     [Required(AllowEmptyStrings = false)]
     [MaxLength(20)]
-    public string TreeType { get; set; } = "department"; // emergency, department, oncall, admin
+    public string TreeType { get; set; } = "department"; // emergency, department, oncall, admin, code-blue, code-red, etc.
     public int? DepartmentId { get; set; }
     public Department? Department { get; set; }
+    public string? Procedure { get; set; }
     public string? FallbackProcedure { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

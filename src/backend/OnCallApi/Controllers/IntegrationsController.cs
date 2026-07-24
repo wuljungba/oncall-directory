@@ -6,7 +6,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/integrations")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireScheduleRead")]
 public class IntegrationsController : ControllerBase
 {
     private readonly IGraphApiService _graphApi;
@@ -20,7 +20,7 @@ public class IntegrationsController : ControllerBase
 
     /// <summary>Trigger an immediate AD sync.</summary>
     [HttpPost("sync/ad")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> SyncActiveDirectory()
     {
         var users = await _graphApi.SyncUsersAsync();
@@ -29,7 +29,7 @@ public class IntegrationsController : ControllerBase
 
     /// <summary>Send a test Teams notification to a user.</summary>
     [HttpPost("notify/teams")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult> SendTeamsNotification([FromBody] TeamsNotificationRequest request)
     {
         await _graphApi.SendTeamsNotificationAsync(request.UserId, request.Title, request.Message);
@@ -39,7 +39,7 @@ public class IntegrationsController : ControllerBase
 
     /// <summary>Push an on-call shift to Outlook calendar.</summary>
     [HttpPost("calendar/push")]
-    [Authorize(Policy = "RequireScheduler")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult> PushToCalendar([FromBody] CalendarPushRequest request)
     {
         await _graphApi.CreateOutlookCalendarEventAsync(

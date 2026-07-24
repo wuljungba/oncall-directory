@@ -7,7 +7,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/compliance")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireScheduleRead")]
 public class ComplianceController : ControllerBase
 {
     private readonly IDutyHourService _dutyHourService;
@@ -24,7 +24,7 @@ public class ComplianceController : ControllerBase
     }
 
     [HttpPost("rules")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult<DutyHourRule>> CreateRule(DutyHourRule rule)
     {
         var created = await _dutyHourService.CreateRuleAsync(rule);
@@ -32,7 +32,7 @@ public class ComplianceController : ControllerBase
     }
 
     [HttpPut("rules/{id}")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult<DutyHourRule>> UpdateRule(int id, DutyHourRule rule)
     {
         if (id != rule.Id) return BadRequest();
@@ -40,7 +40,7 @@ public class ComplianceController : ControllerBase
     }
 
     [HttpDelete("rules/{id}")]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> DeleteRule(int id)
     {
         await _dutyHourService.DeleteRuleAsync(id);

@@ -90,7 +90,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
   }
 
   async function handleSkip() {
-    await settingsApi.upsert('onboarding.completed', 'true', 'Onboarding wizard skipped')
+    try {
+      await settingsApi.upsert('onboarding.completed', 'true', 'Onboarding wizard skipped')
+    } catch {
+      // Skip works even if settings API is unavailable or user isn't an admin
+    }
     onComplete()
   }
 

@@ -5,7 +5,7 @@ namespace OnCallApi.Services;
 public interface IGraphApiService
 {
     Task<List<Employee>> SyncUsersAsync(CancellationToken ct = default);
-    Task<List<Employee>> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default);
+    Task<(List<Employee> Users, string? DeltaToken)> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default);
     Task<string?> GetUserPresenceAsync(string azureAdObjectId, CancellationToken ct = default);
     Task SendTeamsNotificationAsync(string userId, string title, string message, CancellationToken ct = default);
     Task SendTeamsMessageAsync(string userId, string messageJson, CancellationToken ct = default);

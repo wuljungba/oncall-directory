@@ -11,11 +11,21 @@ import PhoneTreePage from '@/pages/PhoneTreePage'
 import TimeOffPage from '@/pages/TimeOffPage'
 import SettingsPage from '@/pages/SettingsPage'
 import CompliancePage from '@/pages/CompliancePage'
+import EscalationPage from '@/pages/EscalationPage'
+import LandingPage from '@/pages/LandingPage'
+import AdminPage from '@/pages/AdminPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
   if (isLoading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
   if (!isAuthenticated) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const { isAdmin, isLoading } = useAuth()
+  if (isLoading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
+  if (!isAdmin) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -25,9 +35,13 @@ export default function App() {
   return (
     <ToastProvider>
       <Routes>
+        {/* Public routes */}
+        <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage {...auth} />} />
+
+        {/* Protected routes */}
         <Route
-          path="/"
+          path="/dashboard"
           element={
             <ProtectedRoute>
               <SignalRProvider>
@@ -43,6 +57,23 @@ export default function App() {
           <Route path="time-off" element={<TimeOffPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="compliance" element={<CompliancePage />} />
+          <Route path="escalation" element={<EscalationPage />} />
+        </Route>
+
+        {/* Admin routes (inside layout, same SignalR context) */}
+        <Route
+          path="/admin"
+          element={
+            <ProtectedRoute>
+              <AdminRoute>
+                <SignalRProvider>
+                  <Layout />
+                </SignalRProvider>
+              </AdminRoute>
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<AdminPage />} />
         </Route>
       </Routes>
     </ToastProvider>

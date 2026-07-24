@@ -8,7 +8,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize(Policy = "RequireViewer")]
+[Authorize(Policy = "RequireDirectoryRead")]
 public class DepartmentsController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -30,7 +30,7 @@ public class DepartmentsController : ControllerBase
     }
 
     [HttpPost]
-    [Authorize(Policy = "RequireAdmin")]
+    [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult<Department>> Create(Department department)
     {
         _db.Departments.Add(department);

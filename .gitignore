@@ -16,3 +16,6 @@ appsettings.Development.json
 .vs/
 __azurite*/
 launchSettings.json
+
+publish/
+build_output/

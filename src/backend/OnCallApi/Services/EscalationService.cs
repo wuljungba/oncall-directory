@@ -66,6 +66,28 @@ public class EscalationService
     }
 
     /// <summary>
+    /// Acknowledge/resolve an escalation event. Once acknowledged, no further
+    /// escalation tiers will fire for that shift until the next response window
+    /// is missed (i.e. the event's shift ends and a new one begins).
+    /// </summary>
+    public async Task<EscalationEvent> AcknowledgeEventAsync(int eventId)
+    {
+        var escEvent = await _db.EscalationEvents
+            .Include(e => e.Employee)
+            .FirstOrDefaultAsync(e => e.Id == eventId)
+            ?? throw new KeyNotFoundException($"Escalation event {eventId} not found.");
+
+        escEvent.Status = "resolved";
+        escEvent.ResolvedAt = DateTime.UtcNow;
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Escalation event {EventId} acknowledged by {Employee}",
+            eventId, escEvent.Employee?.FirstName ?? "unknown");
+
+        return escEvent;
+    }
+
+    /// <summary>
     /// Check all active shifts and fire escalations for anyone past their response window.
     /// Called periodically by EscalationBackgroundService.
     /// </summary>
