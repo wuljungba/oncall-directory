@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using OnCallApi.Authorization;
 using OnCallApi.Data;
 
@@ -31,24 +32,36 @@ public class TenantClaimsMiddleware
     {
         if (context.User.Identity?.IsAuthenticated == true)
         {
-            var identity = context.User.Identity as ClaimsIdentity;
-            if (identity == null)
+            try
             {
-                await _next(context);
-                return;
-            }
-
-            var azureAdObjectId = GetAzureAdObjectId(context.User);
-            if (!string.IsNullOrEmpty(azureAdObjectId))
-            {
-                // Skip if tenant claims are already present (avoid re-adding on repeated requests)
-                if (!context.User.HasClaim(c => c.Type.StartsWith("TenantId:")))
+                var identity = context.User.Identity as ClaimsIdentity;
+                if (identity == null)
                 {
-                    await AddTenantClaimsAsync(identity, azureAdObjectId, db);
-
-                    // Lazy auto-assignment via Azure AD group membership
-                    await TryAutoAssignFromGroupsAsync(context.User, identity, azureAdObjectId, db);
+                    await _next(context);
+                    return;
                 }
+
+                var azureAdObjectId = GetAzureAdObjectId(context.User);
+                if (!string.IsNullOrEmpty(azureAdObjectId))
+                {
+                    // Skip if tenant claims are already present (avoid re-adding on repeated requests)
+                    if (!context.User.HasClaim(c => c.Type.StartsWith("TenantId:")))
+                    {
+                        await AddTenantClaimsAsync(identity, azureAdObjectId, db);
+
+                        // Lazy auto-assignment via Azure AD group membership
+                        await TryAutoAssignFromGroupsAsync(context.User, identity, azureAdObjectId, db);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // If the Tenants/TenantAdmins tables don't exist yet (migration not applied)
+                // or any DB error occurs, silently skip tenant claim expansion.
+                // The app functions without tenant scoping until the migration is run.
+                // This prevents a missing migration from breaking all API requests.
+                var logger = context.RequestServices.GetRequiredService<ILogger<TenantClaimsMiddleware>>();
+                logger.LogWarning(ex, "Tenant claims expansion skipped (DB not ready or tenant tables missing)");
             }
         }
 
