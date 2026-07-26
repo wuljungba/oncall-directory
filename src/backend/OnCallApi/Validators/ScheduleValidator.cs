@@ -40,8 +40,8 @@ public class TimeOffValidator : AbstractValidator<TimeOff>
     {
         RuleFor(x => x.Type)
             .NotEmpty()
-            .Must(t => t is "pto" or "cme" or "holiday" or "sick")
-            .WithMessage("Type must be pto, cme, holiday, or sick.");
+            .Must(t => t is "pto" or "cme" or "holiday" or "sick" or "personal" or "bereavement" or "military" or "jury_duty" or "unpaid")
+            .WithMessage("Type must be pto, cme, holiday, sick, personal, bereavement, military, jury_duty, or unpaid.");
         RuleFor(x => x.EndDate).GreaterThanOrEqualTo(x => x.StartDate)
             .WithMessage("End date must be on or after start date.");
     }

@@ -64,6 +64,18 @@ public class DevelopmentAuthenticationHandler : AuthenticationHandler<Authentica
         // Add permission claims
         claims.AddRange(permissionClaims);
 
+        // Dev tenant claims — simulate being admin of tenant ID 1 ("Main Hospital")
+        // When the role is "admin", also grant Tenant.Manage for super admin testing
+        if (roleCookie == "admin")
+        {
+            claims.Add(new Claim("TenantId:1", "SuperAdmin"));
+        }
+        else
+        {
+            // Sub-admin roles get scoped to tenant 1 as DepartmentAdmin
+            claims.Add(new Claim("TenantId:1", "DepartmentAdmin"));
+        }
+
         var identity = new ClaimsIdentity(claims, SchemeName);
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, SchemeName);

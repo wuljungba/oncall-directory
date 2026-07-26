@@ -14,6 +14,10 @@ public class AuditLog
     public string ResourceType { get; set; } = string.Empty; // Employee, Schedule, Shift, etc.
     public string? ResourceId { get; set; }
     public string? Details { get; set; }
+
+    /// <summary>Tenant scope for this audit entry. Null for global operations.</summary>
+    public int? TenantId { get; set; }
+
     public string IpAddress { get; set; } = string.Empty;
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
 }

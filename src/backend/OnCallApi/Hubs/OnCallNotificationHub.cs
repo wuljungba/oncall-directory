@@ -29,6 +29,14 @@ public class OnCallNotificationHub : Hub
             await Groups.AddToGroupAsync(Context.ConnectionId, $"dept-{departmentClaim}");
         }
 
+        // Join user to their tenant group(s) for tenant-scoped notifications
+        foreach (var claim in Context.User?.Claims.Where(c => c.Type.StartsWith("TenantId:")) ?? [])
+        {
+            var tenantId = claim.Type.Replace("TenantId:", "");
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant-{tenantId}");
+            _logger.LogInformation("Client {UserId} joined tenant group tenant-{TenantId}", userId, tenantId);
+        }
+
         await base.OnConnectedAsync();
     }
 
@@ -48,5 +56,17 @@ public class OnCallNotificationHub : Hub
     public async Task LeaveDepartment(int departmentId)
     {
         await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"dept-{departmentId}");
+    }
+
+    /// <summary>Join a tenant notification group.</summary>
+    public async Task JoinTenant(int tenantId)
+    {
+        await Groups.AddToGroupAsync(Context.ConnectionId, $"tenant-{tenantId}");
+    }
+
+    /// <summary>Leave a tenant notification group.</summary>
+    public async Task LeaveTenant(int tenantId)
+    {
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"tenant-{tenantId}");
     }
 }

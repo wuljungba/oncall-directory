@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import {
-  PhoneCall, ChevronRight, AlertTriangle, Plus, Save, X, Trash2, Edit3, ArrowUp, ArrowDown
+  PhoneCall, ChevronRight, AlertTriangle, Plus, Save, X, Trash2, Edit3, ArrowUp, ArrowDown,
 } from 'lucide-react'
 import { phoneTreesApi } from '@/services/api'
 import type { PhoneTree, PhoneTreeNode } from '@/types'
@@ -124,7 +124,7 @@ export default function PhoneTreePage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Emergency Codes</h1>
+        <h1 className="text-2xl font-bold">Emergency Code Configuration</h1>
         <button
           onClick={() => setShowCreateModal(true)}
           className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
@@ -208,103 +208,101 @@ export default function PhoneTreePage() {
                 </div>
               </div>
 
-              {/* Procedure */}
-              {selectedTree.procedure && (
-                <div className="bg-blue-600/5 border border-blue-600/20 rounded-lg p-4">
-                  <p className="text-xs text-blue-400 font-medium mb-2 uppercase tracking-wider">Procedure</p>
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{selectedTree.procedure}</p>
-                </div>
-              )}
+              {/* Procedure & Escalation */}
+                {/* Procedure */}
+                {selectedTree.procedure && (
+                    <div className="bg-blue-600/5 border border-blue-600/20 rounded-lg p-4">
+                      <p className="text-xs text-blue-400 font-medium mb-2 uppercase tracking-wider">Procedure</p>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{selectedTree.procedure}</p>
+                    </div>
+                  )}
 
-              {/* Escalation Path */}
-              <div>
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm text-gray-500">Escalation Path</p>
-                  <button
-                    onClick={() => setShowAddNodeModal(true)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
-                  >
-                    <Plus className="w-3 h-3" />
-                    Add Node
-                  </button>
-                </div>
+                  {/* Escalation Path */}
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-sm text-gray-500">Escalation Path</p>
+                      <button
+                        onClick={() => setShowAddNodeModal(true)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
+                      >
+                        <Plus className="w-3 h-3" />
+                        Add Node
+                      </button>
+                    </div>
 
-                {selectedTree.nodes.length === 0 ? (
-                  <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-                    <AlertTriangle className="w-4 h-4" />
-                    <p>No nodes configured. Add a node to start building the escalation path.</p>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    {selectedTree.nodes
-                      .sort((a, b) => a.order - b.order)
-                      .map((node, i, arr) => (
-                        <div key={node.id} className="flex items-start gap-4 pb-6 relative group">
-                          {/* Connector line */}
-                          {i < arr.length - 1 && (
-                            <div className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-gray-700" />
-                          )}
-                          {/* Node circle */}
-                          <div className="flex-shrink-0 w-6 h-6 rounded-full border-2 border-amber-600 flex items-center justify-center text-xs font-medium text-amber-500 bg-gray-900 z-10">
-                            {node.order}
-                          </div>
-                          <div className="flex-1 bg-gray-800/50 rounded-lg p-3">
-                            <div className="flex items-start justify-between">
-                              <div>
-                                <p className="text-sm font-medium">
-                                  {node.employee
-                                    ? `${node.employee.firstName} ${node.employee.lastName}`
-                                    : node.roleName || 'Unassigned'}
-                                </p>
-                                <p className="text-xs text-gray-500 mt-0.5">
-                                  {node.employee?.title || node.employee?.department?.name || ''}
-                                </p>
-                                {node.timeoutSeconds > 0 && (
-                                  <p className="text-xs text-gray-600 mt-1">
-                                    Escalates after {node.timeoutSeconds}s
-                                  </p>
-                                )}
+                    {selectedTree.nodes.length === 0 ? (
+                      <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                        <AlertTriangle className="w-4 h-4" />
+                        <p>No nodes configured. Add a node to start building the escalation path.</p>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        {selectedTree.nodes
+                          .sort((a, b) => a.order - b.order)
+                          .map((node, i, arr) => (
+                            <div key={node.id} className="flex items-start gap-4 pb-6 relative group">
+                              {i < arr.length - 1 && (
+                                <div className="absolute left-[11px] top-6 bottom-0 w-0.5 bg-gray-700" />
+                              )}
+                              <div className="flex-shrink-0 w-6 h-6 rounded-full border-2 border-amber-600 flex items-center justify-center text-xs font-medium text-amber-500 bg-gray-900 z-10">
+                                {node.order}
                               </div>
-                              {/* Node actions */}
-                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button
-                                  onClick={() => handleMoveNode(node.id, 'up')}
-                                  disabled={i === 0}
-                                  className="p-1 hover:bg-gray-700 rounded disabled:opacity-30"
-                                  title="Move up"
-                                >
-                                  <ArrowUp className="w-3.5 h-3.5 text-gray-400" />
-                                </button>
-                                <button
-                                  onClick={() => handleMoveNode(node.id, 'down')}
-                                  disabled={i === arr.length - 1}
-                                  className="p-1 hover:bg-gray-700 rounded disabled:opacity-30"
-                                  title="Move down"
-                                >
-                                  <ArrowDown className="w-3.5 h-3.5 text-gray-400" />
-                                </button>
-                                <button
-                                  onClick={() => handleRemoveNode(node.id)}
-                                  className="p-1 hover:bg-gray-700 rounded"
-                                  title="Remove node"
-                                >
-                                  <X className="w-3.5 h-3.5 text-red-400" />
-                                </button>
+                              <div className="flex-1 bg-gray-800/50 rounded-lg p-3">
+                                <div className="flex items-start justify-between">
+                                  <div>
+                                    <p className="text-sm font-medium">
+                                      {node.employee
+                                        ? `${node.employee.firstName} ${node.employee.lastName}`
+                                        : node.roleName || 'Unassigned'}
+                                    </p>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                      {node.employee?.title || node.employee?.department?.name || ''}
+                                    </p>
+                                    {node.timeoutSeconds > 0 && (
+                                      <p className="text-xs text-gray-600 mt-1">
+                                        Escalates after {node.timeoutSeconds}s
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={() => handleMoveNode(node.id, 'up')}
+                                      disabled={i === 0}
+                                      className="p-1 hover:bg-gray-700 rounded disabled:opacity-30"
+                                      title="Move up"
+                                    >
+                                      <ArrowUp className="w-3.5 h-3.5 text-gray-400" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleMoveNode(node.id, 'down')}
+                                      disabled={i === arr.length - 1}
+                                      className="p-1 hover:bg-gray-700 rounded disabled:opacity-30"
+                                      title="Move down"
+                                    >
+                                      <ArrowDown className="w-3.5 h-3.5 text-gray-400" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleRemoveNode(node.id)}
+                                      className="p-1 hover:bg-gray-700 rounded"
+                                      title="Remove node"
+                                    >
+                                      <X className="w-3.5 h-3.5 text-red-400" />
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        </div>
-                      ))}
+                          ))}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
 
-              {selectedTree.fallbackProcedure && (
-                <div className="bg-gray-800/50 rounded-lg p-4">
-                  <p className="text-xs text-gray-500 mb-1">Fallback Procedure</p>
-                  <p className="text-sm">{selectedTree.fallbackProcedure}</p>
-                </div>
-              )}
+                  {selectedTree.fallbackProcedure && (
+                    <div className="bg-gray-800/50 rounded-lg p-4">
+                      <p className="text-xs text-gray-500 mb-1">Fallback Procedure</p>
+                      <p className="text-sm">{selectedTree.fallbackProcedure}</p>
+                    </div>
+                  )}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-12 text-gray-500">
@@ -343,6 +341,7 @@ export default function PhoneTreePage() {
           onClose={() => setShowAddNodeModal(false)}
         />
       )}
+
     </div>
   )
 }
@@ -535,3 +534,6 @@ function AddNodeModal({
     </div>
   )
 }
+
+// ─── EVENT LOG SECTION ────────────────────────────────────────────────────
+

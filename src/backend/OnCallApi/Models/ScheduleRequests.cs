@@ -17,3 +17,16 @@ public record SwapRequest(
     Guid? ReplacementUserId,
     [MaxLength(500)] string? Reason
 );
+
+/// <summary>Request DTO for updating a time-off entry.</summary>
+public record TimeOffUpdateRequest(
+    DateTime StartDate,
+    DateTime EndDate,
+    [MaxLength(20)] string Type,
+    [MaxLength(500)] string? Notes
+);
+
+/// <summary>Request DTO for approving/denying time off.</summary>
+public record TimeOffApprovalRequest(
+    [MaxLength(500)] string? Reason
+);

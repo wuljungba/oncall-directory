@@ -51,6 +51,11 @@ public class Employee
     public string? OfficeLocation { get; set; }
     public int? DepartmentId { get; set; }
     public Department? Department { get; set; }
+
+    /// <summary>The tenant/business this employee belongs to.</summary>
+    public int? TenantId { get; set; }
+    public Tenant? Tenant { get; set; }
+
     public Guid? ManagerId { get; set; }
     public Employee? Manager { get; set; }
     public string? Certifications { get; set; } // JSON array

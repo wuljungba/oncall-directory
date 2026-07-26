@@ -9,7 +9,15 @@ public class Department
 
     [MaxLength(500)]
     public string? Description { get; set; }
+
+    [MaxLength(50)]
+    public string? Category { get; set; }
     public string? AzureAdGroupId { get; set; }
+
+    /// <summary>The tenant/business this department belongs to. Null for global departments.</summary>
+    public int? TenantId { get; set; }
+    public Tenant? Tenant { get; set; }
+
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

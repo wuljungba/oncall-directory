@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail } from 'lucide-react'
 import { scheduleApi, directoryApi } from '@/services/api'
+import { useSignalR } from '@/hooks/useSignalR'
 import type { Employee, Shift } from '@/types'
 
 interface OnCallSummary {
@@ -17,38 +18,73 @@ interface OnCallSummary {
 export default function Dashboard() {
   const [onCallNow, setOnCallNow] = useState<OnCallSummary[]>([])
   const [stats, setStats] = useState({ onCall: 0, departments: 0, employees: 0 })
+  const { lastEvent } = useSignalR()
+  const loadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  async function loadDashboard() {
+    try {
+      const [shifts, employees] = await Promise.all([
+        scheduleApi.getOnCall(),
+        directoryApi.search(''),
+      ])
+
+      const summaries = shifts.map((s: Shift) => ({
+        employeeName: `${s.employee?.firstName} ${s.employee?.lastName}`,
+        role: s.employee?.title || 'Unknown',
+        department: s.employee?.department?.name || '',
+        tier: s.tier,
+        until: new Date(s.endTime).toLocaleTimeString(),
+        presence: s.employee?.presence || 'unknown',
+        email: s.employee?.email,
+        phone: s.employee?.officePhone || s.employee?.mobilePhone,
+      }))
+
+      setOnCallNow(summaries)
+      setStats({
+        onCall: shifts.length,
+        departments: new Set(employees.map((e: Employee) => e.departmentId)).size,
+        employees: employees.length,
+      })
+    } catch (err) {
+      console.error('Failed to load dashboard:', err)
+    }
+  }
+
+  // Initial load
   useEffect(() => {
-    async function load() {
-      try {
-        const [shifts, employees] = await Promise.all([
-          scheduleApi.getOnCall(),
-          directoryApi.search(''),
-        ])
+    loadDashboard()
+  }, [])
 
-        const summaries = shifts.map((s: Shift) => ({
-          employeeName: `${s.employee?.firstName} ${s.employee?.lastName}`,
-          role: s.employee?.title || 'Unknown',
-          department: s.employee?.department?.name || '',
-          tier: s.tier,
-          until: new Date(s.endTime).toLocaleTimeString(),
-          presence: s.employee?.presence || 'unknown',
-          email: s.employee?.email,
-          phone: s.employee?.officePhone || s.employee?.mobilePhone,
-        }))
+  // Real-time updates via SignalR
+  useEffect(() => {
+    if (!lastEvent) return
 
-        setOnCallNow(summaries)
-        setStats({
-          onCall: shifts.length,
-          departments: new Set(employees.map((e: Employee) => e.departmentId)).size,
-          employees: employees.length,
-        })
-      } catch (err) {
-        console.error('Failed to load dashboard:', err)
+    // Debounce rapid events — only re-fetch once within 300ms
+    if (loadTimerRef.current) {
+      clearTimeout(loadTimerRef.current)
+    }
+
+    const relevantEvents = [
+      'ScheduleCreated', 'ScheduleUpdated', 'ScheduleDeleted',
+      'ShiftAssigned', 'ShiftsGenerated',
+      'SwapRequested', 'SwapApproved',
+      'TimeOffUpdated',
+      'EmployeeCreated', 'EmployeeUpdated', 'EmployeeDeactivated',
+      'DepartmentCreated', 'DepartmentUpdated', 'DepartmentDeactivated',
+    ]
+
+    if (relevantEvents.includes(lastEvent.type)) {
+      loadTimerRef.current = setTimeout(() => {
+        loadDashboard()
+      }, 300)
+    }
+
+    return () => {
+      if (loadTimerRef.current) {
+        clearTimeout(loadTimerRef.current)
       }
     }
-    load()
-  }, [])
+  }, [lastEvent])
 
   return (
     <div className="space-y-6">

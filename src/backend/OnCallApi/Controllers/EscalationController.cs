@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using OnCallApi.Hubs;
 using OnCallApi.Models;
 using OnCallApi.Services;
 
@@ -11,10 +13,12 @@ namespace OnCallApi.Controllers;
 public class EscalationController : ControllerBase
 {
     private readonly EscalationService _escalationService;
+    private readonly IHubContext<OnCallNotificationHub> _hub;
 
-    public EscalationController(EscalationService escalationService)
+    public EscalationController(EscalationService escalationService, IHubContext<OnCallNotificationHub> hub)
     {
         _escalationService = escalationService;
+        _hub = hub;
     }
 
     // ── Policies ──
@@ -32,6 +36,7 @@ public class EscalationController : ControllerBase
     public async Task<ActionResult<EscalationPolicy>> CreatePolicy(EscalationPolicy policy)
     {
         var created = await _escalationService.CreatePolicyAsync(policy);
+        await _hub.Clients.All.SendAsync("EscalationPolicyUpdated", created);
         return CreatedAtAction(nameof(GetPolicies), new { id = created.Id }, created);
     }
 
@@ -44,6 +49,7 @@ public class EscalationController : ControllerBase
             return BadRequest(new { error = "Route ID and body ID must match." });
 
         var updated = await _escalationService.UpdatePolicyAsync(policy);
+        await _hub.Clients.All.SendAsync("EscalationPolicyUpdated", updated);
         return Ok(updated);
     }
 
@@ -53,6 +59,7 @@ public class EscalationController : ControllerBase
     public async Task<ActionResult> DeletePolicy(int id)
     {
         await _escalationService.DeletePolicyAsync(id);
+        await _hub.Clients.All.SendAsync("EscalationPolicyUpdated", new { id, deleted = true });
         return NoContent();
     }
 
@@ -76,6 +83,7 @@ public class EscalationController : ControllerBase
         try
         {
             var escEvent = await _escalationService.AcknowledgeEventAsync(id);
+            await _hub.Clients.All.SendAsync("EscalationEventUpdated", escEvent);
             return Ok(escEvent);
         }
         catch (KeyNotFoundException ex)

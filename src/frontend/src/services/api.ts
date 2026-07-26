@@ -11,7 +11,13 @@ import type {
   ShiftSwap,
   TimeOff,
   PhoneTree,
+  PhoneTreeEvent,
+  PhoneTreeEventParticipant,
+  DispatchStep,
+  CodeCallLocation,
   PhoneTreeNode,
+  Tenant,
+  TenantAdmin,
 } from '@/types'
 
 interface ImportResult {
@@ -22,6 +28,13 @@ interface ImportResult {
 }
 
 const API_BASE = '/api'
+
+/** Builds a query string from an object, omitting undefined and null values. */
+function buildQueryString(params: Record<string, string | number | boolean | undefined | null>): string {
+  const entries = Object.entries(params).filter(([, v]) => v != null && v !== undefined)
+  if (entries.length === 0) return ''
+  return '?' + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&')
+}
 
 async function fetchApi<T>(
   endpoint: string,
@@ -112,6 +125,19 @@ export const scheduleApi = {
       method: 'POST',
       body: JSON.stringify(timeOff),
     }),
+  updateTimeOff: (id: number, timeOff: Partial<TimeOff>) =>
+    fetchApi<TimeOff>(`/schedule/time-off/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(timeOff),
+    }),
+  cancelTimeOff: (id: number) =>
+    fetchApi<void>(`/schedule/time-off/${id}`, { method: 'DELETE' }),
+  approveTimeOff: (id: number) =>
+    fetchApi<TimeOff>(`/schedule/time-off/${id}/approve`, { method: 'POST' }),
+  denyTimeOff: (id: number) =>
+    fetchApi<TimeOff>(`/schedule/time-off/${id}/deny`, { method: 'POST' }),
+  getAllTimeOff: (status?: string) =>
+    fetchApi<TimeOff[]>(`/schedule/time-off/all${status ? `?status=${status}` : ''}`),
 }
 
 // ── Compliance ──
@@ -239,6 +265,61 @@ export const phoneTreesApi = {
   removeNode: (nodeId: number) => fetchApi<void>(`/phone-trees/nodes/${nodeId}`, { method: 'DELETE' }),
   reorder: (treeId: number, nodeIds: number[]) =>
     fetchApi<void>(`/phone-trees/${treeId}/reorder`, { method: 'POST', body: JSON.stringify(nodeIds) }),
+
+  // Events (code call activations)
+  getEvents: (treeId: number) =>
+    fetchApi<PhoneTreeEvent[]>(`/phone-trees/${treeId}/events`),
+  getEvent: (eventId: number) =>
+    fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}`),
+  createEvent: (treeId: number, evt: Partial<PhoneTreeEvent>) =>
+    fetchApi<PhoneTreeEvent>(`/phone-trees/${treeId}/events`, { method: 'POST', body: JSON.stringify(evt) }),
+  updateEvent: (eventId: number, evt: Partial<PhoneTreeEvent>) =>
+    fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}`, { method: 'PUT', body: JSON.stringify(evt) }),
+  deleteEvent: (eventId: number) =>
+    fetchApi<void>(`/phone-trees/events/${eventId}`, { method: 'DELETE' }),
+  addParticipant: (eventId: number, participant: Partial<PhoneTreeEventParticipant>) =>
+    fetchApi<PhoneTreeEventParticipant>(`/phone-trees/events/${eventId}/participants`, { method: 'POST', body: JSON.stringify(participant) }),
+  removeParticipant: (eventId: number, participantId: number) =>
+    fetchApi<void>(`/phone-trees/events/${eventId}/participants/${participantId}`, { method: 'DELETE' }),
+}
+
+// ── Code Call Command Center ──
+export const commandCenterApi = {
+  getActive: () =>
+    fetchApi<PhoneTreeEvent[]>('/phone-trees/events/active'),
+  getResolved: () =>
+    fetchApi<PhoneTreeEvent[]>('/phone-trees/events/resolved'),
+  acknowledgeEvent: (eventId: number) =>
+    fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}/acknowledge`, { method: 'POST' }),
+  resolveEvent: (eventId: number, outcome?: string) =>
+    fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ outcome }),
+    }),
+  addDispatchStep: (eventId: number, step: Partial<DispatchStep>) =>
+    fetchApi<DispatchStep>(`/phone-trees/events/${eventId}/dispatch-step`, {
+      method: 'POST',
+      body: JSON.stringify(step),
+    }),
+  saveDebriefNotes: (eventId: number, notes: string) =>
+    fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}/debrief`, {
+      method: 'PUT',
+      body: JSON.stringify({ notes }),
+    }),
+}
+
+// ── Code Call Locations (for business owners) ──
+export const codeCallLocationsApi = {
+  getAll: (includeInactive = false) =>
+    fetchApi<CodeCallLocation[]>(`/code-call-locations${includeInactive ? '?includeInactive=true' : ''}`),
+  get: (id: number) =>
+    fetchApi<CodeCallLocation>(`/code-call-locations/${id}`),
+  create: (location: Partial<CodeCallLocation>) =>
+    fetchApi<CodeCallLocation>('/code-call-locations', { method: 'POST', body: JSON.stringify(location) }),
+  update: (id: number, location: Partial<CodeCallLocation>) =>
+    fetchApi<CodeCallLocation>(`/code-call-locations/${id}`, { method: 'PUT', body: JSON.stringify(location) }),
+  delete: (id: number) =>
+    fetchApi<void>(`/code-call-locations/${id}`, { method: 'DELETE' }),
 }
 
 // ── Escalation ──
@@ -283,13 +364,37 @@ export interface CurrentUserResponse {
   email: string
   roles: string[]
   permissions: string[]
+  tenantIds: number[]
+  tenantRoles: Record<string, string>
+}
+
+// ── Tenant Management ──
+export const tenantsApi = {
+  getAll: (includeInactive = false) =>
+    fetchApi<Tenant[]>(`/tenants${includeInactive ? '?includeInactive=true' : ''}`),
+  get: (id: number) =>
+    fetchApi<Tenant>(`/tenants/${id}`),
+  create: (data: Record<string, unknown>) =>
+    fetchApi<Tenant>('/tenants', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: number, data: Record<string, unknown>) =>
+    fetchApi<Tenant>(`/tenants/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deactivate: (id: number) =>
+    fetchApi<void>(`/tenants/${id}`, { method: 'DELETE' }),
+  getAdmins: (tenantId: number) =>
+    fetchApi<TenantAdmin[]>(`/tenants/${tenantId}/admins`),
+  assignAdmin: (tenantId: number, data: Record<string, unknown>) =>
+    fetchApi<TenantAdmin>(`/tenants/${tenantId}/admins`, { method: 'POST', body: JSON.stringify(data) }),
+  updateAdmin: (tenantId: number, adminId: number, data: Record<string, unknown>) =>
+    fetchApi<TenantAdmin>(`/tenants/${tenantId}/admins/${adminId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  removeAdmin: (tenantId: number, adminId: number) =>
+    fetchApi<void>(`/tenants/${tenantId}/admins/${adminId}`, { method: 'DELETE' }),
 }
 
 // ── Admin (account & department management) ──
 export const adminApi = {
   // Employees
-  getAllEmployees: (includeInactive = false) =>
-    fetchApi<Employee[]>(`/admin/employees${includeInactive ? '?includeInactive=true' : ''}`),
+  getAllEmployees: (includeInactive = false, tenantId?: number) =>
+    fetchApi<Employee[]>(`/admin/employees${buildQueryString({ includeInactive: includeInactive || undefined, tenantId })}`),
   getEmployee: (id: string) =>
     fetchApi<Employee>(`/admin/employees/${id}`),
   createEmployee: (data: Record<string, unknown>) =>
@@ -304,8 +409,8 @@ export const adminApi = {
     fetchApi<Employee[]>(`/admin/employees/${id}/direct-reports`),
 
   // Departments
-  getAllDepartments: (includeInactive = false) =>
-    fetchApi<Department[]>(`/admin/departments${includeInactive ? '?includeInactive=true' : ''}`),
+  getAllDepartments: (includeInactive = false, tenantId?: number) =>
+    fetchApi<Department[]>(`/admin/departments${buildQueryString({ includeInactive: includeInactive || undefined, tenantId })}`),
   createDepartment: (data: Record<string, unknown>) =>
     fetchApi<Department>('/admin/departments', { method: 'POST', body: JSON.stringify(data) }),
   updateDepartment: (id: number, data: Record<string, unknown>) =>

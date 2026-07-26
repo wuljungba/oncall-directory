@@ -163,6 +163,44 @@ export function getToastForSignalEvent(
         title: 'Time Off Updated',
         description: 'A time-off request has been created or updated.',
       }
+    case 'ScheduleUpdated':
+      return { type: 'info', title: 'Schedule Updated', description: 'An on-call schedule has been modified.' }
+    case 'ScheduleDeleted':
+      return { type: 'warning', title: 'Schedule Deleted', description: 'An on-call schedule has been removed.' }
+    case 'EmployeeCreated':
+      return { type: 'success', title: 'Employee Created', description: 'A new employee has been added.' }
+    case 'EmployeeUpdated':
+      return { type: 'info', title: 'Employee Updated', description: 'An employee profile has been modified.' }
+    case 'EmployeeDeactivated':
+      return { type: 'warning', title: 'Employee Deactivated', description: 'An employee has been deactivated.' }
+    case 'DepartmentCreated':
+      return { type: 'success', title: 'Department Created', description: 'A new department has been added.' }
+    case 'DepartmentUpdated':
+      return { type: 'info', title: 'Department Updated', description: 'A department has been modified.' }
+    case 'DepartmentDeactivated':
+      return { type: 'warning', title: 'Department Deactivated', description: 'A department has been deactivated.' }
+    case 'PhoneTreeCreated':
+      return { type: 'success', title: 'Code Call Created', description: 'A new code call procedure has been added.' }
+    case 'PhoneTreeUpdated':
+      return { type: 'info', title: 'Code Call Updated', description: 'A code call procedure has been modified.' }
+    case 'PhoneTreeDeleted':
+      return { type: 'warning', title: 'Code Call Deleted', description: 'A code call procedure has been removed.' }
+    case 'EscalationPolicyUpdated':
+      return { type: 'info', title: 'Escalation Policy Updated', description: 'An escalation policy has been modified.' }
+    case 'EscalationEventUpdated':
+      return { type: 'info', title: 'Escalation Event Updated', description: 'An escalation event has been acknowledged.' }
+    case 'PhoneTreeEventCreated':
+      return { type: 'info', title: 'Code Call Activated', description: 'A code call event has been started.' }
+    case 'PhoneTreeEventUpdated':
+      return { type: 'info', title: 'Code Call Event Updated', description: 'A code call event has been updated.' }
+    case 'IncidentCreated':
+      return { type: 'warning', title: 'Code Call Activated', description: 'A new code call incident has been created.' }
+    case 'IncidentUpdated':
+      return { type: 'info', title: 'Incident Updated', description: 'An incident has been updated.' }
+    case 'IncidentResolved':
+      return { type: 'success', title: 'Incident Resolved', description: 'A code call incident has been resolved.' }
+    case 'DispatchStepCompleted':
+      return { type: 'info', title: 'Dispatch Step Completed', description: 'A dispatch pipeline step has completed.' }
     default:
       return {
         type: 'info',

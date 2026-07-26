@@ -21,7 +21,7 @@ const navItems = [
   { path: '/dashboard', label: 'Dashboard', icon: Clock },
   { path: '/dashboard/schedule', label: 'On-Call Schedule', icon: Calendar },
   { path: '/dashboard/directory', label: 'Phone Directory', icon: Phone },
-  { path: '/dashboard/phone-trees', label: 'Code Calls', icon: PhoneCall },
+  { path: '/dashboard/code-calls', label: 'Command Center', icon: PhoneCall },
   { path: '/dashboard/time-off', label: 'Time Off', icon: Users },
   { path: '/dashboard/compliance', label: 'Compliance', icon: ShieldCheck },
   { path: '/dashboard/settings', label: 'Settings', icon: Settings },
@@ -29,10 +29,10 @@ const navItems = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { user, signOut, isAdmin } = useAuth()
+  const { user, signOut, isAdmin, canAdminScoped } = useAuth()
   const { isConnected } = useSignalR()
   const { showOnboarding, checking, dismiss } = useOnboarding()
-  const visibleNavItems = isAdmin
+  const visibleNavItems = (isAdmin || canAdminScoped)
     ? [...navItems, { path: '/admin', label: 'Admin', icon: Shield }]
     : navItems
 

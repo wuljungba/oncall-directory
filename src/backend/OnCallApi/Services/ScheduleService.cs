@@ -275,8 +275,110 @@ public class ScheduleService : IScheduleService
 
     public async Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff)
     {
+        await ValidateNoOverlapAsync(timeOff.EmployeeId, timeOff.StartDate, timeOff.EndDate, null);
         _db.TimeOffs.Add(timeOff);
         await _db.SaveChangesAsync();
         return timeOff;
+    }
+
+    public async Task<TimeOff> UpdateTimeOffAsync(int id, TimeOffUpdateRequest request, Guid requesterId)
+    {
+        var timeOff = await _db.TimeOffs.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Time-off {id} not found");
+
+        if (timeOff.EmployeeId != requesterId)
+            throw new InvalidOperationException("You can only edit your own time-off requests.");
+
+        if (timeOff.Status != "pending")
+            throw new InvalidOperationException("Only pending requests can be edited.");
+
+        await ValidateNoOverlapAsync(timeOff.EmployeeId, request.StartDate, request.EndDate, id);
+
+        timeOff.StartDate = request.StartDate;
+        timeOff.EndDate = request.EndDate;
+        timeOff.Type = request.Type;
+        timeOff.Notes = request.Notes;
+        timeOff.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Updated time-off {Id} for employee {EmpId}", id, requesterId);
+        return timeOff;
+    }
+
+    public async Task CancelTimeOffAsync(int id, Guid requesterId)
+    {
+        var timeOff = await _db.TimeOffs.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Time-off {id} not found");
+
+        if (timeOff.EmployeeId != requesterId)
+            throw new InvalidOperationException("You can only cancel your own time-off requests.");
+
+        if (timeOff.Status != "pending")
+            throw new InvalidOperationException("Only pending requests can be cancelled.");
+
+        _db.TimeOffs.Remove(timeOff);
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Cancelled time-off {Id} for employee {EmpId}", id, requesterId);
+    }
+
+    public async Task<TimeOff> ApproveTimeOffAsync(int id, Guid approvedById)
+    {
+        var timeOff = await _db.TimeOffs.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Time-off {id} not found");
+
+        if (timeOff.Status != "pending")
+            throw new InvalidOperationException("Only pending requests can be approved.");
+
+        timeOff.Status = "approved";
+        timeOff.ApprovedById = approvedById;
+        timeOff.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Approved time-off {Id} by approver {ApproverId}", id, approvedById);
+        return timeOff;
+    }
+
+    public async Task<TimeOff> DenyTimeOffAsync(int id, Guid approvedById)
+    {
+        var timeOff = await _db.TimeOffs.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Time-off {id} not found");
+
+        if (timeOff.Status != "pending")
+            throw new InvalidOperationException("Only pending requests can be denied.");
+
+        timeOff.Status = "denied";
+        timeOff.ApprovedById = approvedById;
+        timeOff.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+        _logger.LogInformation("Denied time-off {Id} by approver {ApproverId}", id, approvedById);
+        return timeOff;
+    }
+
+    public async Task<List<TimeOff>> GetAllTimeOffAsync(string? statusFilter = null)
+    {
+        var query = _db.TimeOffs
+            .Include(t => t.Employee)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(statusFilter))
+            query = query.Where(t => t.Status == statusFilter);
+
+        return await query.OrderByDescending(t => t.CreatedAt).ToListAsync();
+    }
+
+    private async Task ValidateNoOverlapAsync(Guid employeeId, DateTime start, DateTime end, int? excludeId = null)
+    {
+        var query = _db.TimeOffs
+            .Where(t => t.EmployeeId == employeeId && t.Status == "approved");
+
+        if (excludeId.HasValue)
+            query = query.Where(t => t.Id != excludeId.Value);
+
+        var existing = await query.ToListAsync();
+
+        var overlap = existing.Any(t => start < t.EndDate && end > t.StartDate);
+        if (overlap)
+            throw new InvalidOperationException("This time-off request overlaps with an existing approved time-off period.");
     }
 }

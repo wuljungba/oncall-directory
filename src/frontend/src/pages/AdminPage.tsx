@@ -1,31 +1,81 @@
 import { useState, useEffect } from 'react'
 import {
   Users, Building2, RefreshCw, Shield, Plus, Search, X, Save, Trash2,
-  CheckCircle, AlertTriangle,
+  CheckCircle, AlertTriangle, Calendar, Phone, Building,
 } from 'lucide-react'
-import { adminApi, integrationsApi, settingsApi } from '@/services/api'
-import type { Employee, Department } from '@/types'
+import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi } from '@/services/api'
+import { useAuth } from '@/hooks/useAuth'
+import type { Employee, Department, TimeOff, Tenant, TenantAdmin } from '@/types'
+import CodeCallLocationsSection from './CodeCallLocationsSection'
 
-type Tab = 'overview' | 'accounts' | 'departments' | 'integrations'
+type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('overview')
+  const { activeTenantId, setActiveTenantId, tenantIds, isAdmin, canTenantManage, canAdminScoped } = useAuth()
+  const [tenants, setTenants] = useState<Tenant[]>([])
+
+  // Load tenant list for the tenant selector
+  useEffect(() => {
+    if (canTenantManage || (canAdminScoped && tenantIds.length > 1)) {
+      tenantsApi.getAll().then(setTenants).catch(() => {})
+    } else {
+      // Build tenant list from tenantIds/tenantRoles for scoped admins
+      const list = tenantIds.map(id => ({ id, name: `Tenant ${id}`, isActive: true } as Tenant))
+      setTenants(list)
+    }
+  }, [canTenantManage, canAdminScoped, tenantIds])
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
     { key: 'accounts', label: 'Accounts' },
     { key: 'departments', label: 'Departments' },
     { key: 'integrations', label: 'Integrations' },
+    { key: 'timeoff', label: 'Time Off' },
+    { key: 'locations', label: 'Code Call Locations' },
   ]
+
+  // Add Tenants tab for super admins only
+  if (isAdmin || canTenantManage) {
+    tabs.push({ key: 'tenants', label: 'Tenants' })
+  }
+
+  // Get the current tenant name for display
+  const currentTenantName = activeTenantId
+    ? tenants.find(t => t.id === activeTenantId)?.name ?? `Tenant ${activeTenantId}`
+    : null
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Admin</h1>
+        {currentTenantName && (
+          <span className="text-xs px-3 py-1.5 rounded-full bg-amber-600/20 text-amber-500 flex items-center gap-1.5">
+            <Building className="w-3.5 h-3.5" />
+            Scoped to: {currentTenantName}
+          </span>
+        )}
       </div>
 
+      {/* Tenant selector — visible when user has multiple tenants or is scoped admin */}
+      {(canTenantManage || (canAdminScoped && tenantIds.length > 1)) && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500">Tenant:</span>
+          <select
+            value={activeTenantId ?? ''}
+            onChange={e => setActiveTenantId(e.target.value ? Number(e.target.value) : null)}
+            className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-amber-600"
+          >
+            {canTenantManage && <option value="">All Tenants</option>}
+            {tenants.filter(t => t.isActive).map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Tab bar */}
-      <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit flex-wrap">
         {tabs.map(t => (
           <button
             key={t.key}
@@ -44,6 +94,9 @@ export default function AdminPage() {
       {tab === 'accounts' && <AccountsSection />}
       {tab === 'departments' && <DepartmentsSection />}
       {tab === 'integrations' && <IntegrationsSection />}
+      {tab === 'timeoff' && <TimeOffApprovalSection />}
+      {tab === 'locations' && <CodeCallLocationsSection />}
+      {tab === 'tenants' && <TenantsSection />}
     </div>
   )
 }
@@ -624,7 +677,7 @@ function DepartmentsSection() {
             {departments.map(dept => (
               <div key={dept.id} className="px-5 py-4 flex items-center justify-between group">
                 <div>
-                  <p className="text-sm font-medium">{dept.name}</p>
+                  <p className="text-sm font-medium">{dept.name}{dept.category && (<span className="text-xs px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-500 ml-2 font-normal">{dept.category}</span>)}</p>
                   <p className="text-xs text-gray-500 mt-0.5">{dept.description || 'No description'}</p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -709,6 +762,8 @@ function DepartmentsSection() {
   )
 }
 
+const CATEGORIES = ['Healthcare', 'Technology', 'Corporate', 'Business', 'Operations', 'Education', 'Manufacturing', 'Retail', 'Other']
+
 function DepartmentFormModal({ department, onSave, onClose }: {
   department: Department | null
   onSave: (data: Partial<Department>) => Promise<void>
@@ -716,6 +771,7 @@ function DepartmentFormModal({ department, onSave, onClose }: {
 }) {
   const [name, setName] = useState(department?.name || '')
   const [description, setDescription] = useState(department?.description || '')
+  const [category, setCategory] = useState(department?.category || '')
   const [isActive, setIsActive] = useState(department?.isActive ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -726,7 +782,7 @@ function DepartmentFormModal({ department, onSave, onClose }: {
     setSaving(true)
     setError(null)
     try {
-      await onSave({ name: name.trim(), description: description.trim() || undefined, isActive })
+      await onSave({ name: name.trim(), description: description.trim() || undefined, category: category || undefined, isActive })
     } catch { setError('Failed to save department.') }
     finally { setSaving(false) }
   }
@@ -753,6 +809,14 @@ function DepartmentFormModal({ department, onSave, onClose }: {
             <label className="block text-sm text-gray-500 mb-1">Description</label>
             <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 resize-none" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Industry Category</label>
+            <select value={category} onChange={e => setCategory(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
+              <option value="">None</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
           </div>
           {department && (
             <div className="flex items-center gap-3">
@@ -947,6 +1011,562 @@ function IntegrationsSection() {
           </div>
         ))}
       </section>
+      {/* Code Call Dispatch Integration */}
+      <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+        <h2 className="font-medium flex items-center gap-2">
+          <Phone className="w-5 h-5 text-red-500" />
+          Code Call Dispatch Integration
+        </h2>
+        <p className="text-xs text-gray-500">Configure external dispatch channels for emergency code call alerts</p>
+        <DispatchConfigField label="InformaCast Base URL" settingKey="dispatch.informacast_base_url" placeholder="https://informacast.hospital.local/api/v1" />
+        <DispatchConfigField label="InformaCast API Token" settingKey="dispatch.informacast_api_token" placeholder="ic_abc123..." type="password" />
+        <div className="border-t border-gray-800 pt-4" />
+        <DispatchConfigField label="Vocera Base URL" settingKey="dispatch.vocera_base_url" placeholder="https://vocera.hospital.local/vmp/api/v1" />
+        <DispatchConfigField label="Vocera API Key" settingKey="dispatch.vocera_api_key" placeholder="vk_..." type="password" />
+        <div className="border-t border-gray-800 pt-4" />
+        <DispatchConfigField label="Cisco CUCM Host" settingKey="dispatch.cucm_host" placeholder="cucm-pub.hospital.local" />
+        <DispatchConfigField label="CUCM AXL Username" settingKey="dispatch.cucm_axl_user" placeholder="axladmin" />
+        <DispatchConfigField label="CUCM AXL Password" settingKey="dispatch.cucm_axl_password" placeholder="******" type="password" />
+        <DispatchConfigField label="CUCM AXL WSDL URL" settingKey="dispatch.cucm_axl_wsdl" placeholder="https://cucm:8443/axl/schema/14.0/AXLAPI.wsdl" />
+        <div className="border-t border-gray-800 pt-4" />
+        <DispatchConfigField label="SIP PBX Host" settingKey="dispatch.sip_pbx_host" placeholder="pbx.hospital.local" />
+        <DispatchConfigField label="SIP Trunk Username" settingKey="dispatch.sip_trunk_user" placeholder="paging-user" />
+        <DispatchConfigField label="SIP Trunk Secret" settingKey="dispatch.sip_trunk_secret" placeholder="******" type="password" />
+      </section>
+    </div>
+  )
+}
+
+function DispatchConfigField({ label, settingKey, placeholder, type = 'text' }: {
+  label: string; settingKey: string; placeholder?: string; type?: string
+}) {
+  const [value, setValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    settingsApi.get(settingKey).then(s => setValue(s?.value || '')).catch(() => {})
+  }, [settingKey])
+
+  async function handleBlur() {
+    setSaving(true)
+    try {
+      await settingsApi.upsert(settingKey, value)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { /* ignore */ }
+    setSaving(false)
+  }
+
+  return (
+    <div>
+      <label className="block text-sm text-gray-500 mb-1">{label}</label>
+      <div className="flex items-center gap-2">
+        <input type={type} value={value} onChange={e => setValue(e.target.value)} onBlur={handleBlur}
+          placeholder={placeholder}
+          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+        {saving && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600 shrink-0" />}
+        {saved && <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />}
+      </div>
+    </div>
+  )
+}
+
+// ─── TIME OFF APPROVAL ────────────────────────────────────────────────────
+
+function TimeOffApprovalSection() {
+  const [requests, setRequests] = useState<TimeOff[]>([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState<string>('pending')
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadRequests()
+  }, [filter])
+
+  async function loadRequests() {
+    try {
+      setLoading(true)
+      const data = await scheduleApi.getAllTimeOff(filter || undefined)
+      setRequests(data)
+    } catch {
+      setError('Failed to load time-off requests.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleApprove(id: number) {
+    try {
+      setError(null)
+      await scheduleApi.approveTimeOff(id)
+      await loadRequests()
+    } catch {
+      setError('Failed to approve request.')
+    }
+  }
+
+  async function handleDeny(id: number) {
+    try {
+      setError(null)
+      await scheduleApi.denyTimeOff(id)
+      await loadRequests()
+    } catch {
+      setError('Failed to deny request.')
+    }
+  }
+
+  const typeLabels: Record<string, string> = {
+    pto: 'PTO', cme: 'CME', holiday: 'Holiday', sick: 'Sick',
+    personal: 'Personal', bereavement: 'Bereavement', military: 'Military',
+    jury_duty: 'Jury Duty', unpaid: 'Unpaid',
+  }
+
+  if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <div className="flex items-center gap-3 bg-red-600/10 border border-red-600/30 rounded-xl px-5 py-3 text-sm text-red-400">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" /><span>{error}</span>
+        </div>
+      )}
+
+      {/* Filter tabs */}
+      <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+        {['pending', 'approved', 'denied', ''].map(s => (
+          <button
+            key={s || 'all'}
+            onClick={() => setFilter(s)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+              filter === s ? 'bg-amber-600/20 text-amber-500' : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            {s || 'All'}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-xl">
+        <div className="px-5 py-4 border-b border-gray-800">
+          <p className="text-sm text-gray-500">{requests.length} request{requests.length !== 1 ? 's' : ''}</p>
+        </div>
+        {requests.length === 0 ? (
+          <div className="flex flex-col items-center py-16 text-gray-500">
+            <Calendar className="w-12 h-12 mb-4 text-gray-700" />
+            <p>No time-off requests found</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800">
+            {requests.map(req => (
+              <div key={req.id} className="px-5 py-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">
+                    {req.employee?.firstName} {req.employee?.lastName}
+                    <span className="text-xs text-gray-500 ml-2 font-normal">{typeLabels[req.type] || req.type}</span>
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {new Date(req.startDate).toLocaleDateString()} — {new Date(req.endDate).toLocaleDateString()}
+                  </p>
+                  {req.notes && <p className="text-xs text-gray-600 mt-1">{req.notes}</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  {req.status === 'pending' && (
+                    <>
+                      <button
+                        onClick={() => handleApprove(req.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-green-600/20 hover:bg-green-600/30 text-green-500 rounded-lg text-xs transition-colors"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" /> Approve
+                      </button>
+                      <button
+                        onClick={() => handleDeny(req.id)}
+                        className="flex items-center gap-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-500 rounded-lg text-xs transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" /> Deny
+                      </button>
+                    </>
+                  )}
+                  <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    req.status === 'approved' ? 'bg-green-600/20 text-green-500' :
+                    req.status === 'denied' ? 'bg-red-600/20 text-red-500' :
+                    'bg-yellow-600/20 text-yellow-500'
+                  }`}>
+                    {req.status}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── TENANTS (Business/Facility Management) ────────────────────────────────
+
+function TenantsSection() {
+  const [tenants, setTenants] = useState<Tenant[]>([])
+  const [admins, setAdmins] = useState<Record<number, TenantAdmin[]>>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [showModal, setShowModal] = useState(false)
+  const [editingTenant, setEditingTenant] = useState<Tenant | null>(null)
+  const [showAdminModal, setShowAdminModal] = useState(false)
+  const [adminTenantId, setAdminTenantId] = useState<number | null>(null)
+  const [expandedTenant, setExpandedTenant] = useState<number | null>(null)
+
+  useEffect(() => { loadData() }, [])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const tenantsData = await tenantsApi.getAll(true)
+      setTenants(tenantsData)
+      const adminMap: Record<number, TenantAdmin[]> = {}
+      await Promise.all(tenantsData.map(async t => {
+        try {
+          adminMap[t.id] = await tenantsApi.getAdmins(t.id)
+        } catch { adminMap[t.id] = [] }
+      }))
+      setAdmins(adminMap)
+    } catch { setError('Failed to load tenants.') }
+    setLoading(false)
+  }
+
+  async function handleSave(data: Partial<Tenant>) {
+    try {
+      setError(null)
+      if (editingTenant) {
+        const updated = await tenantsApi.update(editingTenant.id, data as Record<string, unknown>)
+        setTenants(prev => prev.map(t => t.id === updated.id ? updated : t))
+      } else {
+        const created = await tenantsApi.create(data as Record<string, unknown>)
+        setTenants(prev => [...prev, created])
+      }
+      setShowModal(false)
+      setEditingTenant(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save tenant.')
+    }
+  }
+
+  async function handleDeactivate(tenant: Tenant) {
+    try {
+      setError(null)
+      await tenantsApi.deactivate(tenant.id)
+      setTenants(prev => prev.map(t => t.id === tenant.id ? { ...t, isActive: false } : t))
+    } catch { setError('Failed to deactivate tenant.') }
+  }
+
+  async function handleAssignAdmin(azureAdObjectId: string, role: string) {
+    if (!adminTenantId) return
+    try {
+      setError(null)
+      const admin = await tenantsApi.assignAdmin(adminTenantId, { azureAdObjectId, role })
+      setAdmins(prev => ({
+        ...prev,
+        [adminTenantId]: [...(prev[adminTenantId] || []), admin],
+      }))
+      setShowAdminModal(false)
+      setAdminTenantId(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to assign admin.')
+    }
+  }
+
+  async function handleRemoveAdmin(tenantId: number, adminId: number) {
+    try {
+      setError(null)
+      await tenantsApi.removeAdmin(tenantId, adminId)
+      setAdmins(prev => ({
+        ...prev,
+        [tenantId]: (prev[tenantId] || []).filter(a => a.id !== adminId),
+      }))
+    } catch { setError('Failed to remove admin.') }
+  }
+
+  if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <div className="flex items-center gap-3 bg-red-600/10 border border-red-600/30 rounded-xl px-5 py-3 text-sm text-red-400">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-500">{tenants.length} tenant{tenants.length !== 1 ? 's' : ''}</p>
+        <button
+          onClick={() => { setEditingTenant(null); setShowModal(true) }}
+          className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+        >
+          <Plus className="w-4 h-4" /> Add Tenant
+        </button>
+      </div>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-xl">
+        {tenants.length === 0 ? (
+          <div className="flex flex-col items-center py-16 text-gray-500">
+            <Building className="w-12 h-12 mb-4 text-gray-700" />
+            <p>No tenants configured</p>
+            <button
+              onClick={() => { setEditingTenant(null); setShowModal(true) }}
+              className="mt-4 flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Plus className="w-4 h-4" /> Add Tenant
+            </button>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-800">
+            {tenants.map(tenant => (
+              <div key={tenant.id}>
+                <div className="px-5 py-4 flex items-center justify-between group">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium">{tenant.name}</p>
+                      {!tenant.isActive && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-red-600/20 text-red-500">Inactive</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {tenant.description || 'No description'}
+                      {tenant.contactEmail && ` · ${tenant.contactEmail}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setExpandedTenant(expandedTenant === tenant.id ? null : tenant.id)}
+                      className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                    >
+                      {admins[tenant.id]?.length || 0} Admin{(admins[tenant.id]?.length || 0) !== 1 ? 's' : ''}
+                    </button>
+                    <button
+                      onClick={() => { setAdminTenantId(tenant.id); setShowAdminModal(true) }}
+                      className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
+                    >
+                      + Admin
+                    </button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => { setEditingTenant(tenant); setShowModal(true) }}
+                        className="p-1.5 hover:bg-gray-800 rounded-lg transition-colors" title="Edit"
+                      >
+                        <svg className="w-4 h-4 text-gray-400 hover:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                      </button>
+                      {tenant.isActive && (
+                        <button
+                          onClick={() => handleDeactivate(tenant)}
+                          className="p-1.5 hover:bg-gray-800 rounded-lg transition-colors" title="Deactivate"
+                        >
+                          <Trash2 className="w-4 h-4 text-gray-400 hover:text-red-400" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Expanded admin list */}
+                {expandedTenant === tenant.id && (
+                  <div className="px-5 pb-4 border-t border-gray-800">
+                    <div className="mt-3 space-y-2">
+                      <p className="text-xs text-gray-500 mb-2">Assigned Admins</p>
+                      {(!admins[tenant.id] || admins[tenant.id].length === 0) ? (
+                        <p className="text-xs text-gray-600">No admins assigned.</p>
+                      ) : (
+                        admins[tenant.id].map(admin => (
+                          <div key={admin.id} className="flex items-center justify-between py-1.5 px-3 bg-gray-800/50 rounded-lg">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono text-gray-400">{admin.azureAdObjectId}</span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                admin.role === 'SuperAdmin' ? 'bg-purple-600/20 text-purple-500' : 'bg-blue-600/20 text-blue-500'
+                              }`}>
+                                {admin.role}
+                              </span>
+                              {admin.isAutoAssigned && (
+                                <span className="text-xs text-gray-600">(auto)</span>
+                              )}
+                            </div>
+                            <button
+                              onClick={() => handleRemoveAdmin(tenant.id, admin.id)}
+                              className="text-xs text-red-500 hover:text-red-400 transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Tenant Form Modal */}
+      {showModal && (
+        <TenantFormModal
+          tenant={editingTenant}
+          onSave={handleSave}
+          onClose={() => { setShowModal(false); setEditingTenant(null) }}
+        />
+      )}
+
+      {/* Assign Admin Modal */}
+      {showAdminModal && adminTenantId && (
+        <AssignAdminModal
+          tenantName={tenants.find(t => t.id === adminTenantId)?.name ?? `Tenant ${adminTenantId}`}
+          onAssign={handleAssignAdmin}
+          onClose={() => { setShowAdminModal(false); setAdminTenantId(null) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function TenantFormModal({ tenant, onSave, onClose }: {
+  tenant: Tenant | null
+  onSave: (data: Partial<Tenant>) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(tenant?.name || '')
+  const [description, setDescription] = useState(tenant?.description || '')
+  const [azureAdGroupId, setAzureAdGroupId] = useState(tenant?.azureAdGroupId || '')
+  const [contactEmail, setContactEmail] = useState(tenant?.contactEmail || '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim()) { setError('Tenant name is required.'); return }
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave({
+        name: name.trim(),
+        description: description.trim() || undefined,
+        azureAdGroupId: azureAdGroupId.trim() || undefined,
+        contactEmail: contactEmail.trim() || undefined,
+      } as Partial<Tenant>)
+    } catch { setError('Failed to save tenant.') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 className="text-lg font-medium">{tenant ? 'Edit Tenant' : 'Add Tenant'}</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Name *</label>
+            <input type="text" required value={name} onChange={e => setName(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Description</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={3}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 resize-none" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Azure AD Group ID</label>
+            <input type="text" value={azureAdGroupId} onChange={e => setAzureAdGroupId(e.target.value)}
+              placeholder="For auto-assigning sub-admins via group membership"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Contact Email</label>
+            <input type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium disabled:opacity-50">
+              {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving...' : tenant ? 'Save Changes' : 'Create Tenant'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function AssignAdminModal({ tenantName, onAssign, onClose }: {
+  tenantName: string
+  onAssign: (azureAdObjectId: string, role: string) => Promise<void>
+  onClose: () => void
+}) {
+  const [azureAdObjectId, setAzureAdObjectId] = useState('')
+  const [role, setRole] = useState('DepartmentAdmin')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!azureAdObjectId.trim()) { setError('Azure AD Object ID is required.'); return }
+    setSaving(true)
+    setError(null)
+    try {
+      await onAssign(azureAdObjectId.trim(), role)
+    } catch { setError('Failed to assign admin.') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 className="text-lg font-medium">Assign Admin — {tenantName}</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Azure AD Object ID *</label>
+            <input type="text" required value={azureAdObjectId} onChange={e => setAzureAdObjectId(e.target.value)}
+              placeholder="User's Azure AD Object ID (oid claim)"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Role</label>
+            <select value={role} onChange={e => setRole(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
+              <option value="DepartmentAdmin">Department Admin (scoped to tenant)</option>
+              <option value="SuperAdmin">Super Admin (full access within tenant)</option>
+            </select>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium disabled:opacity-50">
+              {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <Save className="w-4 h-4" />}
+              {saving ? 'Saving...' : 'Assign Admin'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

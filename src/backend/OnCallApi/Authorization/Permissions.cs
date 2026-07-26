@@ -17,8 +17,18 @@ public static class Permissions
     public const string DirectoryRead = "Directory.Read";
     public const string DirectoryWrite = "Directory.Write";
 
-    // ── Admin Permission ──
+    // ── Code Call Permissions ──
+    public const string CodeCallWrite = "CodeCall.Write";
+
+    // ── Admin Permissions ──
+    /// <summary>Full administrative access to all data across all tenants.</summary>
     public const string AdminFull = "Admin.Full";
+
+    /// <summary>Scoped administrative access — can only manage assigned tenant(s).</summary>
+    public const string AdminScoped = "Admin.Scoped";
+
+    /// <summary>Can create and manage tenants and sub-admin assignments (super admin only).</summary>
+    public const string TenantManage = "Tenant.Manage";
 
     /// <summary>
     /// Maps legacy Azure AD role names to their granular permission claims.
@@ -28,7 +38,19 @@ public static class Permissions
     public static readonly Dictionary<string, string[]> RoleToPermissions = new()
     {
         ["OnCall.Viewer"] = [ScheduleRead, DirectoryRead],
-        ["OnCall.Scheduler"] = [ScheduleRead, ScheduleWrite, DirectoryRead],
-        ["OnCall.Admin"] = [ScheduleRead, ScheduleWrite, DirectoryRead, DirectoryWrite, AdminFull],
+        ["OnCall.Scheduler"] = [ScheduleRead, ScheduleWrite, DirectoryRead, CodeCallWrite],
+        ["OnCall.Admin"] = [ScheduleRead, ScheduleWrite, DirectoryRead, DirectoryWrite, AdminFull, TenantManage],
     };
+
+    /// <summary>
+    /// Permissions granted to a tenant-scoped sub-admin (DepartmentAdmin role).
+    /// These are issued by TenantClaimsMiddleware based on TenantAdmin records.
+    /// </summary>
+    public static readonly string[] ScopedAdminPermissions =
+    [
+        ScheduleRead, ScheduleWrite,
+        DirectoryRead, DirectoryWrite,
+        CodeCallWrite,
+        AdminScoped,
+    ];
 }

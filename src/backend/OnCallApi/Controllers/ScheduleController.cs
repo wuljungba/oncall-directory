@@ -150,6 +150,86 @@ public class ScheduleController : ControllerBase
     public async Task<ActionResult<TimeOff>> RequestTimeOff(TimeOff timeOff)
     {
         var created = await _scheduleService.RequestTimeOffAsync(timeOff);
+        await _hub.Clients.All.SendAsync("TimeOffUpdated", created);
         return CreatedAtAction(nameof(GetTimeOff), new { employeeId = timeOff.EmployeeId }, created);
+    }
+
+    /// <summary>Update/edit a pending time-off request.</summary>
+    [HttpPut("time-off/{id}")]
+    public async Task<ActionResult<TimeOff>> UpdateTimeOff(int id, [FromBody] TimeOffUpdateRequest request)
+    {
+        try
+        {
+            var requesterId = GetCurrentUserId();
+            var updated = await _scheduleService.UpdateTimeOffAsync(id, request, requesterId);
+            await _hub.Clients.All.SendAsync("TimeOffUpdated", updated);
+            return Ok(updated);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Cancel/withdraw a pending time-off request.</summary>
+    [HttpDelete("time-off/{id}")]
+    public async Task<ActionResult> CancelTimeOff(int id)
+    {
+        try
+        {
+            var requesterId = GetCurrentUserId();
+            await _scheduleService.CancelTimeOffAsync(id, requesterId);
+            await _hub.Clients.All.SendAsync("TimeOffUpdated", new { id, action = "cancelled" });
+            return NoContent();
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Approve a pending time-off request (admin only).</summary>
+    [HttpPost("time-off/{id}/approve")]
+    [Authorize(Policy = "RequireAdminFull")]
+    public async Task<ActionResult<TimeOff>> ApproveTimeOff(int id)
+    {
+        try
+        {
+            var approvedById = GetCurrentUserId();
+            var approved = await _scheduleService.ApproveTimeOffAsync(id, approvedById);
+            await _hub.Clients.All.SendAsync("TimeOffUpdated", approved);
+            return Ok(approved);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Deny a pending time-off request (admin only).</summary>
+    [HttpPost("time-off/{id}/deny")]
+    [Authorize(Policy = "RequireAdminFull")]
+    public async Task<ActionResult<TimeOff>> DenyTimeOff(int id)
+    {
+        try
+        {
+            var approvedById = GetCurrentUserId();
+            var denied = await _scheduleService.DenyTimeOffAsync(id, approvedById);
+            await _hub.Clients.All.SendAsync("TimeOffUpdated", denied);
+            return Ok(denied);
+        }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Get all time-off requests (admin view with optional status filter).</summary>
+    [HttpGet("time-off/all")]
+    [Authorize(Policy = "RequireAdminFull")]
+    public async Task<ActionResult<List<TimeOff>>> GetAllTimeOff([FromQuery] string? status)
+    {
+        return await _scheduleService.GetAllTimeOffAsync(status);
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var userIdClaim = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
+            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (userIdClaim == null || !Guid.TryParse(userIdClaim, out var userId))
+            throw new UnauthorizedAccessException("User identity not found in token.");
+        return userId;
     }
 }

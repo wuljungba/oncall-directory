@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using OnCallApi.Hubs;
 using OnCallApi.Models;
 using OnCallApi.Services;
 
@@ -11,11 +13,13 @@ public class AdminController : ControllerBase
 {
     private readonly IAdminService _adminService;
     private readonly ILogger<AdminController> _logger;
+    private readonly IHubContext<OnCallNotificationHub> _hub;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, IHubContext<OnCallNotificationHub> hub)
     {
         _adminService = adminService;
         _logger = logger;
+        _hub = hub;
     }
 
     // ── Employees ──
@@ -46,6 +50,7 @@ public class AdminController : ControllerBase
         try
         {
             var employee = await _adminService.CreateEmployeeAsync(request);
+            await _hub.Clients.All.SendAsync("EmployeeCreated", employee);
             return CreatedAtAction(nameof(GetEmployee), new { id = employee.Id }, employee);
         }
         catch (InvalidOperationException ex)
@@ -62,6 +67,7 @@ public class AdminController : ControllerBase
         try
         {
             var employee = await _adminService.UpdateEmployeeAsync(id, request);
+            await _hub.Clients.All.SendAsync("EmployeeUpdated", employee);
             return Ok(employee);
         }
         catch (KeyNotFoundException)
@@ -82,6 +88,7 @@ public class AdminController : ControllerBase
         try
         {
             await _adminService.DeactivateEmployeeAsync(id);
+            await _hub.Clients.All.SendAsync("EmployeeDeactivated", new { id });
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -98,6 +105,7 @@ public class AdminController : ControllerBase
         try
         {
             await _adminService.ReactivateEmployeeAsync(id);
+            await _hub.Clients.All.SendAsync("EmployeeUpdated", new { id, isActive = true });
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -126,21 +134,23 @@ public class AdminController : ControllerBase
 
     /// <summary>Create a new department (sub-account).</summary>
     [HttpPost("departments")]
-    [Authorize(Policy = "RequireAdminFull")]
+    [Authorize(Policy = "RequireAdminFullOrScoped")]
     public async Task<ActionResult<Department>> CreateDepartment([FromBody] CreateDepartmentRequest request)
     {
         var department = await _adminService.CreateDepartmentAsync(request);
+        await _hub.Clients.All.SendAsync("DepartmentCreated", department);
         return CreatedAtAction(nameof(GetAllDepartments), new { id = department.Id }, department);
     }
 
     /// <summary>Update a department.</summary>
     [HttpPut("departments/{id}")]
-    [Authorize(Policy = "RequireAdminFull")]
+    [Authorize(Policy = "RequireAdminFullOrScoped")]
     public async Task<ActionResult<Department>> UpdateDepartment(int id, [FromBody] UpdateDepartmentRequest request)
     {
         try
         {
             var department = await _adminService.UpdateDepartmentAsync(id, request);
+            await _hub.Clients.All.SendAsync("DepartmentUpdated", department);
             return Ok(department);
         }
         catch (KeyNotFoundException)
@@ -151,12 +161,13 @@ public class AdminController : ControllerBase
 
     /// <summary>Deactivate a department.</summary>
     [HttpDelete("departments/{id}")]
-    [Authorize(Policy = "RequireAdminFull")]
+    [Authorize(Policy = "RequireAdminFullOrScoped")]
     public async Task<ActionResult> DeactivateDepartment(int id)
     {
         try
         {
             await _adminService.DeactivateDepartmentAsync(id);
+            await _hub.Clients.All.SendAsync("DepartmentDeactivated", new { id });
             return NoContent();
         }
         catch (KeyNotFoundException)

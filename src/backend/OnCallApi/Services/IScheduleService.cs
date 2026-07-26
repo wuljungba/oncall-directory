@@ -15,6 +15,11 @@ public interface IScheduleService
     Task<List<TimeOff>> GetTimeOffAsync(Guid employeeId);
     Task<List<TimeOff>> GetTimeOffForCurrentUserAsync(string azureAdObjectId);
     Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff);
+    Task<TimeOff> UpdateTimeOffAsync(int id, TimeOffUpdateRequest request, Guid requesterId);
+    Task CancelTimeOffAsync(int id, Guid requesterId);
+    Task<TimeOff> ApproveTimeOffAsync(int id, Guid approvedById);
+    Task<TimeOff> DenyTimeOffAsync(int id, Guid approvedById);
+    Task<List<TimeOff>> GetAllTimeOffAsync(string? statusFilter = null);
     Task<Schedule> UpdateScheduleAsync(Schedule schedule);
     Task DeleteScheduleAsync(int id);
     Task<List<Shift>> GenerateShiftsAsync(int scheduleId, int weeks);

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
-import { Calendar, Plus, Check, X, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Calendar, Plus, Check, X, AlertTriangle, Edit3, Trash2 } from 'lucide-react'
 import { scheduleApi } from '@/services/api'
+import { useSignalR } from '@/hooks/useSignalR'
 import type { TimeOff } from '@/types'
 
 type TimeOffType = TimeOff['type']
@@ -12,17 +13,23 @@ const STATUS_COLORS: Record<TimeOffStatus, string> = {
   denied: 'bg-red-600/20 text-red-500',
 }
 
-const TYPE_LABELS: Record<TimeOffType, string> = {
+const TYPE_LABELS: Record<string, string> = {
   pto: 'Paid Time Off',
   cme: 'CME / Conference',
   holiday: 'Holiday',
   sick: 'Sick Leave',
+  personal: 'Personal Leave',
+  bereavement: 'Bereavement',
+  military: 'Military Leave',
+  jury_duty: 'Jury Duty',
+  unpaid: 'Unpaid Leave',
 }
 
 export default function TimeOffPage() {
   const [requests, setRequests] = useState<TimeOff[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
+  const [editingRequest, setEditingRequest] = useState<TimeOff | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -32,10 +39,21 @@ export default function TimeOffPage() {
     type: 'pto' as TimeOffType,
     notes: '',
   })
+  const { lastEvent } = useSignalR()
+  const prevEventRef = useRef<string | null>(null)
 
   useEffect(() => {
     loadRequests()
   }, [])
+
+  // Re-fetch on SignalR events
+  useEffect(() => {
+    if (!lastEvent || lastEvent.type !== 'TimeOffUpdated') return
+    const eventKey = `${lastEvent.type}-${JSON.stringify(lastEvent.payload)}`
+    if (eventKey === prevEventRef.current) return
+    prevEventRef.current = eventKey
+    loadRequests()
+  }, [lastEvent])
 
   async function loadRequests() {
     try {
@@ -48,6 +66,24 @@ export default function TimeOffPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function resetForm() {
+    setFormData({ startDate: '', endDate: '', type: 'pto', notes: '' })
+    setEditingRequest(null)
+    setShowForm(false)
+    setFormErrors({})
+  }
+
+  function openEdit(request: TimeOff) {
+    setEditingRequest(request)
+    setFormData({
+      startDate: request.startDate.split('T')[0],
+      endDate: request.endDate.split('T')[0],
+      type: request.type,
+      notes: request.notes || '',
+    })
+    setShowForm(true)
   }
 
   function validate(): boolean {
@@ -71,20 +107,40 @@ export default function TimeOffPage() {
     setSubmitting(true)
     setError(null)
     try {
-      await scheduleApi.requestTimeOff({
-        startDate: formData.startDate,
-        endDate: formData.endDate,
-        type: formData.type,
-        notes: formData.notes || undefined,
-      })
-      setShowForm(false)
-      setFormData({ startDate: '', endDate: '', type: 'pto', notes: '' })
+      if (editingRequest) {
+        await scheduleApi.updateTimeOff(editingRequest.id, {
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+          type: formData.type,
+          notes: formData.notes || undefined,
+        })
+      } else {
+        await scheduleApi.requestTimeOff({
+          startDate: formData.startDate,
+          endDate: formData.endDate,
+          type: formData.type,
+          notes: formData.notes || undefined,
+        })
+      }
+      resetForm()
       await loadRequests()
     } catch (err) {
-      console.error('Failed to submit time-off request:', err)
-      setError('Failed to submit request. Please try again.')
+      console.error('Failed to save time-off request:', err)
+      setError('Failed to save request. Please try again.')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleCancel(id: number) {
+    if (!confirm('Are you sure you want to cancel this time-off request?')) return
+    try {
+      setError(null)
+      await scheduleApi.cancelTimeOff(id)
+      await loadRequests()
+    } catch (err) {
+      console.error('Failed to cancel time-off request:', err)
+      setError('Failed to cancel request.')
     }
   }
 
@@ -115,7 +171,7 @@ export default function TimeOffPage() {
           onSubmit={handleSubmit}
           className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4"
         >
-          <h2 className="font-medium">New Time Off Request</h2>
+          <h2 className="font-medium">{editingRequest ? 'Edit Time Off Request' : 'New Time Off Request'}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm text-gray-500 mb-1">Start Date</label>
@@ -167,6 +223,11 @@ export default function TimeOffPage() {
               <option value="cme">CME / Conference</option>
               <option value="holiday">Holiday</option>
               <option value="sick">Sick Leave</option>
+              <option value="personal">Personal Leave</option>
+              <option value="bereavement">Bereavement</option>
+              <option value="military">Military Leave</option>
+              <option value="jury_duty">Jury Duty</option>
+              <option value="unpaid">Unpaid Leave</option>
             </select>
           </div>
           <div>
@@ -195,7 +256,7 @@ export default function TimeOffPage() {
             </button>
             <button
               type="button"
-              onClick={() => setShowForm(false)}
+              onClick={resetForm}
               className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
             >
               <X className="w-4 h-4" />
@@ -233,7 +294,7 @@ export default function TimeOffPage() {
               {requests.map((req) => (
                 <div
                   key={req.id}
-                  className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg"
+                  className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg group"
                 >
                   <div>
                     <p className="text-sm font-medium">
@@ -247,13 +308,33 @@ export default function TimeOffPage() {
                       <p className="text-xs text-gray-600 mt-1">{req.notes}</p>
                     )}
                   </div>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full ${
-                      STATUS_COLORS[req.status] || 'bg-gray-600/20 text-gray-400'
-                    }`}
-                  >
-                    {req.status}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {req.status === 'pending' && (
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => openEdit(req)}
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Edit"
+                        >
+                          <Edit3 className="w-3.5 h-3.5 text-gray-400 hover:text-amber-400" />
+                        </button>
+                        <button
+                          onClick={() => handleCancel(req.id)}
+                          className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                          title="Cancel request"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-gray-400 hover:text-red-400" />
+                        </button>
+                      </div>
+                    )}
+                    <span
+                      className={`text-xs px-2 py-0.5 rounded-full ${
+                        STATUS_COLORS[req.status] || 'bg-gray-600/20 text-gray-400'
+                      }`}
+                    >
+                      {req.status}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>

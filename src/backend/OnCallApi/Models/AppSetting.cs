@@ -20,5 +20,9 @@ public class AppSetting
     [MaxLength(500)]
     public string? Description { get; set; }
 
+    /// <summary>Tenant-scoped settings. Null means global/app-wide setting.</summary>
+    public int? TenantId { get; set; }
+    public Tenant? Tenant { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

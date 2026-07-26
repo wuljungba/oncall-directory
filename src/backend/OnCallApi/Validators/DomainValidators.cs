@@ -97,6 +97,55 @@ public class PhoneTreeValidator : AbstractValidator<PhoneTree>
     }
 }
 
+public class PhoneTreeEventValidator : AbstractValidator<PhoneTreeEvent>
+{
+    public PhoneTreeEventValidator()
+    {
+        RuleFor(x => x.PhoneTreeId)
+            .GreaterThan(0).WithMessage("Phone tree ID is required.");
+
+        RuleFor(x => x.StartedAt)
+            .NotEmpty().WithMessage("Start time is required.");
+
+        RuleFor(x => x.EndedAt)
+            .GreaterThanOrEqualTo(x => x.StartedAt)
+            .When(x => x.EndedAt.HasValue)
+            .WithMessage("End time must be on or after start time.");
+
+        RuleFor(x => x.Status)
+            .NotEmpty()
+            .Must(s => s is "active" or "completed")
+            .WithMessage("Status must be active or completed.");
+
+        RuleFor(x => x.Location)
+            .MaximumLength(200).WithMessage("Location cannot exceed 200 characters.");
+
+        RuleFor(x => x.LocationZone)
+            .MaximumLength(100).WithMessage("Location zone cannot exceed 100 characters.");
+
+        RuleFor(x => x.ExternalIncidentId)
+            .MaximumLength(100).WithMessage("External incident ID cannot exceed 100 characters.");
+
+        RuleFor(x => x.Outcome)
+            .MaximumLength(1000).WithMessage("Outcome cannot exceed 1000 characters.");
+
+        RuleFor(x => x.Notes)
+            .MaximumLength(1000).WithMessage("Notes cannot exceed 1000 characters.");
+    }
+}
+
+public class PhoneTreeEventParticipantValidator : AbstractValidator<PhoneTreeEventParticipant>
+{
+    public PhoneTreeEventParticipantValidator()
+    {
+        RuleFor(x => x.Role)
+            .MaximumLength(50).WithMessage("Role cannot exceed 50 characters.");
+
+        RuleFor(x => x.Notes)
+            .MaximumLength(500).WithMessage("Notes cannot exceed 500 characters.");
+    }
+}
+
 public class PhoneTreeNodeValidator : AbstractValidator<PhoneTreeNode>
 {
     public PhoneTreeNodeValidator()

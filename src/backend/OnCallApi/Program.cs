@@ -83,6 +83,33 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("RequireAdminFull", policy =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
             OnCallApi.Authorization.Permissions.AdminFull));
+
+    options.AddPolicy("RequireCodeCallWrite", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.CodeCallWrite));
+
+    // ── Multi-tenant policies ──
+    options.AddPolicy("RequireAdminScoped", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.AdminScoped));
+
+    options.AddPolicy("RequireTenantManage", policy =>
+        policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
+            OnCallApi.Authorization.Permissions.TenantManage));
+
+    options.AddPolicy("RequireAdminFullOrScoped", policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim(OnCallApi.Authorization.Permissions.ClaimType,
+                OnCallApi.Authorization.Permissions.AdminFull) ||
+            context.User.HasClaim(OnCallApi.Authorization.Permissions.ClaimType,
+                OnCallApi.Authorization.Permissions.AdminScoped)));
+
+    options.AddPolicy("RequireAdminFullOrTenantManage", policy =>
+        policy.RequireAssertion(context =>
+            context.User.HasClaim(OnCallApi.Authorization.Permissions.ClaimType,
+                OnCallApi.Authorization.Permissions.AdminFull) ||
+            context.User.HasClaim(OnCallApi.Authorization.Permissions.ClaimType,
+                OnCallApi.Authorization.Permissions.TenantManage)));
 });
 
 // ── Database ──
@@ -139,6 +166,11 @@ builder.Services.AddHostedService<CalendarSyncService>();
 builder.Services.AddScoped<AvailabilityService>();
 builder.Services.AddScoped<EscalationService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
+builder.Services.AddScoped<ITenantContextService, TenantContextService>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped<IPhoneTreeEventService, PhoneTreeEventService>();
+builder.Services.AddScoped<ICodeCallDispatchService, CodeCallDispatchService>();
+builder.Services.AddScoped<TenantSyncService>();
 builder.Services.AddScoped<TeamsBotService>();
 builder.Services.AddScoped<SharePointPublishingService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
@@ -196,6 +228,9 @@ if (!devAuthEnabled)
     // Skipped in dev mode — DevelopmentAuthenticationHandler provides fake claims.
     app.UseMiddleware<JwtValidationMiddleware>();
 }
+
+// Expand user claims with tenant-scoped permissions from TenantAdmin records.
+app.UseMiddleware<TenantClaimsMiddleware>();
 
 // HIPAA audit logging (runs after auth so User is populated)
 // In dev mode the fake user claims are logged instead of real ones

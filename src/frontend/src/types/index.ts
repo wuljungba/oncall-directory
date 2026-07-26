@@ -1,7 +1,32 @@
+// ── Tenant / Multi-Tenant Types ──
+
+export interface Tenant {
+  id: number
+  name: string
+  description?: string
+  azureAdGroupId?: string
+  contactEmail?: string
+  isActive: boolean
+  createdAt: string
+}
+
+export interface TenantAdmin {
+  id: number
+  tenantId: number
+  tenant?: Tenant
+  azureAdObjectId: string
+  role: 'DepartmentAdmin' | 'SuperAdmin'
+  isAutoAssigned: boolean
+  createdAt: string
+}
+
+// ── Department ──
+
 export interface Department {
   id: number
   name: string
   description?: string
+  category?: string
   azureAdGroupId?: string
   isActive: boolean
 }
@@ -80,7 +105,7 @@ export interface TimeOff {
   employee?: Employee
   startDate: string
   endDate: string
-  type: 'pto' | 'cme' | 'holiday' | 'sick'
+  type: 'pto' | 'cme' | 'holiday' | 'sick' | 'personal' | 'bereavement' | 'military' | 'jury_duty' | 'unpaid'
   status: 'pending' | 'approved' | 'denied'
   notes?: string
 }
@@ -158,6 +183,57 @@ export interface EscalationPolicy {
   notificationChannels: string
   isActive: boolean
   createdAt: string
+}
+
+export interface PhoneTreeEvent {
+  id: number
+  phoneTreeId: number
+  startedAt: string
+  endedAt?: string
+  acknowledgedAt?: string
+  initiatedById?: string
+  initiatedBy?: Employee
+  location?: string
+  locationZone?: string
+  externalIncidentId?: string
+  responseTimeSeconds?: number
+  status: 'active' | 'completed'
+  outcome?: string
+  notes?: string
+  debriefNotes?: string
+  participants: PhoneTreeEventParticipant[]
+  dispatchSteps?: DispatchStep[]
+  phoneTree?: PhoneTree
+}
+
+export interface CodeCallLocation {
+  id: number
+  name: string
+  zone?: string
+  departmentId?: number
+  department?: Department
+  isActive: boolean
+}
+
+export interface PhoneTreeEventParticipant {
+  id: number
+  phoneTreeEventId: number
+  employeeId?: string
+  employee?: Employee
+  role?: string
+  respondedAt?: string
+  acknowledgedAt?: string
+  notes?: string
+}
+
+export interface DispatchStep {
+  id: number
+  phoneTreeEventId: number
+  stepKey: string
+  status: 'pending' | 'completed' | 'failed' | 'skipped'
+  startedAt: string
+  completedAt?: string
+  detail?: string
 }
 
 export interface EscalationEvent {
