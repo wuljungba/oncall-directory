@@ -39,6 +39,12 @@ public class ScheduleService : IScheduleService
 
     public async Task<Schedule> CreateScheduleAsync(Schedule schedule)
     {
+        // A schedule must belong to a real department — otherwise the FK insert
+        // fails with an opaque 500. Surface a clear validation error instead.
+        var deptExists = await _db.Departments.AnyAsync(d => d.Id == schedule.DepartmentId);
+        if (!deptExists)
+            throw new InvalidOperationException("A valid department is required to create a schedule.");
+
         _db.Schedules.Add(schedule);
         await _db.SaveChangesAsync();
         _logger.LogInformation("Created schedule {Name} for department {DeptId}", schedule.Name, schedule.DepartmentId);

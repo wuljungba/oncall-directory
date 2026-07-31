@@ -1,0 +1,11 @@
+{
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
+  "teammateMode": "in-process",
+  "hooks": {
+    "PreToolUse": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/discovery_gate.py\"",
+    "TaskCompleted": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/task_completed_verify_gate.py\"",
+    "PreCommit": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/secrets_scan.py\""
+  }
+}

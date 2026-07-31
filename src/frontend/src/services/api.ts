@@ -19,6 +19,7 @@ import type {
   Tenant,
   TenantAdmin,
 } from '@/types'
+import { getAuthProvider } from '@/services/auth'
 
 interface ImportResult {
   totalRows: number
@@ -28,6 +29,28 @@ interface ImportResult {
 }
 
 const API_BASE = '/api'
+
+const DEV_AUTH = import.meta.env.VITE_DEV_AUTH === 'true'
+
+/**
+ * Resolve the bearer token from the active auth provider.
+ *
+ * Delegates to the provider so tokens are silently refreshed when near
+ * expiry. When the provider resolves null (e.g. expired local token with no
+ * silent refresh) this returns null — the request goes out WITHOUT an
+ * Authorization header rather than with a stale token. sessionStorage is only
+ * used in dev mode or if the provider call itself throws.
+ */
+async function getAuthToken(): Promise<string | null> {
+  if (DEV_AUTH) return sessionStorage.getItem('accessToken')
+
+  try {
+    return await getAuthProvider().getAccessToken()
+  } catch (err) {
+    console.warn('[api] Failed to retrieve access token, falling back to sessionStorage:', err)
+    return sessionStorage.getItem('accessToken')
+  }
+}
 
 /** Builds a query string from an object, omitting undefined and null values. */
 function buildQueryString(params: Record<string, string | number | boolean | undefined | null>): string {
@@ -40,7 +63,7 @@ async function fetchApi<T>(
   endpoint: string,
   options?: RequestInit
 ): Promise<T> {
-  const accessToken = sessionStorage.getItem('accessToken')
+  const accessToken = await getAuthToken()
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
@@ -164,7 +187,7 @@ export const complianceApi = {
 
 // ── Bulk Import ──
 async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
-  const accessToken = sessionStorage.getItem('accessToken')
+  const accessToken = await getAuthToken()
   const formData = new FormData()
   formData.append('file', file)
 

@@ -1,27 +1,23 @@
 import { useState, useEffect, useCallback } from 'react'
-import type { AccountInfo } from '@azure/msal-browser'
 import { authApi } from '@/services/api'
+import { getAuthProvider, getActiveProviderType } from '@/services/auth'
+import type { AuthUser, AuthProviderType } from '@/services/auth'
 
 const DEV_AUTH = import.meta.env.VITE_DEV_AUTH === 'true'
-import {
-  initAuth,
-  signIn as msalSignIn,
-  signOut as msalSignOut,
-  isAuthenticated,
-  getCurrentUser,
-} from '@/services/auth'
 
 interface AuthState {
   isLoading: boolean
   isAuthenticated: boolean
-  user: AccountInfo | null
-  signIn: () => Promise<void>
+  user: AuthUser | null
+  authProvider: AuthProviderType | null
+  signIn: (provider?: AuthProviderType, email?: string, password?: string) => Promise<void>
   signOut: () => Promise<void>
+  refreshToken: () => Promise<string | null>
   userRoles: string[]
+
+  // Granular permissions (from backend /api/auth/me)
   isAdmin: boolean
   canSchedule: boolean
-
-  // Granular permissions
   permissions: string[]
   canScheduleRead: boolean
   canScheduleWrite: boolean
@@ -46,7 +42,12 @@ const ALL_PERMISSIONS = [
 
 export function useAuth(): AuthState {
   const [isLoading, setIsLoading] = useState(DEV_AUTH ? false : true)
-  const [user, setUser] = useState<AccountInfo | null>(DEV_AUTH ? ({ username: 'dev@local' } as AccountInfo) : null)
+  const [user, setUser] = useState<AuthUser | null>(
+    DEV_AUTH ? { id: 'dev', name: 'dev@local', email: 'dev@local', provider: 'microsoft', raw: {} } as AuthUser : null,
+  )
+  const [authProvider, setAuthProvider] = useState<AuthProviderType | null>(
+    DEV_AUTH ? 'microsoft' : null,
+  )
   const [permissions, setPermissions] = useState<string[]>(DEV_AUTH ? ALL_PERMISSIONS : [])
   const [tenantIds, setTenantIds] = useState<number[]>([])
   const [tenantRoles, setTenantRoles] = useState<Record<string, string>>({})
@@ -88,19 +89,27 @@ export function useAuth(): AuthState {
           // Fallback to full access if backend not reachable
           setPermissions(ALL_PERMISSIONS)
         })
-      const fake = { username: 'dev@local' } as AccountInfo
-      setUser(fake)
       setIsLoading(false)
       return
     }
 
-    initAuth()
+    // Initialize the active provider and check for existing session
+    const provider = getAuthProvider()
+    const providerType = getActiveProviderType()
+    setAuthProvider(providerType)
+
+    provider.init()
       .then(() => {
-        setUser(getCurrentUser())
-        // In production, fetch permissions from the /api/auth/me endpoint
-        authApi.me()
-          .then(res => handleAuthResponse(res))
-          .catch(() => setPermissions([]))
+        const currentUser = provider.getCurrentUser()
+        setUser(currentUser)
+
+        if (currentUser) {
+          // Fetch permissions from the /api/auth/me endpoint
+          authApi.me()
+            .then(res => handleAuthResponse(res))
+            .catch(() => setPermissions([]))
+        }
+
         setIsLoading(false)
       })
       .catch((err) => {
@@ -109,11 +118,11 @@ export function useAuth(): AuthState {
       })
   }, [handleAuthResponse])
 
-  const signIn = useCallback(async () => {
+  const signIn = useCallback(async (providerType?: AuthProviderType, email?: string, password?: string) => {
     if (DEV_AUTH) {
       setIsLoading(true)
-      const fake = { username: 'dev@local' } as AccountInfo
-      setUser(fake)
+      setUser({ id: 'dev', name: 'dev@local', email: 'dev@local', provider: 'microsoft', raw: {} })
+      setAuthProvider('microsoft')
       // Re-fetch permissions after sign-in (role may have changed)
       authApi.me()
         .then(res => handleAuthResponse(res))
@@ -123,17 +132,32 @@ export function useAuth(): AuthState {
     }
 
     setIsLoading(true)
-    const account = await msalSignIn()
-    setUser(account)
-    authApi.me()
-      .then(res => handleAuthResponse(res))
-      .catch(() => setPermissions([]))
+    try {
+      // If a specific provider type is requested, get that one
+      const provider = providerType
+        ? getAuthProvider(providerType)
+        : getAuthProvider()
+
+      const result = await provider.signIn(email, password)
+      if (result) {
+        setUser(result.account)
+        setAuthProvider(result.account.provider)
+        // Fetch permissions from backend
+        authApi.me()
+          .then(res => handleAuthResponse(res))
+          .catch(() => setPermissions([]))
+      }
+    } catch (error) {
+      console.error('[useAuth] Sign in failed:', error)
+    }
     setIsLoading(false)
   }, [handleAuthResponse])
 
   const signOut = useCallback(async () => {
-    await msalSignOut()
+    const provider = getAuthProvider()
+    await provider.signOut()
     setUser(null)
+    setAuthProvider(null)
     setPermissions([])
     setTenantIds([])
     setTenantRoles({})
@@ -141,19 +165,30 @@ export function useAuth(): AuthState {
     sessionStorage.removeItem('activeTenantId')
   }, [])
 
-  // Extract roles from the user's ID token claims
+  const refreshToken = useCallback(async (): Promise<string | null> => {
+    if (DEV_AUTH) return sessionStorage.getItem('accessToken')
+
+    try {
+      return await getAuthProvider().refreshToken()
+    } catch (err) {
+      console.error('[useAuth] Token refresh failed:', err)
+      return null
+    }
+  }, [])
+
+  // Extract roles from permissions
   const devRoles = ['OnCall.Viewer', 'OnCall.Scheduler', 'OnCall.Admin']
-  const rawRoles = DEV_AUTH
-    ? devRoles
-    : ((user?.idTokenClaims as Record<string, unknown>)?.roles as string[] | undefined) || []
+  const rawRoles = DEV_AUTH ? devRoles : permissions
 
   const perms = permissions
   return {
     isLoading,
-    isAuthenticated: DEV_AUTH ? true : isAuthenticated(),
+    isAuthenticated: DEV_AUTH ? true : user !== null,
     user,
+    authProvider,
     signIn,
     signOut,
+    refreshToken,
     userRoles: rawRoles,
     isAdmin: perms.includes('Admin.Full'),
     canSchedule: perms.includes('Schedule.Write'),

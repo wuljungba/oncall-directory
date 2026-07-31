@@ -14,7 +14,7 @@ const features = [
   {
     icon: Phone,
     title: 'Phone Directory',
-    description: 'Searchable employee directory synced with Azure Active Directory. Find anyone by name, title, or department.',
+    description: 'Searchable employee directory synced with Active Directory or imported via CSV. Find anyone by name, title, or department.',
     accent: 'text-blue-500',
     bgAccent: 'bg-blue-600/10',
     borderAccent: 'border-blue-600/20',
@@ -45,12 +45,12 @@ const policies = [
   },
   {
     title: 'Data Security',
-    description: 'All traffic is TLS-encrypted. Authentication uses Microsoft Entra ID with JWT bearer tokens. No credentials are stored in the application.',
+    description: 'All traffic is TLS-encrypted. Authentication uses SSO providers (Microsoft, Google) or local accounts. No credentials are stored in the application.',
     icon: CheckCircle,
   },
   {
     title: 'Access Control',
-    description: 'Role-based access with Viewer, Scheduler, and Admin tiers. Every API call is authorized against Azure AD app roles.',
+    description: 'Role-based access with Viewer, Scheduler, and Admin tiers. Every API call is authorized against granular permission claims.',
     icon: Users,
   },
 ]
@@ -79,7 +79,7 @@ export default function LandingPage() {
                 to="/login"
                 className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
               >
-                Sign In with Microsoft
+                Sign In
                 <ArrowRight className="w-4 h-4" />
               </Link>
             </div>
@@ -137,7 +137,7 @@ export default function LandingPage() {
 
             <p className="mt-6 text-lg sm:text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
               Automate your healthcare organization's on-call rotations, manage a searchable phone directory,
-              track duty-hour compliance, and integrate seamlessly with Microsoft 365.
+              track duty-hour compliance, and integrate with your existing identity systems.
             </p>
 
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
@@ -145,7 +145,7 @@ export default function LandingPage() {
                 to="/login"
                 className="flex items-center gap-2 px-8 py-3 bg-amber-600 hover:bg-amber-700 rounded-xl text-base font-medium transition-all hover:shadow-lg hover:shadow-amber-600/25"
               >
-                Sign In with Microsoft
+                Get Started
                 <ArrowRight className="w-5 h-5" />
               </Link>
               <a
@@ -168,7 +168,7 @@ export default function LandingPage() {
               <span className="text-amber-500">manage on-call</span>
             </h2>
             <p className="mt-4 text-gray-400 max-w-2xl mx-auto">
-              A comprehensive suite of tools built for healthcare organizations, integrated with your existing Microsoft 365 environment.
+              A comprehensive suite of tools built for healthcare organizations, integrated with your existing systems.
             </p>
           </div>
 
@@ -224,13 +224,13 @@ export default function LandingPage() {
             Ready to get started?
           </h2>
           <p className="text-gray-400 mb-8 max-w-xl mx-auto">
-            Sign in with your Microsoft 365 account to begin managing on-call schedules and your phone directory.
+            Sign in with your organizational account to begin managing on-call schedules and your phone directory.
           </p>
           <Link
             to="/login"
             className="inline-flex items-center gap-2 px-8 py-3 bg-amber-600 hover:bg-amber-700 rounded-xl text-base font-medium transition-all hover:shadow-lg hover:shadow-amber-600/25"
           >
-            Sign In with Microsoft
+            Sign In
             <ArrowRight className="w-5 h-5" />
           </Link>
         </div>

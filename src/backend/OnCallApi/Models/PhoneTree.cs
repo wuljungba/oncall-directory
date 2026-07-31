@@ -24,7 +24,7 @@ public class PhoneTreeNode
 {
     public int Id { get; set; }
     public int PhoneTreeId { get; set; }
-    public PhoneTree PhoneTree { get; set; } = null!;
+    public PhoneTree? PhoneTree { get; set; }
     public int Order { get; set; }
     public Guid? EmployeeId { get; set; }
     public Employee? Employee { get; set; }

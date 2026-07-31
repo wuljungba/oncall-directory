@@ -10,17 +10,71 @@ namespace OnCallApi.Services;
 
 public class GraphApiService : IGraphApiService
 {
-    private readonly GraphServiceClient _graphClient;
+    private readonly IOptions<GraphApiOptions> _options;
     private readonly ILogger<GraphApiService> _logger;
+    private GraphServiceClient? _client;
+    private bool _clientInitialized;
 
     public GraphApiService(IOptions<GraphApiOptions> options, ILogger<GraphApiService> logger)
     {
+        _options = options;
         _logger = logger;
-        var creds = new ClientSecretCredential(
-            options.Value.TenantId,
-            options.Value.ClientId,
-            options.Value.ClientSecret);
-        _graphClient = new GraphServiceClient(creds);
+    }
+
+    private GraphServiceClient GetClient()
+    {
+        if (_client != null) return _client;
+        if (_clientInitialized)
+        {
+            throw new InvalidOperationException("Graph API client initialization already failed; check previous logs.");
+        }
+        _clientInitialized = true;
+
+        try
+        {
+            var creds = new ClientSecretCredential(
+                _options.Value.TenantId,
+                _options.Value.ClientId,
+                _options.Value.ClientSecret);
+            _client = new GraphServiceClient(creds, _options.Value.Scopes);
+            _logger.LogInformation("GraphServiceClient initialized successfully with {ScopeCount} scope(s)",
+                _options.Value.Scopes.Length);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to initialize GraphServiceClient (tenant: {TenantId})",
+                _options.Value.TenantId);
+            throw;
+        }
+        return _client;
+    }
+
+    public async Task<bool> CheckGraphConnectionAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var users = await GetClient().Users.GetAsync(config =>
+            {
+                config.QueryParameters.Top = 1;
+                config.QueryParameters.Select = new[] { "id" };
+            }, ct);
+
+            var success = users?.Value != null;
+            if (success)
+            {
+                _logger.LogInformation("Graph API connection check succeeded");
+            }
+            else
+            {
+                _logger.LogWarning("Graph API connection check: responded but returned no data");
+            }
+            return success;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Graph API connection check failed: {Message}", ex.Message);
+            return false;
+        }
     }
 
     public async Task<List<Employee>> SyncUsersAsync(CancellationToken ct = default)
@@ -28,8 +82,7 @@ public class GraphApiService : IGraphApiService
         var employees = new List<Employee>();
         try
         {
-            // Use a simple users request; avoid SDK-specific query-parameter types here.
-            var users = await _graphClient.Users.GetAsync(cancellationToken: ct);
+            var users = await GetClient().Users.GetAsync(cancellationToken: ct);
 
             if (users?.Value == null) return employees;
 
@@ -53,27 +106,23 @@ public class GraphApiService : IGraphApiService
         string? newDeltaToken = null;
         try
         {
-            // Use delta query: pass existing delta token if available; first call (null) returns full set
-            var users = await _graphClient.Users.Delta.GetAsDeltaGetResponseAsync(cancellationToken: ct);
+            var users = await GetClient().Users.Delta.GetAsDeltaGetResponseAsync(cancellationToken: ct);
 
             if (users?.Value == null) return (employees, newDeltaToken);
 
-            // Capture the delta link for incremental syncs
             if (users.OdataDeltaLink != null)
             {
                 newDeltaToken = users.OdataDeltaLink;
             }
             else if (users.OdataNextLink != null)
             {
-                // Delta response may be paginated; first page has nextLink, last page has deltaLink
-                // Store nextLink to resume pagination — in practice the delta token survives across cycles
                 newDeltaToken = users.OdataNextLink;
             }
 
             foreach (var user in users.Value)
             {
                 if (user.AdditionalData?.ContainsKey("@removed") == true)
-                    continue; // Skip deleted users, handle separately
+                    continue;
                 employees.Add(MapGraphUserToEmployee(user));
             }
         }
@@ -88,7 +137,7 @@ public class GraphApiService : IGraphApiService
     {
         try
         {
-            var presence = await _graphClient.Users[azureAdObjectId].Presence.GetAsync(cancellationToken: ct);
+            var presence = await GetClient().Users[azureAdObjectId].Presence.GetAsync(cancellationToken: ct);
             return presence?.Availability ?? "unknown";
         }
         catch
@@ -110,19 +159,16 @@ public class GraphApiService : IGraphApiService
                     Content = message
                 }
             };
-            // Send to user's primary Teams chat via Graph API.
-            // Requires ChatMessage.Send or Chat.ReadWrite.All application permission.
-            // Uses the user's email or AAD object ID as the chat thread identifier.
             try
             {
-                var chat = await _graphClient.Users[userId].Chats.GetAsync(cancellationToken: ct);
+                var chat = await GetClient().Users[userId].Chats.GetAsync(cancellationToken: ct);
                 if (chat?.Value != null && chat.Value.Count > 0)
                 {
                     var targetChat = chat.Value.FirstOrDefault(c =>
                         c.ChatType == ChatType.OneOnOne);
                     if (targetChat != null)
                     {
-                        await _graphClient.Chats[targetChat.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
+                        await GetClient().Chats[targetChat.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
                         _logger.LogInformation("Teams message sent to {UserId} via chat {ChatId}", userId, targetChat.Id);
                         return;
                     }
@@ -133,7 +179,6 @@ public class GraphApiService : IGraphApiService
                 _logger.LogWarning(ex, "Could not send Teams message via chat; trying activity notification fallback");
             }
 
-            // Fallback: send as activity notification
             _logger.LogInformation("Teams notification queued for {UserId}: {Title} (activity notification)", userId, title);
         }
         catch (Exception ex)
@@ -157,11 +202,11 @@ public class GraphApiService : IGraphApiService
 
             try
             {
-                var chats = await _graphClient.Users[userId].Chats.GetAsync(cancellationToken: ct);
+                var chats = await GetClient().Users[userId].Chats.GetAsync(cancellationToken: ct);
                 var oneOnOne = chats?.Value?.FirstOrDefault(c => c.ChatType == ChatType.OneOnOne);
                 if (oneOnOne != null)
                 {
-                    await _graphClient.Chats[oneOnOne.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
+                    await GetClient().Chats[oneOnOne.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
                     _logger.LogInformation("Teams message sent to {UserId}", userId);
                     return;
                 }
@@ -195,7 +240,7 @@ public class GraphApiService : IGraphApiService
                     TimeZone = "UTC"
                 }
             };
-            await _graphClient.Users[userId].Calendar.Events.PostAsync(calendarEvent, cancellationToken: ct);
+            await GetClient().Users[userId].Calendar.Events.PostAsync(calendarEvent, cancellationToken: ct);
         }
         catch (Exception ex)
         {
@@ -208,7 +253,7 @@ public class GraphApiService : IGraphApiService
         var groups = new List<GroupInfo>();
         try
         {
-            var result = await _graphClient.Groups.GetAsync(cancellationToken: ct);
+            var result = await GetClient().Groups.GetAsync(cancellationToken: ct);
             if (result?.Value != null)
             {
                 foreach (var g in result.Value)
@@ -232,8 +277,6 @@ public class GraphApiService : IGraphApiService
     {
         try
         {
-            // Create a SharePoint list item as a page in the SitePages library.
-            // Requires Sites.ReadWrite.All permission.
             var listItem = new Microsoft.Graph.Models.ListItem
             {
                 Fields = new Microsoft.Graph.Models.FieldValueSet
@@ -246,7 +289,7 @@ public class GraphApiService : IGraphApiService
                     }
                 }
             };
-            await _graphClient.Sites[siteId].Lists["SitePages"].Items.PostAsync(listItem, cancellationToken: ct);
+            await GetClient().Sites[siteId].Lists["SitePages"].Items.PostAsync(listItem, cancellationToken: ct);
             _logger.LogInformation("SharePoint page created: {Title}", title);
         }
         catch (Exception ex)
@@ -261,7 +304,7 @@ public class GraphApiService : IGraphApiService
         var members = new List<Employee>();
         try
         {
-            var groupMembers = await _graphClient.Groups[groupId].Members.GetAsync(cancellationToken: ct);
+            var groupMembers = await GetClient().Groups[groupId].Members.GetAsync(cancellationToken: ct);
             if (groupMembers?.Value == null) return members;
 
             foreach (var member in groupMembers.Value.OfType<Microsoft.Graph.Models.User>())

@@ -13,4 +13,10 @@ public interface IGraphApiService
     Task<List<Employee>> GetDepartmentMembersAsync(string groupId, CancellationToken ct = default);
     Task<List<GroupInfo>> GetAllGroupsAsync(CancellationToken ct = default);
     Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default);
+
+    /// <summary>
+    /// Tests Graph API connectivity by fetching a single user.
+    /// Returns true on success; logs and returns false on failure.
+    /// </summary>
+    Task<bool> CheckGraphConnectionAsync(CancellationToken ct = default);
 }

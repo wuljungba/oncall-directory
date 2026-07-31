@@ -13,7 +13,7 @@ public class PhoneTreeEvent
     public int Id { get; set; }
 
     public int PhoneTreeId { get; set; }
-    public PhoneTree PhoneTree { get; set; } = null!;
+    public PhoneTree? PhoneTree { get; set; }
 
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
 
@@ -58,7 +58,7 @@ public class PhoneTreeEventParticipant
     public int Id { get; set; }
 
     public int PhoneTreeEventId { get; set; }
-    public PhoneTreeEvent PhoneTreeEvent { get; set; } = null!;
+    public PhoneTreeEvent? PhoneTreeEvent { get; set; }
 
     public Guid? EmployeeId { get; set; }
     public Employee? Employee { get; set; }

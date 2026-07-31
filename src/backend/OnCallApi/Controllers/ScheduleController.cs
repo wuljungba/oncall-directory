@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using OnCallApi.Data;
 using OnCallApi.Hubs;
 using OnCallApi.Models;
 using OnCallApi.Services;
@@ -14,11 +16,34 @@ public class ScheduleController : ControllerBase
 {
     private readonly IScheduleService _scheduleService;
     private readonly IHubContext<OnCallNotificationHub> _hub;
+    private readonly AppDbContext _db;
+    private readonly ILogger<ScheduleController> _logger;
 
-    public ScheduleController(IScheduleService scheduleService, IHubContext<OnCallNotificationHub> hub)
+    public ScheduleController(
+        IScheduleService scheduleService,
+        IHubContext<OnCallNotificationHub> hub,
+        AppDbContext db,
+        ILogger<ScheduleController> logger)
     {
         _scheduleService = scheduleService;
         _hub = hub;
+        _db = db;
+        _logger = logger;
+    }
+
+    private async Task BroadcastToTenantGroupAsync(int? tenantId, string method, object arg)
+    {
+        if (tenantId.HasValue)
+        {
+            await _hub.Clients.Group($"tenant-{tenantId.Value}").SendAsync(method, arg);
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Could not resolve tenantId for notification '{Method}', broadcasting to all clients",
+                method);
+            await _hub.Clients.All.SendAsync(method, arg);
+        }
     }
 
     /// <summary>Get all schedules, optionally filtered by department.</summary>
@@ -42,10 +67,21 @@ public class ScheduleController : ControllerBase
     [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<Schedule>> CreateSchedule(Schedule schedule)
     {
-        var created = await _scheduleService.CreateScheduleAsync(schedule);
+        try
+        {
+            var created = await _scheduleService.CreateScheduleAsync(schedule);
 
-        await _hub.Clients.All.SendAsync("ScheduleCreated", created);
-        return CreatedAtAction(nameof(GetSchedule), new { id = created.Id }, created);
+            var tenantId = await _db.Departments
+                .Where(d => d.Id == created.DepartmentId)
+                .Select(d => d.TenantId)
+                .FirstOrDefaultAsync();
+            await BroadcastToTenantGroupAsync(tenantId, "ScheduleCreated", created);
+            return CreatedAtAction(nameof(GetSchedule), new { id = created.Id }, created);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
     }
 
     /// <summary>Update an existing schedule.</summary>
@@ -69,11 +105,14 @@ public class ScheduleController : ControllerBase
         return NoContent();
     }
 
-    /// <summary>Auto-generate shifts for a schedule for N weeks.</summary>
+    /// <summary>Auto-generate shifts for a schedule for N weeks (max 52).</summary>
     [HttpPost("{scheduleId}/generate")]
     [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<List<Shift>>> GenerateShifts(int scheduleId, [FromQuery] int weeks = 4)
     {
+        if (weeks < 1 || weeks > 52)
+            return BadRequest(new { error = "Weeks must be between 1 and 52." });
+
         var shifts = await _scheduleService.GenerateShiftsAsync(scheduleId, weeks);
 
         await _hub.Clients.All.SendAsync("ShiftsGenerated", new { scheduleId, count = shifts.Count });

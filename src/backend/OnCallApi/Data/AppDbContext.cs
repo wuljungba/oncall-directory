@@ -27,6 +27,7 @@ public class AppDbContext : DbContext
     public DbSet<CodeCallLocation> CodeCallLocations => Set<CodeCallLocation>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantAdmin> TenantAdmins => Set<TenantAdmin>();
+    public DbSet<LocalAccount> LocalAccounts => Set<LocalAccount>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -35,7 +36,7 @@ public class AppDbContext : DbContext
         // ── Employee ──
         modelBuilder.Entity<Employee>(e =>
         {
-            e.HasIndex(x => x.AzureAdObjectId).IsUnique();
+            e.HasIndex(x => x.AzureAdObjectId).IsUnique().HasFilter("[AzureAdObjectId] IS NOT NULL AND [AzureAdObjectId] != ''");
             e.HasIndex(x => x.Email).IsUnique();
 
             e.Property(x => x.Certifications).HasDefaultValue("[]");
@@ -268,6 +269,12 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.SetNull);
 
             s.HasIndex(x => x.TenantId);
+        });
+
+        // ── LocalAccount ──
+        modelBuilder.Entity<LocalAccount>(entity =>
+        {
+            entity.Ignore(x => x.Roles);
         });
 
         // ── Seed Data ──

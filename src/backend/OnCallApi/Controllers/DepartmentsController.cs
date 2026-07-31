@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OnCallApi.Data;
 using OnCallApi.Models;
+using OnCallApi.Services;
 
 namespace OnCallApi.Controllers;
 
@@ -12,13 +13,30 @@ namespace OnCallApi.Controllers;
 public class DepartmentsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly ITenantContextService _tenantContext;
 
-    public DepartmentsController(AppDbContext db) => _db = db;
+    public DepartmentsController(AppDbContext db, ITenantContextService tenantContext)
+    {
+        _db = db;
+        _tenantContext = tenantContext;
+    }
 
     [HttpGet]
     public async Task<ActionResult<List<Department>>> GetAll()
     {
-        return await _db.Departments.Where(d => d.IsActive).OrderBy(d => d.Name).ToListAsync();
+        var query = _db.Departments.Where(d => d.IsActive).AsQueryable();
+
+        // Apply tenant scoping for non-super-admin users
+        if (!_tenantContext.IsSuperAdmin(User))
+        {
+            var tenantIds = await _tenantContext.GetAuthorizedTenantIdsAsync(User);
+            if (tenantIds.Count > 0)
+            {
+                query = query.Where(d => d.TenantId.HasValue && tenantIds.Contains(d.TenantId.Value));
+            }
+        }
+
+        return await query.OrderBy(d => d.Name).ToListAsync();
     }
 
     [HttpGet("{id}")]

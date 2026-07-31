@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "production"
+    },
+    "location": {
+      "value": "eastus"
+    },
+    "entraTenantId": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-production/providers/Microsoft.KeyVault/vaults/kv-oncall-production"
+        },
+        "secretName": "entra-tenant-id"
+      }
+    },
+    "entraClientId": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-production/providers/Microsoft.KeyVault/vaults/kv-oncall-production"
+        },
+        "secretName": "entra-client-id"
+      }
+    },
+    "entraDomain": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-production/providers/Microsoft.KeyVault/vaults/kv-oncall-production"
+        },
+        "secretName": "entra-domain"
+      }
+    },
+    "sqlAdminPassword": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/your-subscription/resourceGroups/rg-oncall-production/providers/Microsoft.KeyVault/vaults/kv-oncall-production"
+        },
+        "secretName": "sql-admin-password"
+      }
+    },
+    "corsOrigin": {
+      "value": "https://oncall.yourhospital.org"
+    }
+  }
+}

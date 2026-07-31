@@ -9,6 +9,7 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/code-call-locations")]
+[Authorize(Policy = "RequireDirectoryRead")]
 public class CodeCallLocationsController : ControllerBase
 {
     private readonly AppDbContext _db;

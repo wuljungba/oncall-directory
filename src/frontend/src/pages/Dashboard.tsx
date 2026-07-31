@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { Link } from 'react-router-dom'
 import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail } from 'lucide-react'
 import { scheduleApi, directoryApi } from '@/services/api'
 import { useSignalR } from '@/hooks/useSignalR'
@@ -206,36 +207,36 @@ export default function Dashboard() {
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <a
-          href="/schedule"
-          className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-amber-600/50 transition-colors"
+        <Link
+          to="/dashboard/schedule"
+          className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-amber-600/50 transition-colors block"
         >
           <CalendarIcon />
           <h3 className="font-medium mt-2">View Schedule</h3>
           <p className="text-sm text-gray-500 mt-1">
             See upcoming on-call rotations
           </p>
-        </a>
-        <a
-          href="/directory"
-          className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-amber-600/50 transition-colors"
+        </Link>
+        <Link
+          to="/dashboard/directory"
+          className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-amber-600/50 transition-colors block"
         >
           <PhoneIcon />
           <h3 className="font-medium mt-2">Phone Directory</h3>
           <p className="text-sm text-gray-500 mt-1">
             Find colleagues and contact info
           </p>
-        </a>
-        <a
-          href="/time-off"
-          className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-amber-600/50 transition-colors"
+        </Link>
+        <Link
+          to="/dashboard/time-off"
+          className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-amber-600/50 transition-colors block"
         >
           <CalendarDaysIcon />
           <h3 className="font-medium mt-2">Request Time Off</h3>
           <p className="text-sm text-gray-500 mt-1">
             Submit blackout dates for scheduling
           </p>
-        </a>
+        </Link>
       </div>
     </div>
   )

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.SignalR;
 using OnCallApi.Hubs;
 using OnCallApi.Models;
 using OnCallApi.Services;
+using OnCallApi.Services.Dispatch;
 
 namespace OnCallApi.Controllers;
 
@@ -15,15 +16,28 @@ public class PhoneTreeEventsController : ControllerBase
     private readonly IPhoneTreeEventService _service;
     private readonly IHubContext<OnCallNotificationHub> _hub;
     private readonly ICodeCallDispatchService _dispatch;
+    private readonly DispatchBackgroundService _dispatchStatus;
 
     public PhoneTreeEventsController(
         IPhoneTreeEventService service,
         IHubContext<OnCallNotificationHub> hub,
-        ICodeCallDispatchService dispatch)
+        ICodeCallDispatchService dispatch,
+        DispatchBackgroundService dispatchStatus)
     {
         _service = service;
         _hub = hub;
         _dispatch = dispatch;
+        _dispatchStatus = dispatchStatus;
+    }
+
+    // ── Command Center Endpoints ──
+
+    /// <summary>Get live dispatch queue status (pending, processing, totals).</summary>
+    [HttpGet("dispatch/status")]
+    [Authorize(Policy = "RequireScheduleWrite")]
+    public ActionResult<DispatchQueueStatus> GetDispatchStatus()
+    {
+        return Ok(_dispatchStatus.GetStatus());
     }
 
     // ── Command Center Endpoints ──
@@ -124,8 +138,8 @@ public class PhoneTreeEventsController : ControllerBase
         // Determine code type from the associated phone tree
         var treeType = created.PhoneTree?.TreeType ?? "emergency";
 
-        // Fire dispatch pipeline in the background
-        _ = _dispatch.DispatchIncidentAsync(created, treeType);
+        // Enqueue the dispatch job; it is processed by the dispatch background service
+        await _dispatch.DispatchIncidentAsync(created.Id, treeType);
 
         await _hub.Clients.All.SendAsync("IncidentCreated", created);
         return CreatedAtAction(nameof(GetEvent), new { eventId = created.Id }, created);
