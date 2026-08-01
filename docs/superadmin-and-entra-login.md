@@ -112,9 +112,13 @@ registration). Set the **single-app design** consistently:
    Microsoft Graph scopes (all Graph calls happen on the backend with app-only
    credentials). If the registration still lists them you may keep or remove them;
    they are no longer needed by the frontend.
-4. **Grant admin consent** for `api://<client-id>/access_as_user` so silent token
-   acquisition succeeds on fresh tenants (the interactive login also requests the
-   scope, but pre-consent avoids the extra prompt).
+4. **Admin consent is NOT required in the single-app design.** Because the SPA
+   and API are the same registration, the app requests *its own* exposed scope —
+   Azure AD issues the token without a consent prompt, and `az ad app permission
+   admin-consent` will actually reject it (*"application needs access to
+   service(s)… has not subscribed to"*). Do **not** add the app as its own
+   `requiredResourceAccess`; it serves no purpose and breaks admin-consent.
+   Interactive login already requests the scope, so silent refresh succeeds.
 
 ### 2. Backend configuration
 
@@ -137,16 +141,20 @@ registration). Set the **single-app design** consistently:
 claim is `api://<client-id>` (its default `ValidAudience`), so no separate
 `Audience` key is required.
 
-**Disable dev auth** so real JWT validation runs:
+**Disable dev auth** so real JWT validation runs. The repo ships a dedicated
+launch profile for this — `Properties/launchSettings.json` →
+`Development-RealEntra` — which sets `DevAuth__Enabled=false` plus the real
+`AzureAd__ClientId` / `AzureAd__Audience`. Start the backend with:
 
-```json
-// appsettings.Development.json (or via ASPNETCORE_ENVIRONMENT=Production)
-{ "DevAuth": { "Enabled": false } }
+```bash
+dotnet run --launch-profile Development-RealEntra
 ```
 
 With DevAuth off, `DevelopmentAuthenticationHandler` is replaced by the
 multi-provider JWT pipeline (Entra / Google / Local) and `JwtValidationMiddleware`
-enforces the `access_as_user` scope.
+enforces the `access_as_user` scope. For real single-tenant deployments,
+`AzureAd:ClientId` should come from Key Vault / App Service settings (the Bicep
+template wires `AzureAd__*`).
 
 ### 3. Frontend configuration
 
@@ -158,6 +166,11 @@ VITE_DEV_AUTH=false
 VITE_AZURE_CLIENT_ID=<your-real-client-id>
 VITE_GOOGLE_CLIENT_ID=
 ```
+
+> Note: a gitignored `.env.local` with the real client ID
+> (`96955ba3-c70c-4205-8637-a4b34301480a`, the "OnCall API" registration) is
+> already in place locally. `npm run dev` with it active enables real Entra
+> sign-in; delete it to go back to dev auth.
 
 The MSAL provider now requests **only** the API scope
 (`api://<client-id>/access_as_user`) for both the interactive login and silent
