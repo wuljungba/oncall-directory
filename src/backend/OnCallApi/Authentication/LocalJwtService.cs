@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.Extensions.Hosting;
 using Microsoft.IdentityModel.Tokens;
 
 namespace OnCallApi.Authentication;
@@ -17,11 +18,13 @@ public class LocalJwtService
 {
     private readonly IConfiguration _configuration;
     private readonly ILogger<LocalJwtService> _logger;
+    private readonly IHostEnvironment _environment;
 
-    public LocalJwtService(IConfiguration configuration, ILogger<LocalJwtService> logger)
+    public LocalJwtService(IConfiguration configuration, ILogger<LocalJwtService> logger, IHostEnvironment environment)
     {
         _configuration = configuration;
         _logger = logger;
+        _environment = environment;
     }
 
     /// <summary>
@@ -113,8 +116,17 @@ public class LocalJwtService
         var key = _configuration["Authentication:Local:SigningKey"];
         if (string.IsNullOrEmpty(key) || key.Length < 32)
         {
+            if (_environment.IsProduction())
+            {
+                // A well-known, source-visible fallback key in production is a
+                // credential-spoofing vector — fail fast instead of signing with it.
+                throw new InvalidOperationException(
+                    "Authentication:Local:SigningKey is missing or shorter than 32 characters. " +
+                    "This is required in production; set it via environment variables or Key Vault.");
+            }
+
             _logger.LogWarning("Local JWT signing key is missing or too short (< 32 chars). Using development fallback.");
-            // Development fallback — never use in production
+            // Development fallback — never used in production (see above)
             return "dev-local-jwt-signing-key-at-least-32-chars!!";
         }
         return key;

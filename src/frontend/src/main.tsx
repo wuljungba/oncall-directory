@@ -1,9 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
-import { MsalProvider } from '@azure/msal-react'
 import { GoogleOAuthProvider } from '@react-oauth/google'
-import { MicrosoftAuthProvider } from '@/services/auth'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 import './index.css'
@@ -26,7 +24,10 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 // it when Google auth is actually configured (and not in dev auth mode).
 const GOOGLE_ENABLED = !DEV_AUTH && !!GOOGLE_CLIENT_ID
 
-function renderApp(msalInstance?: ReturnType<MicrosoftAuthProvider['getMsalInstance']>) {
+// The MicrosoftAuthProvider (from the authFactory singleton) initializes MSAL
+// lazily when useAuth runs, so no eager MSAL bootstrapping is needed here. There
+// is no MsalProvider wrapper: no component consumes @azure/msal-react context.
+function renderApp() {
   const appContent = (
     <BrowserRouter>
       <ErrorBoundary>
@@ -42,29 +43,9 @@ function renderApp(msalInstance?: ReturnType<MicrosoftAuthProvider['getMsalInsta
     appContent
   )
 
-  const app = msalInstance ? (
-    <React.StrictMode>
-      <MsalProvider instance={msalInstance}>{withGoogle}</MsalProvider>
-    </React.StrictMode>
-  ) : (
-    <React.StrictMode>{withGoogle}</React.StrictMode>
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>{withGoogle}</React.StrictMode>,
   )
-
-  ReactDOM.createRoot(document.getElementById('root')!).render(app)
 }
 
-if (DEV_AUTH) {
-  // Dev mode: skip MSAL initialization entirely — no Entra ID needed
-  renderApp()
-} else {
-  // Initialize MSAL for Microsoft Entra ID auth
-  const msalProvider = new MicrosoftAuthProvider()
-  const msalInstance = msalProvider.getMsalInstance()
-
-  msalInstance.initialize().then(() => {
-    renderApp(msalInstance)
-  }).catch((err) => {
-    console.error('[MSAL] Initialization failed, falling back without Entra ID:', err)
-    renderApp()
-  })
-}
+renderApp()

@@ -53,4 +53,26 @@ public static class Permissions
         CodeCallWrite,
         AdminScoped,
     ];
+
+    /// <summary>
+    /// Roles granted to a configured super administrator (see SuperAdminOptions).
+    /// Mirrors the dev-mode "admin" role set so real users get identical access.
+    /// </summary>
+    public static readonly string[] SuperAdminRoles =
+    [
+        "OnCall.Viewer", "OnCall.Scheduler", "OnCall.Admin",
+    ];
+
+    /// <summary>
+    /// Complete permission set granted to a configured super administrator.
+    /// </summary>
+    public static readonly string[] SuperAdminPermissions =
+    [
+        ScheduleRead, ScheduleWrite,
+        DirectoryRead, DirectoryWrite,
+        CodeCallWrite,
+        AdminScoped,
+        AdminFull,
+        TenantManage,
+    ];
 }

@@ -40,6 +40,26 @@ ValidateSecret("AzureAd:ClientId", builder.Configuration["AzureAd:ClientId"] ?? 
 ValidateSecret("GraphApi:ClientSecret", builder.Configuration["GraphApi:ClientSecret"] ?? "", "your-graph-client-secret", "Graph API Client Secret");
 ValidateSecret("Authentication:Local:SigningKey", builder.Configuration["Authentication:Local:SigningKey"] ?? "", "change-me-to-a-32-char-min-secret-key!!", "Local JWT Signing Key");
 
+// The local JWT signing key must be a strong secret in production — the
+// LocalJwtService dev fallback key is well-known and never safe to ship.
+// Empty or short values fail fast in production.
+var localSigningKey = builder.Configuration["Authentication:Local:SigningKey"] ?? "";
+if (localSigningKey.Length < 32)
+{
+    var message = $"SECURITY: Authentication:Local:SigningKey must be a 32+ character secret. "
+                + $"Current value is {(string.IsNullOrEmpty(localSigningKey) ? "empty" : "too short")}. "
+                + "Set it via environment variables or Key Vault before deploying to production.";
+    if (builder.Environment.IsProduction())
+    {
+        throw new InvalidOperationException(message);
+    }
+    else
+    {
+        var logger = LoggerFactory.Create(c => c.AddConsole()).CreateLogger("StartupValidation");
+        logger.LogWarning("⚠️ {Message}", message);
+    }
+}
+
 // ── Authentication ──
 var devAuthEnabled = builder.Configuration.GetValue<bool>("DevAuth:Enabled");
 
@@ -304,6 +324,10 @@ builder.Services.AddResponseCompression(options =>
 builder.Services.Configure<OnCallApi.Configuration.GraphApiOptions>(
     builder.Configuration.GetSection("GraphApi"));
 
+// ── Super-admin designation (full access for real Entra/Google users) ──
+builder.Services.Configure<OnCallApi.Configuration.SuperAdminOptions>(
+    builder.Configuration.GetSection(OnCallApi.Configuration.SuperAdminOptions.SectionName));
+
 // ── Application Services ──
 builder.Services.AddScoped<IGraphApiService, GraphApiService>();
 builder.Services.AddScoped<IScheduleService, ScheduleService>();
@@ -422,7 +446,6 @@ app.UseRateLimiter();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
 app.UseAuthentication();
-app.UseAuthorization();
 
 if (!devAuthEnabled)
 {
@@ -431,8 +454,11 @@ if (!devAuthEnabled)
     app.UseMiddleware<JwtValidationMiddleware>();
 }
 
-// Expand user claims with tenant-scoped permissions from TenantAdmin records.
+// Expand user claims with tenant-scoped + super-admin permissions BEFORE
+// authorization runs, so [Authorize] policies can see the granted claims.
 app.UseMiddleware<TenantClaimsMiddleware>();
+
+app.UseAuthorization();
 
 // HIPAA audit logging (runs after auth so User is populated)
 // In dev mode the fake user claims are logged instead of real ones

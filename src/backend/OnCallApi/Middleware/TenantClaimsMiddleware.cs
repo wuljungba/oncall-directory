@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using OnCallApi.Authorization;
+using OnCallApi.Configuration;
 using OnCallApi.Data;
 
 namespace OnCallApi.Middleware;
@@ -22,10 +24,12 @@ namespace OnCallApi.Middleware;
 public class TenantClaimsMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly SuperAdminOptions _superAdmins;
 
-    public TenantClaimsMiddleware(RequestDelegate next)
+    public TenantClaimsMiddleware(RequestDelegate next, IOptions<SuperAdminOptions> superAdmins)
     {
         _next = next;
+        _superAdmins = superAdmins.Value;
     }
 
     public async Task InvokeAsync(HttpContext context, AppDbContext db)
@@ -41,16 +45,26 @@ public class TenantClaimsMiddleware
                     return;
                 }
 
-                var azureAdObjectId = GetAzureAdObjectId(context.User);
-                if (!string.IsNullOrEmpty(azureAdObjectId))
+                // Configured super administrators get every role + permission.
+                // Real Entra/Google tokens carry no app roles, so this is the only
+                // way a real user can obtain Admin.Full / Tenant.Manage today.
+                if (IsConfiguredSuperAdmin(context.User))
                 {
-                    // Skip if tenant claims are already present (avoid re-adding on repeated requests)
-                    if (!context.User.HasClaim(c => c.Type.StartsWith("TenantId:")))
+                    await GrantSuperAdminAsync(identity, db);
+                }
+                else
+                {
+                    var azureAdObjectId = GetAzureAdObjectId(context.User);
+                    if (!string.IsNullOrEmpty(azureAdObjectId))
                     {
-                        await AddTenantClaimsAsync(identity, azureAdObjectId, db);
+                        // Skip if tenant claims are already present (avoid re-adding on repeated requests)
+                        if (!context.User.HasClaim(c => c.Type.StartsWith("TenantId:")))
+                        {
+                            await AddTenantClaimsAsync(identity, azureAdObjectId, db);
 
-                        // Lazy auto-assignment via Azure AD group membership
-                        await TryAutoAssignFromGroupsAsync(context.User, identity, azureAdObjectId, db);
+                            // Lazy auto-assignment via Azure AD group membership
+                            await TryAutoAssignFromGroupsAsync(context.User, identity, azureAdObjectId, db);
+                        }
                     }
                 }
             }
@@ -138,6 +152,70 @@ public class TenantClaimsMiddleware
                 await db.SaveChangesAsync();
             }
         }
+    }
+
+    /// <summary>
+    /// Whether the authenticated user matches a configured super administrator
+    /// (by email or Entra object ID).
+    /// </summary>
+    private bool IsConfiguredSuperAdmin(ClaimsPrincipal user)
+    {
+        var email = GetEmail(user);
+        if (!string.IsNullOrEmpty(email) &&
+            _superAdmins.Emails.Contains(email, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var oid = GetAzureAdObjectId(user);
+        if (!string.IsNullOrEmpty(oid) &&
+            _superAdmins.ObjectIds.Contains(oid, StringComparer.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Grants a configured super administrator every role, every permission, and
+    /// SuperAdmin status on every active tenant.
+    /// </summary>
+    private static async Task GrantSuperAdminAsync(ClaimsIdentity identity, AppDbContext db)
+    {
+        foreach (var role in Permissions.SuperAdminRoles)
+        {
+            if (!identity.HasClaim(ClaimTypes.Role, role))
+                identity.AddClaim(new Claim(ClaimTypes.Role, role));
+        }
+
+        foreach (var perm in Permissions.SuperAdminPermissions)
+        {
+            if (!identity.HasClaim(Permissions.ClaimType, perm))
+                identity.AddClaim(new Claim(Permissions.ClaimType, perm));
+        }
+
+        // Super admin of every active tenant, so /api/auth/me exposes the full list.
+        if (!identity.Claims.Any(c => c.Type.StartsWith("TenantId:")))
+        {
+            try
+            {
+                var tenantIds = await db.Tenants.Where(t => t.IsActive).Select(t => t.Id).ToListAsync();
+                foreach (var id in tenantIds)
+                    identity.AddClaim(new Claim($"TenantId:{id}", "SuperAdmin"));
+            }
+            catch
+            {
+                // Tenants table missing / DB not ready — roles+permissions above still grant access.
+            }
+        }
+    }
+
+    private static string? GetEmail(ClaimsPrincipal user)
+    {
+        return user.FindFirst(ClaimTypes.Email)?.Value
+            ?? user.FindFirst("email")?.Value
+            ?? user.FindFirst("preferred_username")?.Value;
     }
 
     private static string? GetAzureAdObjectId(ClaimsPrincipal user)

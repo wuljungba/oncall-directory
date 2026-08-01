@@ -7,7 +7,7 @@ import {
 
 const MSAL_CONFIG = {
   auth: {
-    clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'your-api-client-id',
+    clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'your-spa-client-id',
     authority: 'https://login.microsoftonline.com/organizations',
     redirectUri: window.location.origin,
   },
@@ -17,21 +17,20 @@ const MSAL_CONFIG = {
   },
 }
 
+// The SPA only talks to the OnCall API — every Microsoft Graph call happens on
+// the backend with app-only credentials. So both the interactive login and the
+// silent token requests use ONLY the API audience scope. Mixing in Graph scopes
+// would produce a token with a single (mismatched) audience and fail validation,
+// and omitting the API scope from the interactive request would force an
+// InteractionRequiredAuthError on the follow-up silent call.
+const API_SCOPE = `api://${MSAL_CONFIG.auth.clientId}/access_as_user`
+
 const LOGIN_REQUEST = {
-  scopes: [
-    'User.Read',
-    'User.ReadBasic.All',
-    'Calendars.ReadWrite',
-    'Presence.Read.All',
-    'OnlineMeetings.ReadWrite',
-  ],
+  scopes: [API_SCOPE],
 }
 
 const TOKEN_REQUEST = {
-  scopes: [
-    `api://${MSAL_CONFIG.auth.clientId}/access_as_user`,
-    'https://graph.microsoft.com/User.Read',
-  ],
+  scopes: [API_SCOPE],
 }
 
 /**
@@ -46,13 +45,6 @@ export class MicrosoftAuthProvider implements IAuthProvider {
 
   constructor() {
     this.msalInstance = new PublicClientApplication(MSAL_CONFIG)
-  }
-
-  /**
-   * Expose the MSAL instance for use by MsalProvider in main.tsx.
-   */
-  getMsalInstance(): PublicClientApplication {
-    return this.msalInstance
   }
 
   getProviderType(): AuthProviderType {

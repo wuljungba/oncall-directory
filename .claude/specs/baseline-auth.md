@@ -1,8 +1,8 @@
 # Baseline: Authentication & Graph Integration Discovery Report
 
-**Date**: 2026-07-30
+**Date**: 2026-07-31 (refreshed after Entra end-to-end audit; original 2026-07-30)
 **Scope**: Identity & Graph Integration Specialist
-**Files examined**: All backend auth controllers, middleware, Graph service, auth config, plus frontend auth providers, useAuth hook, and main.tsx.
+**Files examined**: All backend auth controllers, middleware, Graph service, auth config, plus frontend auth providers, useAuth hook, main.tsx, api.ts, signalr.ts, CI/CD workflow, Bicep infra, deployment guide.
 
 ---
 
@@ -17,47 +17,36 @@ HTTP Request
 ExceptionHandlingMiddleware
   |
   v
-ASP.NET UseAuthentication() / UseAuthorization()
-  |  -- invokes JWT bearer handler(s)
-  v
-JwtValidationMiddleware (skipped in dev mode)
+UseAuthentication() / UseAuthorization()   -- invokes JWT bearer handler(s)
   |
   v
-TenantClaimsMiddleware
+JwtValidationMiddleware (skipped in dev mode)   -- Program.cs:427-432
   |
   v
-HipaaAuditMiddleware
+TenantClaimsMiddleware                           -- Program.cs:435
+  |
+  v
+HipaaAuditMiddleware                             -- Program.cs:439
   |
   v
 Controller / Endpoint
 ```
 
-### 1a. Multi-Provider JWT Routing (Program.cs, lines 58-189)
+### 1a. Multi-Provider JWT Routing (Program.cs, lines 58-208)
 
-The backend does NOT use a single JWT handler. Instead it registers three schemes and routes by `iss` claim:
+The backend does NOT use a single JWT handler. It registers three schemes and routes by `iss` claim:
 
 | Issuer | Scheme | How it validates |
 |--------|--------|------------------|
-| `login.microsoftonline.com/{tenant}/v2.0` | `Bearer` (default) | via `Microsoft.Identity.Web` + custom `IssuerValidator` |
-| `https://accounts.google.com` | `"Google"` | Standard `AddJwtBearer` with Google's OIDC authority; JWKS resolved automatically |
+| `login.microsoftonline.com/{tenant}/v2.0` | `Bearer` (default) | via `Microsoft.Identity.Web` 2.18.0 + custom `IssuerValidator` |
+| `https://accounts.google.com` | `"Google"` | `AddJwtBearer` with Google OIDC authority, JWKS auto-resolved |
 | `oncall-directory` | `"Local"` | Symmetric HMAC-SHA256 via `LocalJwtService.GetValidationParameters()` |
 
-The **ForwardDefaultSelector** (lines 159-188) reads each JWT's `iss` claim at runtime:
-
-```csharp
-return jwt.Issuer switch
-{
-    "https://accounts.google.com" or "accounts.google.com" => "Google",
-    LocalJwtService.Issuer => "Local",
-    _ => JwtBearerDefaults.AuthenticationScheme // Microsoft
-};
-```
-
-If the token can't be parsed as a JWT, it falls back to the Microsoft handler.
+The **ForwardDefaultSelector** (Program.cs:177-206) reads each JWT's `iss` claim at runtime and routes to the matching scheme. Unparseable tokens fall back to the Microsoft handler.
 
 ### 1b. Microsoft Entra ID Validation (Microsoft.Identity.Web)
 
-The default `"Bearer"` scheme is configured via `AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))`. This pulls from `appsettings.json`:
+The default `"Bearer"` scheme is configured via `AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))` (Program.cs:71), pulling from `appsettings.json`:
 
 ```json
 "AzureAd": {
@@ -69,143 +58,51 @@ The default `"Bearer"` scheme is configured via `AddMicrosoftIdentityWebApi(buil
 }
 ```
 
-A **PostConfigure** step (lines 139-189) overrides `ValidIssuer` with a custom `IssuerValidator` that:
-- Accepts any Azure AD tenant issuer (`login.microsoftonline.com/{tid}/v2.0`)
-- Rejects `common` and `consumers` issuers
-- Validates the tenant ID segment is a valid GUID
+A **PostConfigure** step (Program.cs:139-207) overrides `ValidIssuer` with a custom `IssuerValidator` that:
+- Accepts any Azure AD tenant issuer (`login.microsoftonline.com/{tid}/v2.0` where tid is a real GUID)
+- Rejects `common` (and any non-GUID segment)
+- The same PostConfigure replaces `Events.OnTokenValidated`, chaining the Microsoft.Identity.Web handler, and adds `auth_provider: microsoft`
 
-This makes the API **multi-tenant**: any Azure AD tenant can authenticate users, as long as they have the right app registration.
+Audience validation: `Microsoft.Identity.Web` 2.18.0 defaults `TokenValidationParameters.ValidAudience` to `api://{ClientId}` when `AzureAd:Audience` is not set. So with `AzureAd:ClientId` set to the SPA's client ID, a token with `aud = api://<clientid>` IS accepted — no separate `Audience` key needed. (Recommendation for the fix spec: set `AzureAd:Audience: api://<client-id>` explicitly to remove ambiguity.)
 
-At token validation time, `Microsoft.Identity.Web` checks:
-- Signature (against the Azure AD JWKS endpoint)
-- Audience (must match `AzureAd:ClientId` or its `api://` URI)
-- Issuer (custom validator, see above)
-- Lifetime (not expired, not before validity)
+Multi-tenant note: `TenantId: "organizations"` makes the authority `https://login.microsoftonline.com/organizations/v2.0`. Tokens still carry the user's actual tenant GUID as issuer, which the custom validator accepts. The JwtValidationMiddleware additionally requires `tid` != "common".
 
 ### 1c. Required Claims Checked by JwtValidationMiddleware
 
-After ASP.NET auth completes, `JwtValidationMiddleware` (in `Middleware/JwtValidationMiddleware.cs`) runs and enforces:
+`JwtValidationMiddleware` (Middleware/JwtValidationMiddleware.cs) enforces on protected prefixes (lines 32-41: `/api/directory`, `/api/schedule`, `/api/phone-trees`, `/api/compliance`, `/api/settings`, `/api/integrations`, `/api/admin`):
 
-1. **User is authenticated** -- rejects anonymous requests with 401
-2. **`access_as_user` scope** (`scp` claim) -- rejects with 403 if missing. This scope is injected by each provider's `OnTokenValidated` event (Google and Local), or provided by Microsoft.Identity.Web for Microsoft tokens.
-3. **User identifier claim** -- one of `oid`, `sub`, or `NameIdentifier` must exist (required for audit logging)
-4. **Tenant ID** -- for Microsoft/provider tokens (`auth_provider` is null or "microsoft"), the `tid` claim must be a valid non-"common" tenant ID. Rejects with 401 if invalid.
+1. Authenticated (else 401)
+2. `scp` contains `access_as_user` OR `auth_validated=true` (lines 77-92, else 403)
+3. `oid`/`sub`/NameIdentifier present (lines 94-103, else 401)
+4. For `auth_provider` null or "microsoft": `tid` present and != "common" (lines 106-119, else 401)
 
-**Protected endpoints** (lines 28-37): The middleware only enforces these checks on paths starting with: `/api/directory`, `/api/schedule`, `/api/phone-trees`, `/api/compliance`, `/api/settings`, `/api/integrations`, `/api/admin`. Other endpoints (e.g., `/api/auth/local/login`, `/health`) are not scoped-checked but still require authentication if they have the `[Authorize]` attribute.
+Note: `/api/auth/*`, `/api/tenants`, `/api/escalation`, `/api/import`, `/api/code-call-locations` are NOT in the prefix list — they rely solely on `[Authorize]` policies, not the scope gate.
 
-### 1d. Authorization Policies (Program.cs, lines 192-250)
+### 1d. Authorization Policies (Program.cs, lines 210-268)
 
-The backend uses two parallel authorization systems:
+Role-based policies use `ClaimTypes.Role`: `RequireViewer` = OnCall.Viewer/Scheduler/Admin (line 218), `RequireScheduler` (215), `RequireAdmin` (212). Permission-based policies use the `Permission` claim (`Schedule.Read`, `Schedule.Write`, `Directory.Read`, `Directory.Write`, `Admin.Full`, `Admin.Scoped`, `Tenant.Manage`, `CodeCall.Write`).
 
-**Role-based policies** (from `ClaimTypes.Role`):
-- `RequireAdmin` → role `OnCall.Admin`
-- `RequireScheduler` → role `OnCall.Scheduler` or `OnCall.Admin`
-- `RequireViewer` → role `OnCall.Viewer`, `OnCall.Scheduler`, or `OnCall.Admin`
-
-**Permission-based policies** (from `ClaimTypes.Permission`):
-- `RequireScheduleRead`, `RequireScheduleWrite`, `RequireDirectoryRead`, `RequireDirectoryWrite`
-- `RequireAdminFull`, `RequireAdminScoped`, `RequireTenantManage`
-- `RequireCodeCallWrite`
-- `RequireAdminFullOrScoped` (assertion: has Admin.Full or Admin.Scoped)
-- `RequireAdminFullOrTenantManage` (assertion: has Admin.Full or Tenant.Manage)
-
-Roles and permissions are mapped in `Authorization/Permissions.cs`:
-- `OnCall.Viewer` → `Schedule.Read` + `Directory.Read`
-- `OnCall.Scheduler` → adds `Schedule.Write` + `CodeCall.Write`
-- `OnCall.Admin` → adds `Directory.Write` + `Admin.Full` + `Tenant.Manage`
+**Critical for Entra**: an MSAL access token contains `roles` ONLY if the user is assigned app roles in the app registration. The `/api/auth/me` endpoint requires `RequireViewer` (AuthController.cs:21). An Entra user with no assigned app roles gets 403 everywhere, including `/api/auth/me`. Unlike Google (which auto-adds `OnCall.Viewer` at Program.cs:103) and Local (roles baked into the JWT), Microsoft users have NO fallback role.
 
 ### 1e. Where Tenant Context Comes From
 
-**Microsoft tokens**: The `tid` claim from the JWT identifies the Azure AD tenant, but this is NOT the application's `Tenant` entity. The app-level tenant comes from `TenantClaimsMiddleware`.
-
-**TenantClaimsMiddleware** (lines 22-148):
-1. Looks up `TenantAdmin` records in the database matching the user's `AzureAdObjectId` (from the `oid` claim)
-2. For each matching record, adds:
-   - `TenantId:{id}` claim with the admin's role (`DepartmentAdmin` or `SuperAdmin`)
-   - Scoped admin permissions (`Schedule.Read`, `Schedule.Write`, `Directory.Read`, `Directory.Write`, `CodeCall.Write`, `Admin.Scoped`)
-3. **Lazy auto-assignment**: If the user has Azure AD group membership claims (`groups` or `groups:id`), checks if any group matches a `Tenant.AzureAdGroupId`. If so, auto-creates a `TenantAdmin` record with role `DepartmentAdmin` on the fly.
-
-**Graceful degradation** (lines 57-64): If the DB query fails (tables don't exist, migration not applied), the middleware logs a warning and continues. The app works but without tenant scoping.
+`TenantClaimsMiddleware` (Middleware/TenantClaimsMiddleware.cs:22-148): looks up `TenantAdmin` records by the user's `oid`, adds `TenantId:{id}` claims + scoped permission claims, and lazy auto-assigns `DepartmentAdmin` when a user's `groups` claim matches a `Tenant.AzureAdGroupId`. Graceful degradation on DB errors (lines 57-64). Runs for every authenticated request (registered at Program.cs:435 after JwtValidationMiddleware).
 
 ### 1f. AuthController `/api/auth/me`
 
-Returns the current user's identity extracted from claims:
-- `Id`, `Name`, `Email` (from standard claims)
-- `Roles` (from `ClaimTypes.Role`)
-- `Permissions` (from `Permission` claim)
-- `TenantIds` / `TenantRoles` (from `TenantId:{id}` claims)
+Returns Id/Name/Email/Roles/Permissions/TenantIds/TenantRoles from claims (AuthController.cs:20-51).
 
 ---
 
 ## 2. Dev Mode Bypass
 
-### 2a. How Dev Mode is Activated
+Two independent switches: backend `DevAuth:Enabled: true` (appsettings.Development.json:2-4) and frontend `VITE_DEV_AUTH=true` (src/frontend/.env:15).
 
-Two independent switches, both must be set:
+- Backend: registers only `DevelopmentAuthenticationHandler` (Program.cs:49-56); the entire multi-provider JWT pipeline is SKIPPED; `JwtValidationMiddleware` is not added (Program.cs:427-432). Fake claims (scp=access_as_user, fake oid/tid, all roles, `TenantId:1`) are injected (DevelopmentAuthenticationHandler.cs:49-77).
+- Frontend: `main.tsx` skips MSAL entirely (main.tsx:56-58); `useAuth` pre-seeds a fake user and short-circuits signIn/signOut/refresh (useAuth.ts:44-51, 121-132, 156-177); `api.ts` reads `sessionStorage.accessToken` (api.ts:45).
+- Production: `DevAuth__Enabled: false` is set by Bicep (main.bicep:190, 222). appsettings.Production.json does not set DevAuth. Confirmed production has no dev bypass in the template.
 
-| Layer | Switch | Default |
-|-------|--------|---------|
-| Backend | `DevAuth:Enabled: true` in `appsettings.Development.json` | not committed to main |
-| Frontend | `VITE_DEV_AUTH=true` in `.env` | not committed to main |
-
-### 2b. Backend Behavior When DevAuth is Enabled
-
-Instead of the multi-provider JWT pipeline, the backend registers a single custom authentication handler:
-
-```csharp
-builder.Services.AddAuthentication(DevelopmentAuthenticationHandler.SchemeName)
-    .AddScheme<AuthenticationSchemeOptions, DevelopmentAuthenticationHandler>(
-        DevelopmentAuthenticationHandler.SchemeName, null);
-```
-
-**DevelopmentAuthenticationHandler** (`Middleware/DevelopmentAuthenticationHandler.cs`):
-- Auto-authenticates **every request** without checking any token
-- Reads the `X-Dev-Role` cookie (set by `POST /api/auth/dev/set-role`)
-- Default role: `admin` (all three roles: `OnCall.Viewer`, `OnCall.Scheduler`, `OnCall.Admin`)
-- Role-switching via `X-Dev-Role` cookie values: `viewer`, `scheduler`, `admin`
-- Provides fake claims that satisfy `JwtValidationMiddleware` and `HipaaAuditMiddleware`:
-  - `scp: access_as_user`
-  - `oid: 00000000-0000-0000-0000-000000000001`
-  - `tid: 00000000-0000-0000-0000-000000000002`
-  - Permission claims mapped from roles
-  - `TenantId:1` claim (value = `SuperAdmin` for admin role, `DepartmentAdmin` otherwise)
-
-**JwtValidationMiddleware is SKIPPED** in dev mode (line 371-376 of Program.cs):
-```csharp
-if (!devAuthEnabled)
-{
-    app.UseMiddleware<JwtValidationMiddleware>();
-}
-```
-
-This means **scope checking and tenant ID validation do not run** in dev mode.
-
-### 2c. Frontend Behavior When VITE_DEV_AUTH=true
-
-In `main.tsx`:
-- MSAL initialization is skipped entirely (no `PublicClientApplication`, no `MsalProvider`)
-- The app renders without the MSAL context wrapper
-
-In `useAuth.ts`:
-- `isLoading` starts as `false` (not `true`)
-- `user` is pre-set to a dummy `{ id: 'dev', name: 'dev@local', email: 'dev@local', provider: 'microsoft' }`
-- `permissions` pre-set to all permissions (`Schedule.Read`, `Schedule.Write`, `Directory.Read`, `Directory.Write`, `Admin.Full`)
-- `isAuthenticated` always returns `true`
-- `signIn()` immediately sets the user without any provider interaction, then calls `/api/auth/me` to get fresh permissions
-
-### 2d. Comparison: Dev vs. Production
-
-| Aspect | Development | Production |
-|--------|-------------|------------|
-| Token required | No | Yes (JWT) |
-| MSAL initialized | No | Yes |
-| Auth provider | Hardcoded fake user | Microsoft / Google / Local |
-| JWT scope check | Skipped | Enforced |
-| Tenant ID validation | Skipped | Enforced |
-| Multi-tenant routing | Skipped | ForwardDefaultSelector |
-| Tenant claims | Hardcoded as tenant ID 1 | From DB TenantAdmin records |
-| Authorization policies | Enforced (same policies) | Enforced |
-| Cookie-based role switching | Yes (`X-Dev-Role`) | No |
+The two switches are independent — dev mode masks the entire Entra path. Everything in section 7 below only manifests when BOTH are turned off.
 
 ---
 
@@ -213,61 +110,42 @@ In `useAuth.ts`:
 
 ### 3a. Authentication Method
 
-`GraphApiService` (`Services/GraphApiService.cs`) uses **app-only** authentication:
+`GraphApiService` (Services/GraphApiService.cs:24-50) uses **app-only** `ClientSecretCredential`:
 
 ```csharp
 var creds = new ClientSecretCredential(
     _options.Value.TenantId,
     _options.Value.ClientId,
     _options.Value.ClientSecret);
-_client = new GraphServiceClient(creds);
+_client = new GraphServiceClient(creds, _options.Value.Scopes);
 ```
 
-There is **no `.WithScopes()` call** on the `ClientSecretCredential`. The `GraphServiceClient` for `ClientSecretCredential` automatically uses the default scope `https://graph.microsoft.com/.default`, which requests **all API permissions** granted to the app registration.
+`GraphApiOptions.Scopes` (Configuration/GraphApiOptions.cs:16) defaults to `["https://graph.microsoft.com/.default"]` — i.e., "all permissions granted to the app registration". `appsettings.json` does not override it. So effective scopes = whatever admin-consented app permissions the registration has.
 
-### 3b. Lazy Initialization
+Lazy init: `_client` created on first call; `_clientInitialized` flag prevents retries after failure. Startup health check at Program.cs:391-416 calls `CheckGraphConnectionAsync()` and logs a warning (does not crash).
 
-The credential is created lazily on the first call to `GetClient()` (line 25-49). This means:
-- If `GraphApi:ClientId` / `ClientSecret` are placeholders in dev, the app still starts up
-- The first actual Graph call will fail with an error, logged and handled gracefully
-- A flag `_clientInitialized` tracks that initialization was attempted, so repeated calls don't retry
+### 3b. Actual Graph API Operations (Permissions Actually Used in Code)
 
-### 3c. Actual Graph API Operations (Scopes/Permissions in Use)
+| Operation | Graph API endpoint | Required Entra app permission |
+|-----------|-------------------|------------------------------|
+| List users | `GET /users` | `User.Read.All` or `Directory.Read.All` |
+| Users delta | `GET /users/delta` | `User.Read.All` or `Directory.Read.All` |
+| Get presence | `GET /users/{id}/presence` | `Presence.Read.All` |
+| List chats | `GET /users/{id}/chats` | `Chat.ReadBasic.All` |
+| Send chat message | `POST /chats/{id}/messages` | `ChatMessage.Send` |
+| Create calendar event | `POST /users/{id}/calendar/events` | `Calendars.ReadWrite` |
+| List groups | `GET /groups` | `Group.Read.All` |
+| Group members | `GET /groups/{id}/members` | `GroupMember.Read.All` or `Group.Read.All` |
+| SharePoint page | `POST /sites/{id}/lists/SitePages/items` | `Sites.ReadWrite.All` |
 
-Since the credential uses `.default`, the effective scopes are whatever is **pre-configured** on the Entra ID app registration's "API permissions" blade. The code performs these operations:
+Because `.default` is used, any app permission granted beyond this list is silently included (over-provisioning risk). Flag any extra permission granted on the GraphApi registration.
 
-| Operation | Graph API endpoint | Required Entra permission |
-|-----------|-------------------|---------------------------|
-| List users | `GET /users` | `User.Read.All` (app) |
-| List users delta | `GET /users/delta` | `User.Read.All` (app) |
-| Get user presence | `GET /users/{id}/presence` | `Presence.Read.All` (app) |
-| Send Teams message | `POST /users/{id}/chats/{id}/messages` | `Chat.ReadWrite.All` (app) |
-| List user chats | `GET /users/{id}/chats` | `Chat.Read.All` (app) |
-| Create calendar event | `POST /users/{id}/calendar/events` | `Calendars.ReadWrite` (app) |
-| List groups | `GET /groups` | `Group.Read.All` (app) |
-| Get group members | `GET /groups/{id}/members` | `GroupMember.Read.All` (app) |
-| Create SharePoint page | `POST /sites/{id}/lists/SitePages/items` | `Sites.ReadWrite.All` (app) |
+### 3c. Two Separate App Registrations
 
-### 3d. Configured vs. Actual Permissions
+- **`AzureAd`** = the SPA/API registration (user sign-in, MSAL audience)
+- **`GraphApi`** = server-side app-only registration (ClientSecretCredential)
 
-The app registration for `GraphApi` **must** have these application permissions granted and admin-consented:
-- `User.Read.All`
-- `Presence.Read.All`
-- `Chat.ReadWrite.All` (or at least `Chat.Read.All`)
-- `Calendars.ReadWrite`
-- `Group.Read.All`
-- `GroupMember.Read.All`
-- `Sites.ReadWrite.All`
-
-The configuration (`GraphApiOptions`) only holds `TenantId`, `ClientId`, and `ClientSecret` -- no scope list is configured in `appsettings.json`. This means there is **no runtime validation** that the required permissions are granted. A 403 from Graph will surface only at runtime as a logged error in each method's catch block.
-
-### 3e. Note: Microsoft.Identity.Web vs. GraphApiService
-
-These are two separate app registrations:
-- **AzureAd** section = the SPA's API registration (used by MSAL for user sign-in)
-- **GraphApi** section = the server-side app registration (used by `ClientSecretCredential` for app-only calls)
-
-They should be **different** Entra ID app registrations with different client IDs and different permissions.
+They must be DIFFERENT registrations with different client IDs. The single-app-registration design for the SPA (same clientId used as API audience) is intentional and covered in section 7.
 
 ---
 
@@ -275,152 +153,112 @@ They should be **different** Entra ID app registrations with different client ID
 
 ### 4a. Google Auth
 
-**Frontend** (`googleAuthProvider.ts`):
-- Uses Google Identity Services (GIS) credential flow
-- `VITE_GOOGLE_CLIENT_ID` configures the Google OAuth client ID
-- The credential (a JWT ID token) is stored in `sessionStorage` as the `accessToken`
-- The credential is sent as `Authorization: Bearer <credential>` to the backend
-- **No token refresh mechanism** -- `getAccessToken()` returns the stored value indefinitely
+Frontend (`googleAuthProvider.ts`): GIS credential flow. `VITE_GOOGLE_CLIENT_ID` configures it. The ID token (credential) is stored as `accessToken` and sent as `Authorization: Bearer` to the backend. **Has a silent refresh** (`performSilentRefresh`, lines 175-204) via `initTokenClient({prompt: ''})` with single-flight dedupe (line 167).
 
-**Backend** (Program.cs, lines 74-108):
-- Registered as a named JWT bearer scheme `"Google"`
-- Authority: `https://accounts.google.com`
-- Audience validated against `Authentication:Google:ClientId`
-- Signing keys resolved from Google's JWKS endpoint automatically by the framework
-- `OnTokenValidated` event adds:
-  - `auth_provider: google`
-  - `scp: access_as_user`
-  - `oid: google-{sub}` (prefixed to avoid collision with Microsoft oids)
-  - Role: `OnCall.Viewer` (all Google users get default Viewer access)
-- **Google users always get Viewer role** -- there is no mechanism to promote them to Scheduler or Admin via Google alone
+Backend (Program.cs:74-108): named `"Google"` scheme, authority `https://accounts.google.com`, audience validated against `Authentication:Google:ClientId`, `OnTokenValidated` adds `auth_provider: google`, `auth_validated: true`, `oid: google-{sub}`, and a default `OnCall.Viewer` role. Google users are ALWAYS Viewer — no promotion path.
 
 ### 4b. Local Auth
 
-**Frontend** (`localAuthProvider.ts`):
-- `signIn(email, password)` calls `POST /api/auth/local/login`
-- Backend returns a JWT, stored in `sessionStorage`
-- No refresh mechanism
+`LocalAuthController.cs` (register/login/change-password/reset) + `LocalJwtService.cs`: HMAC-SHA256, issuer `oncall-directory`, audience `oncall-api`, 24h expiry, dev fallback signing key at line 118 (guarded). `Authentication:Local:SigningKey` placeholder validated at Program.cs:41. Frontend `localAuthProvider.ts` stores the JWT in sessionStorage, no refresh (expiry forces re-login).
 
-**Backend** (`LocalAuthController.cs`):
-- `POST /register` -- admin-only, creates a local account with roles
-- `POST /login` -- validates credentials, returns JWT via `LocalJwtService`
-- `POST /change-password` -- authenticated user changes own password
-- `POST /{id}/reset-password` -- admin-only
+### 4c. Frontend Provider Selection
 
-**LocalJwtService** (`Authentication/LocalJwtService.cs`):
-- HMAC-SHA256 symmetric key signing
-- Issuer: `oncall-directory`
-- Audience: `oncall-api`
-- Default expiry: 1440 minutes (24 hours)
-- **Development fallback**: If `Authentication:Local:SigningKey` is missing or < 32 chars, falls back to a hardcoded string `"dev-local-jwt-signing-key-at-least-32-chars!!"` (line 118)
-- Claims generated: `NameIdentifier` (format `local-{id}`), `Email`, `Name`, `auth_provider: local`, `scp: access_as_user`, `oid: local-{id}`, roles, optional `employee_id`
-
-**Backend** (`Program.cs`, lines 112-134):
-- Registered as named scheme `"Local"`
-- `TokenValidationParameters` are injected via `PostConfigure<LocalJwtService>` -- symmetric key, issuer, audience validation
-- `OnTokenValidated` adds `auth_provider: local` and `scp: access_as_user`
-
-### 4c. How They Fit Alongside Entra
-
-All three providers produce a `ClaimsPrincipal` with:
-- `scp: access_as_user` -- satisfies `JwtValidationMiddleware`
-- A user identifier claim (`oid`) -- satisfies audit requirement
-- Role claims (`OnCall.Viewer`, etc.) -- satisfy authorization policies
-
-The **ForwardDefaultSelector** routes by `iss`, so they coexist without conflict.
-
-### 4d. Frontend Provider Selection
-
-In `authFactory.ts`:
-- `getAuthProvider(type?)` -- if no type given, reads `sessionStorage.getItem('authProvider')`, defaults to `'microsoft'`
-- Providers are cached in a module-level `Map<string, IAuthProvider>`
-- `getAllProviders()` exists but is **not called anywhere** in the codebase -- there is no visible "switch provider" UI
-- `clearProviders()` is called on sign-out in `useAuth.ts`
-- `getActiveProviderType()` is used in `useAuth` to set `authProvider` state
-
-The provider is selected implicitly by which sign-in UI the user interacts with (Microsoft popup, Google One Tap, or email/password form). The `sessionStorage` persists the choice across page refreshes.
+`authFactory.ts`: `getAuthProvider(type?)` reads `sessionStorage.authProvider`, defaults to `microsoft`, caches instances in a module-level Map. `clearProviders()` called on sign-out. `getAllProviders()` is dead code (no callers). Provider is chosen by which login UI the user clicks (LoginPage.tsx SSO buttons/local form).
 
 ---
 
-## 5. Notable Gaps and Observations
+## 5. The Two-MSAL-Instances Problem (New finding, verified 2026-07-31)
 
-### G1. Graph API scopes are implicit, not explicit
-`GraphApiService` never calls `.WithScopes()` on the credential. It relies entirely on `https://graph.microsoft.com/.default`, which grants all app permissions pre-configured on the Entra registration. If the registration's permissions change, there is no validation at startup or runtime -- failures happen silently inside each method's try/catch.
+**Verdict: `main.tsx` creates a SECOND, separate `PublicClientApplication` purely to feed `<MsalProvider>`; NO component consumes `@azure/msal-react` context; the wrapper is dead weight, not harmful today, but it is an unsupported configuration.**
 
-### G2. No Graph API health check
-There is no startup health check that validates the Graph credential works. The `IntegrationDiagnosticsController` provides dispatch channel tests but not a `GET /users/me` Graph connectivity test.
+Evidence:
+- `main.tsx:61-62` `const msalProvider = new MicrosoftAuthProvider()` → `getMsalInstance()` → line 47 `<MsalProvider instance={msalInstance}>`.
+- `authFactory.ts:26` creates ANOTHER `new MicrosoftAuthProvider()` (cached in the module Map) when `getAuthProvider('microsoft')` is first called by `useAuth` (useAuth.ts:97, 137-139), `api.ts:48`, `services/auth.ts:34-36`, and `useAuth.refreshToken` (useAuth.ts:172).
+- Grep for `useMsal|MsalAuthenticationTemplate|AuthenticatedTemplate|useIsAuthenticated|useAccount|MsalProvider` across `src/frontend/src` returns ONLY main.tsx:4, main.tsx:47, and the doc comment in microsoftAuthProvider.ts:52. No component reads MSAL React context.
 
-### G3. Google auth tokens do not refresh
-`GoogleAuthProvider.getAccessToken()` returns the same stored credential until sign-out. Google ID tokens expire after 1 hour. After expiry, API calls will fail with 401. The `useAuth` hook does not handle this scenario.
+Which instance drives what:
+- Login / API tokens / refresh / SignalR: the `authFactory` singleton (instance #2).
+- The `main.tsx` instance (#1) only initializes and renders the inert wrapper.
 
-### G4. Local JWT development fallback is a security warning
-The hardcoded `dev-local-jwt-signing-key-at-least-32-chars!!` in `LocalJwtService.cs` is flagged by `ValidateSecret` at startup (line 41 of Program.cs) but only as a warning in development. In production, it throws. This is correct behavior but worth noting.
+Where state can diverge: both instances share `cacheLocation: 'sessionStorage'` (microsoftAuthProvider.ts:14-16). MSAL's sessionStorage keys are shared across instances. When a user signs in via instance #2's `loginPopup`, instance #1's active account (set at init from whatever account was cached) can go stale. MSAL docs do not support two `PublicClientApplication` instances over one cache. Today it's harmless only because instance #1 never performs token operations.
 
-### G5. Dev mode vs. production: different behavior surface
-- `JwtValidationMiddleware` runs in production but is **entirely skipped** in dev mode
-- Tenant claims are hardcoded in dev (`TenantId:1`) vs. loaded from DB in production
-- Dev mode uses cookie-based role switching that doesn't exist in production
+Fix direction for the spec: delete the `MsalProvider` wrapper + instance in main.tsx, drop `@azure/msal-react` (package.json:16), and initialize the authFactory singleton once.
 
-### G6. `access_as_user` scope is added post-validation
-For Google and Local tokens, the `access_as_user` scope is added in `OnTokenValidated` -- *after* the JWT's signature and audience are validated but *before* `JwtValidationMiddleware` runs. This means the middleware's scope check is effectively checking a claim that the middleware pipeline itself injected. If either `OnTokenValidated` event were removed, Google and Local tokens would immediately fail the scope check.
+## 6. MSAL Token Request Issues (New finding, verified 2026-07-31)
 
-### G7. `getAllProviders()` in authFactory is dead code
-The function exists but has no callers. The UI only ever uses `getAuthProvider()` for the currently active provider.
+- `TOKEN_REQUEST` (microsoftAuthProvider.ts:30-35) mixes `api://<clientid>/access_as_user` with `https://graph.microsoft.com/User.Read` in ONE token request. An access token has a single audience; the graph scope can never appear in the API token. Verified `@azure/msal-common` 14.16.1 does NOT reject multi-resource scope sets at request validation (RequestValidator has no resource check), so the request goes to the STS with mixed `scope` params — either erroring (silent step throws) or minting a token for the first resource only. The graph scope in TOKEN_REQUEST is semantically wrong and must be removed (the frontend never calls Graph directly — grep confirms the only `graph.microsoft.com` reference is this scope string).
+- `LOGIN_REQUEST` (lines 20-28) requests five Microsoft Graph delegated permissions (User.Read, User.ReadBasic.All, Calendars.ReadWrite, Presence.Read.All, OnlineMeetings.ReadWrite) at the login popup. The SPA never uses Graph, so this only forces a consent screen and requires those delegated permissions be declared on the app registration. Recommend reducing LOGIN_REQUEST to `openid profile` + the api:// scope.
+- **Login consent gap (likely hard failure on fresh app registrations)**: `loginPopup(LOGIN_REQUEST)` does NOT include `access_as_user` (the API scope). After a successful popup, `signIn()` calls `acquireTokenSilent(TOKEN_REQUEST)` for the api:// resource. If the tenant has not admin-pre-consented `access_as_user`, the silent step throws InteractionRequiredAuthError, the catch returns null (microsoftAuthProvider.ts:117-119), and `useAuth` never sees a user — "login did nothing" even though MSAL cached an account. The only interactive path that requests the api:// scope is the private `signInPopup` fallback (lines 194-205), reachable only from `getAccessToken()` after the fact. Fix: include `api://<clientid>/access_as_user` in the interactive login request (or require admin pre-consent).
 
-### G8. MSAL client IDs: frontend and backend must match
-The frontend's `VITE_AZURE_CLIENT_ID` becomes the MSAL `clientId` and the `api://{clientId}/access_as_user` token request scope. The backend's `AzureAd:ClientId` must be the **same** client ID for audience validation to succeed. If they diverge, Microsoft tokens will be rejected.
+## 7. End-to-End Entra Login: What Works and What Breaks in Real Mode
 
-### G9. TenantClaimsMiddleware silently swallows DB errors
-If the `Tenants`/`TenantAdmins` tables don't exist, or any DB error occurs, the middleware logs a warning and continues. This is deliberate for zero-downtime deployments where migrations haven't run yet, but it means multi-tenant scoping is invisible until the migration completes. Functions that depend on tenant context will work but return empty tenant claims.
+### 7a. Chain coherence once configured
 
-### G10. `auth_provider` claim is used inconsistently
-`JwtValidationMiddleware` checks `auth_provider` to decide whether to validate tenant ID (lines 96-109). But `auth_provider` is only set by Google and Local `OnTokenValidated` events -- it's not explicitly set by Microsoft.Identity.Web. When it's null (Microsoft tokens), the middleware treats it as "microsoft" and validates tenant ID. If a future provider doesn't set `auth_provider`, it defaults to Microsoft tenant validation, which might be incorrect.
+Frontend `loginPopup` → token with `aud = api://<clientid>`, `scp = access_as_user`, `oid`, `tid` → backend `ForwardDefaultSelector` routes to `Bearer` (Microsoft) → Microsoft.Identity.Web validates signature/audience (`api://{ClientId}` default)/issuer (custom validator) → JwtValidationMiddleware passes scp/oid/tid → TenantClaimsMiddleware adds tenant claims → `[Authorize]` policies gate endpoints. **The validation chain itself is coherent.**
 
----
+### 7b. Breakages in real mode (in dependency order)
 
-## 6. Configuration Entropy Summary
+1. **Placeholder client IDs (hard)** — `.env` has `VITE_AZURE_CLIENT_ID=your-spa-client-id`; code fallback is `your-api-client-id` (microsoftAuthProvider.ts:10); backend `AzureAd:ClientId=your-api-client-id`. MSAL popup → AADSTS700016 (application not found). Nothing works until a real client ID is set on all three.
+2. **CI build bakes the placeholder (hard)** — `.github/workflows/deploy.yml:58-60` runs `npm run build` with NO `VITE_AZURE_CLIENT_ID`/`VITE_DEV_AUTH` env vars. Vite inlines `import.meta.env.VITE_AZURE_CLIENT_ID` at build time from the committed `.env`, so the deployed SPA always contains the placeholder client ID. The Bicep `AzureAd__ClientId` app setting is irrelevant to the frontend build.
+3. **Mixed-scope token request + consent gap (likely hard)** — section 6.
+4. **No roles on Entra tokens (hard for all authorized endpoints)** — Entra access tokens contain `roles` only when the user is assigned app roles on the registration. `RequireViewer` fails with 403 otherwise. Every user needs at least the `OnCall.Viewer` app role (or the backend must add a fallback role for Entra, as it does for Google at Program.cs:103).
+5. **App registration/authority mismatch (medium)** — the deployment guide registers `--sign-in-audience AzureADMyOrg` (single-tenant), but the code uses the `organizations` authority (multi-tenant). Either align the authority to the tenant GUID or change sign-in audience to `AzureADMultipleOrgs`.
+6. **Production config gaps (hard at deploy)** — `appsettings.Production.json` sets `AzureAd:ClientId`, `GraphApi:ClientSecret`, `Authentication:Local:SigningKey`, `GraphApi:TenantId/ClientId` to EMPTY strings. This DEFEATS the `ValidateSecret` placeholder guard (Program.cs:39-41), because empty != placeholder. The Bicep template wires only `AzureAd__*`, `Cors__Origin`, `ApplicationInsights__ConnectionString`, `Redis__*`, `Storage__*` (main.bicep:179-190) — it does NOT set `GraphApi__*`, `Authentication__Local__SigningKey`, or `Authentication__Google__ClientId`. So a stock production deploy runs with empty GraphApi/Google/Local config and silent failures. The deployment guide's table (deployment-guide.md:124-142) lists these as Key Vault, but nothing in Bicep reads them.
+7. **`parameters.production.json` placeholders** — Key Vault resource ID `/subscriptions/your-subscription/...` (lines 14, 21, 28, 36) must be replaced.
 
-| Config key | Where used | Default (placeholder) | Production must override? |
-|-----------|-----------|----------------------|-------------------------|
-| `AzureAd:ClientId` | Program.cs (Microsoft.Identity.Web) | `"your-api-client-id"` | Yes |
-| `GraphApi:ClientId` | GraphApiService | `"your-graph-client-id"` | Yes |
-| `GraphApi:ClientSecret` | GraphApiService | `"your-graph-client-secret"` | Yes |
-| `GraphApi:TenantId` | GraphApiService | `"your-home-tenant-id"` | Yes |
-| `Authentication:Google:ClientId` | Program.cs (Google JWT) | `"your-google-client-id.apps.googleusercontent.com"` | Yes |
-| `Authentication:Local:SigningKey` | LocalJwtService | `"change-me-to-a-32-char-min-secret-key!!"` | Yes |
-| `VITE_AZURE_CLIENT_ID` | microsoftAuthProvider.ts | `"your-api-client-id"` | Yes |
-| `VITE_GOOGLE_CLIENT_ID` | googleAuthProvider.ts | `""` (empty) | Only if Google auth used |
-| `DevAuth:Enabled` | Program.cs (dev bypass) | not set (false) | Must be false in production |
+### 7c. Required Entra app registration configuration (user checklist)
 
-Placeholder validation (lines 22-41 of Program.cs) throws in production but only warns in development for: `AzureAd:ClientId`, `GraphApi:ClientSecret`, `Authentication:Local:SigningKey`.
+One registration (single-app design — SPA client ID doubles as the API audience):
 
----
+1. **Platform**: Add "Single-page application" platform.
+2. **Redirect URIs** (must EXACTLY match `window.location.origin`, microsoftAuthProvider.ts:12 — no trailing slash):
+   - `http://localhost:5173` (dev popup flow)
+   - `https://app-oncall-production.azurewebsites.net` (prod)
+   - `https://app-oncall-production-staging.azurewebsites.net` (staging)
+3. **Expose an API**: Application ID URI = `api://<client-id>`; add scope `access_as_user` (admin + user consent enabled). Must match `AzureAd:Scopes` in appsettings.json.
+4. **API permissions (Microsoft Graph, delegated)**: whatever remains in LOGIN_REQUEST (currently User.Read, User.ReadBasic.All, Calendars.ReadWrite, Presence.Read.All, OnlineMeetings.ReadWrite) — ideally these are removed from the code instead of granted. Grant admin consent for `access_as_user` (or ensure the login request includes it interactively).
+5. **App roles** in the manifest: `OnCall.Viewer`, `OnCall.Scheduler`, `OnCall.Admin` (deployment-guide.md:53-59), and assign at least `OnCall.Viewer` to every user/group that should log in.
+6. **Tenant/authority**: either keep `organizations` authority + `AzureADMultipleOrgs` sign-in audience (matches the code's multi-tenant issuer validator and its `tid != common` check), or set `AzureAd:TenantId`/authority to the single tenant GUID and `AzureADMyOrg`.
+7. **Client IDs**: set the same real client ID in `VITE_AZURE_CLIENT_ID` (build-time env, not committed `.env`), `AzureAd:ClientId`, and `AzureAd:Scopes` (`api://<id>/access_as_user`).
 
-## 7. Files Covered
+Separate **GraphApi** registration (app-only): grant the app permissions in section 3b, admin-consent, and feed `GraphApi:TenantId/ClientId/ClientSecret` from Key Vault/App Service settings (currently NOT wired in Bicep).
 
-**Backend**:
-- `Controllers/AuthController.cs`
-- `Controllers/DevAuthController.cs`
-- `Controllers/LocalAuthController.cs`
-- `Services/GraphApiService.cs`
-- `Middleware/JwtValidationMiddleware.cs`
-- `Middleware/DevelopmentAuthenticationHandler.cs`
-- `Middleware/TenantClaimsMiddleware.cs`
-- `Configuration/GraphApiOptions.cs`
-- `Authentication/LocalJwtService.cs`
-- `Authentication/GoogleTokenValidationOptions.cs`
-- `Authorization/Permissions.cs`
-- `Program.cs`
+## 8. Placeholder Inventory (Entra path)
 
-**Frontend**:
-- `services/auth/authProvider.ts`
-- `services/auth/microsoftAuthProvider.ts`
-- `services/auth/googleAuthProvider.ts`
-- `services/auth/localAuthProvider.ts`
-- `services/auth/authFactory.ts`
-- `services/auth/types.ts`
-- `services/auth/index.ts`
-- `services/auth/gis-types.d.ts`
-- `hooks/useAuth.ts`
-- `main.tsx`
-- `services/api.ts`
+| Location | Key | Placeholder |
+|----------|-----|-------------|
+| src/frontend/.env:7 | VITE_AZURE_CLIENT_ID | `your-spa-client-id` |
+| src/frontend/.env:11 | VITE_GOOGLE_CLIENT_ID | `your-google-client-id.apps.googleusercontent.com` |
+| src/frontend/.env:15 | VITE_DEV_AUTH | `true` (must be `false` for real mode) |
+| src/frontend/src/services/auth/microsoftAuthProvider.ts:10 | code fallback | `your-api-client-id` (inconsistent with `.env`) |
+| src/frontend/.env.example | VITE_AZURE_CLIENT_ID | `your-spa-client-id` |
+| src/backend/OnCallApi/appsettings.json:16 | AzureAd:ClientId | `your-api-client-id` |
+| src/backend/OnCallApi/appsettings.json:17 | AzureAd:Scopes | `api://your-api-client-id/access_as_user` |
+| src/backend/OnCallApi/appsettings.json:21 | Authentication:Google:ClientId | `your-google-client-id.apps.googleusercontent.com` |
+| src/backend/OnCallApi/appsettings.json:24 | Authentication:Local:SigningKey | `change-me-to-a-32-char-min-secret-key!!` |
+| src/backend/OnCallApi/appsettings.json:29-31 | GraphApi:TenantId/ClientId/ClientSecret | `your-home-tenant-id` / `your-graph-client-id` / `your-graph-client-secret` |
+| src/backend/OnCallApi/appsettings.json:46 | ApplicationInsights:ConnectionString | `""` |
+| src/backend/OnCallApi/appsettings.Production.json:13-31 | AzureAd/Google/Local/GraphApi | `""` (empty — defeats the ValidateSecret guard) |
+| infrastructure/bicep/parameters.production.json:14,21,28,36 | Key Vault resource ID | `/subscriptions/your-subscription/...` |
+| .github/workflows/deploy.yml:58-60 | VITE_AZURE_CLIENT_ID / VITE_DEV_AUTH | not passed at all |
+
+ValidateSecret guard (Program.cs:22-41) is effectively neutered in production by the empty-string overrides in appsettings.Production.json — recommended fix: also reject empty values, or keep placeholders.
+
+## 9. Gaps / Fragilities (consolidated)
+
+1. Two MSAL instances over a shared sessionStorage cache — section 5.
+2. Multi-resource token request + consent gap — section 6.
+3. Entra tokens carry no role claim by default — 403 on all authorized endpoints until app roles are assigned.
+4. `/api/auth/me` not covered by JwtValidationMiddleware's prefix list (JwtValidationMiddleware.cs:32-41).
+5. Graph app permissions not wired in Bicep; empty production values defeat the placeholder guard.
+6. `AzureAd` multi-tenant (`organizations`) vs. deployment guide single-tenant registration.
+7. Production `VITE_*` env not injected in CI build → placeholder client ID baked into the deployed bundle.
+8. SignalR hub (`[Authorize]` only, OnCallNotificationHub.cs:10) is validated by Microsoft.Identity.Web but bypasses the JwtValidationMiddleware scp/tid gate (path not in prefix list) — acceptable today because API-audience tokens always carry access_as_user, but worth noting.
+
+## 10. Files Covered
+
+**Backend**: Controllers/AuthController.cs, DevAuthController.cs, LocalAuthController.cs; Services/GraphApiService.cs; Middleware/JwtValidationMiddleware.cs, DevelopmentAuthenticationHandler.cs, TenantClaimsMiddleware.cs; Configuration/GraphApiOptions.cs; Authentication/LocalJwtService.cs, GoogleTokenValidationOptions.cs; Hubs/OnCallNotificationHub.cs; Program.cs; appsettings.json/.Development.json/.Production.json; OnCallApi.csproj (Microsoft.Identity.Web 2.18.0, Microsoft.Graph 5.57.0).
+
+**Frontend**: services/auth/* (authProvider.ts, types.ts, authFactory.ts, index.ts, microsoftAuthProvider.ts, googleAuthProvider.ts, localAuthProvider.ts), services/auth.ts, services/api.ts, services/signalr.ts, hooks/useAuth.ts, hooks/useSignalR.tsx, main.tsx, App.tsx, pages/LoginPage.tsx, LandingPage.tsx, .env, .env.example, vite.config.ts, package.json.
+
+**Infra/CI/docs**: infrastructure/bicep/main.bicep, infrastructure/bicep/parameters.production.json, .github/workflows/deploy.yml, docs/deployment-guide.md.
