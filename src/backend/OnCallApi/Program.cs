@@ -444,6 +444,12 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseResponseCompression();
 app.UseRateLimiter();
 app.UseHttpsRedirection();
+
+// ── Static Files (SPA) ──
+// Serves the built React SPA from wwwroot (published alongside the API).
+// Public, so it runs before authentication.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseCors("Frontend");
 app.UseAuthentication();
 
@@ -495,6 +501,10 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 
 // ── SignalR Hubs ──
 app.MapHub<OnCallNotificationHub>("/hubs/notifications");
+
+// SPA fallback: serve index.html for client-side routes (e.g. /dashboard).
+// Registered last so /api, /health, and /hubs keep priority.
+app.MapFallbackToFile("index.html");
 
 // ── Auto-setup database in development (EnsureCreated to avoid SQL Server-specific migration SQL)
 if (app.Environment.IsDevelopment())
