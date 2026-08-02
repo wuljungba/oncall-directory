@@ -55,15 +55,25 @@ public class TenantClaimsMiddleware
                 else
                 {
                     var azureAdObjectId = GetAzureAdObjectId(context.User);
-                    if (!string.IsNullOrEmpty(azureAdObjectId))
+                    var tid = GetTenantId(context.User);
+
+                    // Skip if tenant claims are already present (avoid re-adding on repeated requests)
+                    if (!context.User.HasClaim(c => c.Type.StartsWith("TenantId:")))
                     {
-                        // Skip if tenant claims are already present (avoid re-adding on repeated requests)
-                        if (!context.User.HasClaim(c => c.Type.StartsWith("TenantId:")))
+                        if (!string.IsNullOrEmpty(azureAdObjectId))
                         {
                             await AddTenantClaimsAsync(identity, azureAdObjectId, db);
 
                             // Lazy auto-assignment via Azure AD group membership
                             await TryAutoAssignFromGroupsAsync(context.User, identity, azureAdObjectId, db);
+                        }
+
+                        // Approved-tenant allow-list: resolve the tenant from the token's
+                        // `tid` claim. Users from tenants not in the allow-list get no
+                        // tenant claims and are denied by default.
+                        if (!string.IsNullOrEmpty(tid))
+                        {
+                            await TryAssignFromTenantIdAsync(context.User, identity, tid, db);
                         }
                     }
                 }
@@ -152,6 +162,71 @@ public class TenantClaimsMiddleware
                 await db.SaveChangesAsync();
             }
         }
+    }
+
+    /// <summary>
+    /// Approved-tenant allow-list resolution. A token's <c>tid</c> claim must match
+    /// an active tenant's <see cref="Models.Tenant.AzureAdTenantId"/> for the user to
+    /// be scoped into it. Matching users are auto-assigned as DepartmentAdmin (like
+    /// group-membership auto-assignment) and receive the scoped permission set.
+    /// Users from tenants absent from the allow-list get no tenant claims and are
+    /// denied by default.
+    /// </summary>
+    private static async Task TryAssignFromTenantIdAsync(
+        ClaimsPrincipal user,
+        ClaimsIdentity identity,
+        string tid,
+        AppDbContext db)
+    {
+        var approvedTenants = await db.Tenants
+            .Where(t => t.IsActive && t.AzureAdTenantId != null && t.AzureAdTenantId == tid)
+            .ToListAsync();
+
+        if (approvedTenants.Count == 0)
+            return;
+
+        var azureAdObjectId = GetAzureAdObjectId(user);
+
+        foreach (var tenant in approvedTenants)
+        {
+            // Persist the assignment so the tenant-scoped admin UI and future
+            // lookups (oid-based) see it; guarded so repeated requests don't duplicate.
+            if (azureAdObjectId != null)
+            {
+                var existing = await db.TenantAdmins
+                    .AnyAsync(a => a.TenantId == tenant.Id && a.AzureAdObjectId == azureAdObjectId);
+
+                if (!existing)
+                {
+                    db.TenantAdmins.Add(new Models.TenantAdmin
+                    {
+                        TenantId = tenant.Id,
+                        AzureAdObjectId = azureAdObjectId,
+                        Role = "DepartmentAdmin",
+                        IsAutoAssigned = true,
+                        CreatedAt = DateTime.UtcNow,
+                        LastSyncedAt = DateTime.UtcNow,
+                    });
+                    await db.SaveChangesAsync();
+                }
+            }
+
+            // Grant tenant-scoped claim + permissions for the approved tenant.
+            identity.AddClaim(new Claim($"TenantId:{tenant.Id}", "DepartmentAdmin"));
+            foreach (var perm in Permissions.ScopedAdminPermissions)
+            {
+                if (!identity.HasClaim(Permissions.ClaimType, perm))
+                {
+                    identity.AddClaim(new Claim(Permissions.ClaimType, perm));
+                }
+            }
+        }
+    }
+
+    private static string? GetTenantId(ClaimsPrincipal user)
+    {
+        return user.FindFirst("tid")?.Value
+            ?? user.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid")?.Value;
     }
 
     /// <summary>

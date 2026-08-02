@@ -22,6 +22,15 @@ public class Tenant
     [MaxLength(100)]
     public string? AzureAdGroupId { get; set; }
 
+    /// <summary>
+    /// The Entra tenant ID (GUID) whose users belong to this tenant. Acts as the
+    /// approved-tenant allow-list: a user's token `tid` claim must match an active
+    /// tenant's <see cref="AzureAdTenantId"/> to be scoped into this tenant.
+    /// Null disables tid-based resolution (legacy group/oid-only mode).
+    /// </summary>
+    [MaxLength(100)]
+    public string? AzureAdTenantId { get; set; }
+
     /// <summary>Contact email for the facility admin.</summary>
     [MaxLength(100)]
     public string? ContactEmail { get; set; }
