@@ -8,7 +8,14 @@ import {
 const MSAL_CONFIG = {
   auth: {
     clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'your-spa-client-id',
-    authority: 'https://login.microsoftonline.com/organizations',
+    // Tenant-specific authority. The "OnCall API" app is single-tenant
+    // (AzureADMyOrg), and its admins are B2B guests of the hosting tenant.
+    // The multi-tenant "organizations" authority fails for guest (B2B)
+    // sign-in (routes to login.microsoftonline.com/login.srf), so scope the
+    // authority to the app's own tenant where the guest account lives.
+    authority:
+      import.meta.env.VITE_AZURE_AUTHORITY
+      || 'https://login.microsoftonline.com/24b3700e-7053-4498-a4e6-b8ebf85dc38c',
     redirectUri: window.location.origin,
   },
   cache: {
@@ -55,19 +62,34 @@ export class MicrosoftAuthProvider implements IAuthProvider {
     if (this.initialized) return
 
     await this.msalInstance.initialize()
-    const accounts = this.msalInstance.getAllAccounts()
-    if (accounts.length > 0) {
-      this.msalInstance.setActiveAccount(accounts[0])
+
+    // Process an in-flight redirect (login/logout redirect returns here). The
+    // redirect flow is used instead of popup because popup sign-in is fragile on
+    // hosted sites (popup blockers, Cross-Origin-Opener-Policy, cookie policies).
+    try {
+      const redirectResp = await this.msalInstance.handleRedirectPromise()
+      if (redirectResp?.account) {
+        this.msalInstance.setActiveAccount(redirectResp.account)
+        if (redirectResp.accessToken) sessionStorage.setItem('accessToken', redirectResp.accessToken)
+        sessionStorage.setItem('authProvider', 'microsoft')
+      }
+    } catch (err) {
+      console.error('[MicrosoftAuth] handleRedirectPromise failed:', err)
     }
 
-    // Check for existing token in sessionStorage
+    const accounts = this.msalInstance.getAllAccounts()
+    if (accounts.length > 0 && !this.msalInstance.getActiveAccount()) {
+      this.msalInstance.setActiveAccount(accounts[0])
+    }
+    const account = this.msalInstance.getActiveAccount()
+
+    // Restore/refresh a session from the cache (readiness from a redirect or reload)
     const storedProvider = sessionStorage.getItem('authProvider')
-    if (storedProvider === 'microsoft' && accounts.length > 0) {
-      // Try refreshing the token silently
+    if (storedProvider === 'microsoft' && account) {
       try {
         const tokenResponse = await this.msalInstance.acquireTokenSilent({
           ...TOKEN_REQUEST,
-          account: accounts[0],
+          account,
         })
         sessionStorage.setItem('accessToken', tokenResponse.accessToken)
       } catch {
@@ -81,42 +103,29 @@ export class MicrosoftAuthProvider implements IAuthProvider {
 
   async signIn(): Promise<AuthResult | null> {
     try {
-      const response = await this.msalInstance.loginPopup(LOGIN_REQUEST)
-      this.msalInstance.setActiveAccount(response.account)
-
-      // Get access token for backend API
-      const tokenResponse = await this.msalInstance.acquireTokenSilent({
-        ...TOKEN_REQUEST,
-        account: response.account,
+      // Redirect flow: send the user to Microsoft full-page, returning to the
+      // current page. On return, init()/handleRedirectPromise restores the
+      // account and useAuth flips to authenticated.
+      await this.msalInstance.loginRedirect({
+        ...LOGIN_REQUEST,
+        // Return to wherever the user was (e.g. /login), which then routes to /dashboard.
+        redirectStartPage: window.location.href,
       })
-      sessionStorage.setItem('accessToken', tokenResponse.accessToken)
-      sessionStorage.setItem('authProvider', 'microsoft')
-
-      const user: AuthUser = {
-        id: response.account.localAccountId || response.account.homeAccountId,
-        name: response.account.name || response.account.username || '',
-        email: response.account.username || '',
-        provider: 'microsoft',
-        raw: response.account as unknown as Record<string, unknown>,
-      }
-
-      return {
-        provider: 'microsoft',
-        accessToken: tokenResponse.accessToken,
-        account: user,
-        idToken: response.idToken,
-      }
     } catch (error) {
       console.error('[MicrosoftAuth] Login failed:', error)
       return null
     }
+    // Account is restored by handleRedirectPromise on the return trip.
+    return null
   }
 
   async signOut(): Promise<void> {
     sessionStorage.removeItem('accessToken')
     sessionStorage.removeItem('authProvider')
     try {
-      await this.msalInstance.logoutPopup()
+      await this.msalInstance.logoutRedirect({
+        postLogoutRedirectUri: window.location.origin,
+      })
     } catch {
       // Ignore logout errors
     }
@@ -139,7 +148,10 @@ export class MicrosoftAuthProvider implements IAuthProvider {
       // so callers do not get an unexpected login popup from a background request.
       const err = error as InteractionRequiredAuthError
       if (err.name === 'InteractionRequiredAuthError') {
-        return this.signInPopup()
+        // Interactive re-auth is required — trigger a redirect login.
+        this.msalInstance
+          .loginRedirect({ ...TOKEN_REQUEST, redirectStartPage: window.location.href })
+          .catch(() => {})
       }
       return null
     }
@@ -183,16 +195,4 @@ export class MicrosoftAuthProvider implements IAuthProvider {
     }
   }
 
-  private async signInPopup(): Promise<string | null> {
-    try {
-      const response = await this.msalInstance.loginPopup(TOKEN_REQUEST)
-      // Track the account so subsequent silent renewals find an active account
-      // instead of falling back to repeated popups.
-      this.msalInstance.setActiveAccount(response.account)
-      sessionStorage.setItem('accessToken', response.accessToken)
-      return response.accessToken
-    } catch {
-      return null
-    }
   }
-}
