@@ -506,14 +506,30 @@ app.MapHub<OnCallNotificationHub>("/hubs/notifications");
 // Registered last so /api, /health, and /hubs keep priority.
 app.MapFallbackToFile("index.html");
 
-// ── Auto-setup database in development (EnsureCreated to avoid SQL Server-specific migration SQL)
-if (app.Environment.IsDevelopment())
+// ── Auto-setup database schema (runs in ALL environments) ──
+// The app has no EF migrations, so the schema is created directly from the model
+// via EnsureCreated. This runs on every startup: it is a no-op once the database
+// already has tables, and it creates the full schema on an empty database (e.g. a
+// fresh production SQL DB that was never migrated). The InMemory provider (tests)
+// is skipped because it creates its own schema.
+// Maintenance toggle: setting Db:Recreate=true drops and rebuilds the schema from
+// the model on startup. Intended for a one-time reset of a database that has no
+// data yet (e.g. after a model/column change where EnsureCreated cannot alter an
+// existing table). Must be removed/cleared immediately after use.
+var recreateSchema = string.Equals(builder.Configuration["Db:Recreate"], "true", StringComparison.OrdinalIgnoreCase);
+
+using (var scope = app.Services.CreateScope())
 {
-    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     var provider = db.Database.ProviderName ?? string.Empty;
     if (!provider.Contains("InMemory", StringComparison.OrdinalIgnoreCase))
     {
+        if (recreateSchema)
+        {
+            var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+            logger.LogWarning("Db:Recreate=true — DROPPING AND RECREATING THE DATABASE SCHEMA. Clear this setting immediately.");
+            await db.Database.EnsureDeletedAsync();
+        }
         // EnsureCreated creates schema from the model directly, bypassing migration SQL.
         // This works around nvarchar(max) and other SQL Server-specific syntax in migrations
         // that SQLite cannot parse. HasData() seed values from OnModelCreating are applied.

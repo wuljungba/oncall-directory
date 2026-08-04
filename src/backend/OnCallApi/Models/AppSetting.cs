@@ -12,8 +12,11 @@ public class AppSetting
     [MaxLength(100)]
     public string Key { get; set; } = string.Empty;
 
-    /// <summary>The setting value, stored as a string.</summary>
-    [MaxLength(2000)]
+    /// <summary>
+/// The setting value, stored as a string. No length cap: some app settings
+/// hold long opaque tokens (e.g. the AD sync delta/skiptoken link) which
+/// exceed small NVARCHAR limits.
+/// </summary>
     public string Value { get; set; } = string.Empty;
 
     /// <summary>Optional description of what this setting controls.</summary>
