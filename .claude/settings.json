@@ -3,6 +3,25 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "teammateMode": "in-process",
+  "permissions": {
+    "allow": [
+      "Bash(az webapp config appsettings set *)",
+      "Bash(az webapp deploy *)",
+      "Bash(az webapp show *)",
+      "Bash(az webapp list *)",
+      "Bash(az webapp identity show *)",
+      "Bash(az webapp log tail *)",
+      "Bash(az webapp stop *)",
+      "Bash(az webapp start *)",
+      "Bash(az rest *)",
+      "Bash(az keyvault secret *)",
+      "Bash(az deployment group create *)",
+      "Bash(az role assignment list *)",
+      "Bash(az account set *)",
+      "Bash(az account show *)",
+      "Bash(az ad signed-in-user show *)"
+    ]
+  },
   "hooks": {
     "PreToolUse": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/discovery_gate.py\"",
     "TaskCompleted": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/task_completed_verify_gate.py\"",
