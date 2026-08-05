@@ -159,14 +159,21 @@ else
     builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
         .PostConfigure(options =>
         {
-            // Multi-tenant issuer validation (any valid Azure AD tenant)
+            // Multi-tenant issuer validation (any valid Azure AD tenant), accepting
+            // BOTH v2 and v1-style issuer hosts. Standard v2 tokens use
+            //   https://login.microsoftonline.com/<tenant>/v2.0
+            // while consumer Microsoft accounts (MSA) used as B2B guests are issued
+            // v1-style tokens whose issuer is
+            //   https://sts.windows.net/<tenant>/          (idp=live.com, ver=1.0)
+            // The tenant GUID is gatekept regardless of host; signature + audience
+            // validation still bound the token independently.
             options.TokenValidationParameters.ValidIssuer = null;
             options.TokenValidationParameters.IssuerValidator = (issuer, token, parameters) =>
             {
                 if (Uri.TryCreate(issuer, UriKind.Absolute, out var uri) &&
-                    uri.Host == "login.microsoftonline.com" &&
-                    uri.Segments.Length >= 3 &&
-                    uri.Segments[2].TrimEnd('/') != "common" &&
+                    (uri.Host == "login.microsoftonline.com" || uri.Host == "sts.windows.net") &&
+                    uri.Segments.Length >= 2 &&
+                    uri.Segments[1].TrimEnd('/') != "common" &&
                     Guid.TryParse(uri.Segments[1].TrimEnd('/'), out _))
                 {
                     return issuer;
