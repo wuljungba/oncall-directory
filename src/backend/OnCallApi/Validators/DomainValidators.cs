@@ -15,6 +15,33 @@ public static partial class PhoneValidation
     public static bool IsValidE164(string? phone) =>
         phone == null || E164Regex.IsMatch(phone);
 
+    /// <summary>
+    /// Best-effort normalization of a phone number to E.164 for directory data
+    /// (e.g. numbers synced from AD/Graph, which are not always stored in canonical
+    /// E.164). Strips non-digit formatting — "202 555 0134", "(202) 555-0134",
+    /// "+1 202-555-0134" — and, when no explicit country code is present, prepends
+    /// a default country code. Returns null for null/blank/unsalvageable input.
+    /// </summary>
+    public static string? NormalizeToE164(string? phone, string defaultCountryCode = "1")
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return null;
+
+        var raw = phone.Trim();
+        var hasPlus = raw.StartsWith('+');
+        var digits = new string(raw.Where(char.IsDigit).ToArray());
+        if (digits.Length == 0) return null;
+
+        // A leading '+' is taken as "the number already carries its country code".
+        var normalized = hasPlus ? digits : defaultCountryCode + digits;
+
+        // E.164 upper bound is 15 digits including the country code.
+        if (normalized.Length > 15) normalized = normalized[..15];
+        if (normalized.Length < 2) return null;
+
+        var candidate = "+" + normalized;
+        return E164Regex.IsMatch(candidate) ? candidate : null;
+    }
+
     public static IRuleBuilderOptions<T, string?> E164Phone<T>(this IRuleBuilder<T, string?> ruleBuilder, string fieldName)
     {
         return ruleBuilder.Must(IsValidE164)

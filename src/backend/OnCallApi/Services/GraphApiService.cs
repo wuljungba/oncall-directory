@@ -5,6 +5,7 @@ using Microsoft.Graph.Models.ODataErrors;
 using Microsoft.Extensions.Options;
 using OnCallApi.Configuration;
 using OnCallApi.Models;
+using OnCallApi.Validators;
 
 namespace OnCallApi.Services;
 
@@ -328,8 +329,10 @@ public class GraphApiService : IGraphApiService
             LastName = user.Surname ?? string.Empty,
             Title = user.JobTitle,
             Email = user.Mail ?? string.Empty,
-            OfficePhone = user.BusinessPhones?.FirstOrDefault(),
-            MobilePhone = user.MobilePhone,
+            // Normalize to E.164 on ingestion — AD/Graph numbers are rarely stored
+            // in canonical E.164 (spaces, dashes, parens; often missing the country code).
+            OfficePhone = PhoneValidation.NormalizeToE164(user.BusinessPhones?.FirstOrDefault()),
+            MobilePhone = PhoneValidation.NormalizeToE164(user.MobilePhone),
             OfficeLocation = user.OfficeLocation,
             LastSyncedAt = DateTime.UtcNow
         };
