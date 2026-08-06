@@ -32,7 +32,7 @@ public class LocalAuthController : ControllerBase
         try
         {
             var account = await _localAccounts.RegisterAsync(
-                request.Email, request.Password, request.DisplayName ?? request.Email, request.Roles);
+                request.Email, request.Password, request.DisplayName ?? request.Email, request.Roles, request.EmployeeId);
 
             return Ok(ToResponse(account));
         }
@@ -89,7 +89,7 @@ public class LocalAuthController : ControllerBase
     {
         try
         {
-            var account = await _localAccounts.UpdateAsync(id, request.DisplayName, request.IsActive, request.Roles);
+            var account = await _localAccounts.UpdateAsync(id, request.DisplayName, request.IsActive, request.Roles, request.EmployeeId);
             return Ok(ToResponse(account));
         }
         catch (InvalidOperationException ex)
@@ -158,6 +158,7 @@ public class LocalAuthController : ControllerBase
             Email = account.Email,
             DisplayName = account.DisplayName,
             Roles = account.Roles,
+            EmployeeId = account.EmployeeId,
             IsActive = account.IsActive,
             CreatedAt = account.CreatedAt,
             LastLoginAt = account.LastLoginAt,
@@ -167,7 +168,7 @@ public class LocalAuthController : ControllerBase
 
 // ── Request / Response types ──
 
-public record RegisterLocalAccountRequest(string Email, string Password, string? DisplayName, string[]? Roles);
+public record RegisterLocalAccountRequest(string Email, string Password, string? DisplayName, string[]? Roles, Guid? EmployeeId = null);
 
 public record LoginLocalAccountRequest(string Email, string Password);
 
@@ -179,7 +180,7 @@ public record LoginLocalAccountResponse
     public string Email { get; init; } = string.Empty;
 }
 
-public record UpdateLocalAccountRequest(string? DisplayName, bool? IsActive, string[]? Roles);
+public record UpdateLocalAccountRequest(string? DisplayName, bool? IsActive, string[]? Roles, Guid? EmployeeId = null);
 
 public record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
@@ -191,6 +192,7 @@ public record LocalAccountResponse
     public string Email { get; init; } = string.Empty;
     public string DisplayName { get; init; } = string.Empty;
     public string[] Roles { get; init; } = [];
+    public Guid? EmployeeId { get; init; }
     public bool IsActive { get; init; }
     public DateTime CreatedAt { get; init; }
     public DateTime? LastLoginAt { get; init; }

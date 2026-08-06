@@ -25,12 +25,22 @@ public class LocalAccountService : ILocalAccountService
         _logger = logger;
     }
 
-    public async Task<LocalAccount> RegisterAsync(string email, string password, string displayName, string[]? roles = null)
+    public async Task<LocalAccount> RegisterAsync(string email, string password, string displayName, string[]? roles = null, Guid? employeeId = null)
     {
         // Check for existing account
         var existing = await _db.LocalAccounts.AnyAsync(a => a.Email == email);
         if (existing)
             throw new InvalidOperationException("An account with this email already exists.");
+
+        // Link to an existing directory Employee by email so the local account can be
+        // assigned on-call shifts and appear in the directory. An explicit employeeId
+        // (from the admin dashboard) always wins.
+        if (employeeId == null)
+        {
+            var matched = await _db.Employees
+                .FirstOrDefaultAsync(e => e.Email.ToLower() == email.ToLowerInvariant().Trim());
+            if (matched != null) employeeId = matched.Id;
+        }
 
         var account = new LocalAccount
         {
@@ -38,6 +48,7 @@ public class LocalAccountService : ILocalAccountService
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12),
             DisplayName = displayName,
             Roles = roles ?? ["OnCall.Viewer"],
+            EmployeeId = employeeId,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
         };
@@ -105,7 +116,7 @@ public class LocalAccountService : ILocalAccountService
         return await query.OrderBy(a => a.Email).ToListAsync();
     }
 
-    public async Task<LocalAccount> UpdateAsync(int id, string? displayName, bool? isActive, string[]? roles)
+    public async Task<LocalAccount> UpdateAsync(int id, string? displayName, bool? isActive, string[]? roles, Guid? employeeId = null)
     {
         var account = await _db.LocalAccounts.FindAsync(id)
             ?? throw new InvalidOperationException("Local account not found.");
@@ -113,6 +124,7 @@ public class LocalAccountService : ILocalAccountService
         if (displayName != null) account.DisplayName = displayName;
         if (isActive.HasValue) account.IsActive = isActive.Value;
         if (roles != null) account.Roles = roles;
+        if (employeeId.HasValue) account.EmployeeId = employeeId == Guid.Empty ? null : employeeId;
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("Local account updated: {Email} (Id={Id})", account.Email, account.Id);

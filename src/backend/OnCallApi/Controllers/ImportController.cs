@@ -6,7 +6,6 @@ namespace OnCallApi.Controllers;
 
 [ApiController]
 [Route("api/import")]
-[Authorize(Policy = "RequireAdminFull")]
 public class ImportController : ControllerBase
 {
     private readonly BulkImportService _importService;
@@ -20,6 +19,7 @@ public class ImportController : ControllerBase
 
     /// <summary>Dry-run validation of employee CSV import.</summary>
     [HttpPost("validate/employees")]
+    [Authorize(Policy = "RequireDirectoryWrite")]
     public async Task<ActionResult<ImportResult>> ValidateEmployees(IFormFile file)
     {
         if (file == null || file.Length == 0)
@@ -46,9 +46,14 @@ public class ImportController : ControllerBase
         }
     }
 
-    /// <summary>Import employees from CSV. Creates new, updates existing by AzureAdObjectId.</summary>
+    /// <summary>
+    /// Import employees from CSV. Creates new, updates existing by AzureAdObjectId.
+    /// Optional tenantId scopes imported users to a subscription (super admin onboarding);
+    /// sub-admins are scoped to their own tenant by the service.
+    /// </summary>
     [HttpPost("employees")]
-    public async Task<ActionResult<ImportResult>> ImportEmployees(IFormFile file)
+    [Authorize(Policy = "RequireDirectoryWrite")]
+    public async Task<ActionResult<ImportResult>> ImportEmployees(IFormFile file, [FromQuery] int? tenantId = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(new ImportResult { Errors = ["CSV file is required."], IsValid = false });
@@ -59,10 +64,10 @@ public class ImportController : ControllerBase
             using var memoryStream = new MemoryStream();
             await file.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
-            var result = await _importService.ImportEmployeesAsync(memoryStream);
+            var result = await _importService.ImportEmployeesAsync(memoryStream, tenantId);
 
-            _logger.LogInformation("Import result: {TotalRows} total, {Imported} imported, {Errors} errors",
-                result.TotalRows, result.Imported, result.Errors.Count);
+            _logger.LogInformation("Import result: {TotalRows} total, {Imported} imported, {Errors} errors (tenantId={TenantId})",
+                result.TotalRows, result.Imported, result.Errors.Count, tenantId);
 
             if (!result.IsValid)
             {
@@ -86,6 +91,7 @@ public class ImportController : ControllerBase
 
     /// <summary>Dry-run validation of shift CSV import for a schedule.</summary>
     [HttpPost("validate/schedule/{scheduleId}")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<ImportResult>> ValidateShifts(int scheduleId, IFormFile file)
     {
         if (file == null || file.Length == 0)
@@ -112,6 +118,7 @@ public class ImportController : ControllerBase
 
     /// <summary>Bulk assign shifts from CSV for a schedule.</summary>
     [HttpPost("schedule/{scheduleId}")]
+    [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<ImportResult>> ImportShifts(int scheduleId, IFormFile file)
     {
         if (file == null || file.Length == 0)

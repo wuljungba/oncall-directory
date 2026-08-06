@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, type ReactNode } from 'react'
 import { Upload, X, AlertTriangle, Check, FileText } from 'lucide-react'
 
 interface ImportResult {
@@ -16,6 +16,8 @@ interface ImportModalProps {
   accept?: string
   onImport: (file: File) => Promise<ImportResult>
   onValidate?: (file: File) => Promise<ImportResult>
+  /** Optional extra content rendered above the drop zone (e.g. a tenant picker). */
+  extra?: ReactNode
 }
 
 export default function ImportModal({
@@ -26,6 +28,7 @@ export default function ImportModal({
   accept = '.csv',
   onImport,
   onValidate,
+  extra,
 }: ImportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
@@ -99,6 +102,10 @@ export default function ImportModal({
         {/* Body */}
         <div className="p-5 space-y-4">
           <p className="text-sm text-gray-500">{description}</p>
+
+          {extra && (
+            <div className="rounded-lg bg-gray-800/40 p-3">{extra}</div>
+          )}
 
           {/* Drop zone */}
           {!result && (

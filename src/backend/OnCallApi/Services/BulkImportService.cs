@@ -33,7 +33,7 @@ public class BulkImportService
     }
 
     /// <summary>Imports employees from a CSV stream. Creates new, updates existing by AzureAdObjectId.</summary>
-    public async Task<ImportResult> ImportEmployeesAsync(Stream csvStream)
+    public async Task<ImportResult> ImportEmployeesAsync(Stream csvStream, int? tenantId = null)
     {
         var (records, errors) = await ParseCsvAsync(csvStream, ParseEmployeeRow);
         if (errors.Count > 0)
@@ -64,8 +64,9 @@ public class BulkImportService
                     existing.MobilePhone = row.MobilePhone;
                     existing.OfficeLocation = row.OfficeLocation;
                     existing.DepartmentId = row.DepartmentId;
+                    if (tenantId.HasValue) existing.TenantId = tenantId.Value;
                     existing.UpdatedAt = DateTime.UtcNow;
-                    _logger.LogDebug("Updated employee {AzureAdObjectId}", row.AzureAdObjectId);
+                    _logger.LogDebug("Imported employee {AzureAdObjectId}", row.AzureAdObjectId);
                 }
                 else
                 {
@@ -80,9 +81,10 @@ public class BulkImportService
                         MobilePhone = row.MobilePhone,
                         OfficeLocation = row.OfficeLocation,
                         DepartmentId = row.DepartmentId,
+                        TenantId = tenantId,
                         LastSyncedAt = DateTime.UtcNow,
                     });
-                    _logger.LogDebug("Created employee {AzureAdObjectId}", row.AzureAdObjectId);
+                    _logger.LogDebug("Created employee {EmployeeName}", row.AzureAdObjectId);
                 }
                 imported++;
             }

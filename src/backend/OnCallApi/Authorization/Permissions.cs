@@ -75,4 +75,35 @@ public static class Permissions
         AdminFull,
         TenantManage,
     ];
+
+    /// <summary>
+    /// Permissions an administrator can explicitly assign to a user via the
+    /// admin dashboard (the per-user <c>PermissionGrant</c> model). Admin-only
+    /// permissions (Admin.Full, Admin.Scoped, Tenant.Manage) are not assignable
+    /// here — those come from super-admin config or tenant-admin records.
+    /// </summary>
+    public static readonly string[] AssignablePermissions =
+    [
+        ScheduleRead, ScheduleWrite,
+        DirectoryRead, DirectoryWrite,
+        CodeCallWrite,
+    ];
+
+    /// <summary>Whether <paramref name="permission"/> is a known permission string.</summary>
+    public static bool IsKnownPermission(string permission) =>
+        AssignablePermissions.Contains(permission, StringComparer.Ordinal)
+        || permission == AdminFull
+        || permission == AdminScoped
+        || permission == TenantManage;
+
+    /// <summary>
+    /// Parses a comma-separated permission CSV, dropping blank and unknown values
+    /// and de-duplicating (case-sensitive). Returns only known permission strings.
+    /// </summary>
+    public static string[] ParsePermissionCsv(string? csv) =>
+        (csv ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(IsKnownPermission)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 }

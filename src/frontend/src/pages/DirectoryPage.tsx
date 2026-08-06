@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react'
 import { Search, Phone, Mail, MapPin, ShieldCheck, Upload, Download, MessageSquare, AlertTriangle, X, Save, Pencil, Plus } from 'lucide-react'
-import { directoryApi, importApi, adminApi, departmentsApi } from '@/services/api'
+import { directoryApi, importApi, adminApi, departmentsApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import ImportModal from '@/components/ImportModal'
 import { isValidE164 } from '@/utils/validation'
-import type { Employee, Department } from '@/types'
+import type { Employee, Department, Tenant } from '@/types'
 
 export default function DirectoryPage() {
-  const { canDirectoryWrite } = useAuth()
+  const { canDirectoryWrite, isAdmin, canTenantManage, activeTenantId } = useAuth()
+  const canPickTenant = isAdmin || canTenantManage
+  const [tenants, setTenants] = useState<Tenant[]>([])
+  const [importTenantId, setImportTenantId] = useState<number | ''>(activeTenantId ?? '')
   const [query, setQuery] = useState('')
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
@@ -22,10 +25,12 @@ export default function DirectoryPage() {
     Promise.all([
       directoryApi.search(''),
       departmentsApi.getAll(),
+      canPickTenant ? tenantsApi.getAll(true) : Promise.resolve([]),
     ])
-      .then(([emps, depts]) => {
+      .then(([emps, depts, tnts]) => {
         setEmployees(emps)
         setDepartments(depts)
+        setTenants(tnts as Tenant[])
         setLoading(false)
       })
       .catch(() => setLoading(false))
@@ -323,8 +328,21 @@ export default function DirectoryPage() {
         onClose={() => setShowImport(false)}
         title="Import Employees"
         description="Upload a CSV file with employee data. Columns: azureAdObjectId (optional, leave blank for manual accounts), firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId. Phone numbers must be in E.164 format (e.g. +12025551234)."
+        extra={canPickTenant ? (
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Subscription (tenant) to import into</label>
+            <select
+              value={importTenantId}
+              onChange={e => setImportTenantId(e.target.value ? Number(e.target.value) : '')}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-amber-600"
+            >
+              <option value="">Unassigned</option>
+              {tenants.filter(t => t.isActive).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        ) : undefined}
         onValidate={(file) => importApi.validateEmployees(file)}
-        onImport={(file) => importApi.importEmployees(file)}
+        onImport={(file) => importApi.importEmployees(file, importTenantId === '' ? undefined : Number(importTenantId))}
       />
 
       {/* Add Employee Modal */}

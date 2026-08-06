@@ -18,6 +18,10 @@ import type {
   PhoneTreeNode,
   Tenant,
   TenantAdmin,
+  PermissionGrant,
+  LocalAccount,
+  PublicShare,
+  PublicCoverage,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -211,7 +215,8 @@ async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
 
 export const importApi = {
   validateEmployees: (file: File) => uploadFile<ImportResult>('/import/validate/employees', file),
-  importEmployees: (file: File) => uploadFile<ImportResult>('/import/employees', file),
+  importEmployees: (file: File, tenantId?: number) =>
+    uploadFile<ImportResult>(`/import/employees${tenantId ? `?tenantId=${tenantId}` : ''}`, file),
   validateShifts: (scheduleId: number, file: File) =>
     uploadFile<ImportResult>(`/import/validate/schedule/${scheduleId}`, file),
   importShifts: (scheduleId: number, file: File) =>
@@ -442,4 +447,68 @@ export const adminApi = {
     fetchApi<void>(`/admin/departments/${id}`, { method: 'DELETE' }),
   getDepartmentMembers: (id: number) =>
     fetchApi<Employee[]>(`/admin/departments/${id}/members`),
+}
+
+// ── Admin: per-user permission grants (on-call schedule read/write) ──
+export const permissionsAdminApi = {
+  list: (tenantId?: number) =>
+    fetchApi<PermissionGrant[]>(`/admin/permissions${tenantId ? `?tenantId=${tenantId}` : ''}`),
+  create: (data: { tenantId?: number; principalType?: string; externalPrincipalId: string; permissions: string }) =>
+    fetchApi<PermissionGrant>('/admin/permissions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (id: number, data: { externalPrincipalId?: string; principalType?: string; permissions?: string; isActive?: boolean }) =>
+    fetchApi<PermissionGrant>(`/admin/permissions/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  remove: (id: number) =>
+    fetchApi<void>(`/admin/permissions/${id}`, { method: 'DELETE' }),
+}
+
+// ── Admin: public permalink shares (coverage-only on-call schedule) ──
+export const sharesApi = {
+  list: () => fetchApi<PublicShare[]>('/admin/shares'),
+  create: (tenantId: number, label?: string) =>
+    fetchApi<PublicShare>('/admin/shares', {
+      method: 'POST',
+      body: JSON.stringify({ tenantId, label }),
+    }),
+  setActive: (id: number, isActive: boolean) =>
+    fetchApi<PublicShare>(`/admin/shares/${id}/active`, {
+      method: 'PUT',
+      body: JSON.stringify({ isActive }),
+    }),
+  remove: (id: number) =>
+    fetchApi<void>(`/admin/shares/${id}`, { method: 'DELETE' }),
+}
+
+// ── Admin: local accounts (email+password users) ──
+export const localAccountsApi = {
+  list: (includeInactive = false) =>
+    fetchApi<LocalAccount[]>(`/auth/local${includeInactive ? '?includeInactive=true' : ''}`),
+  create: (data: { email: string; password: string; displayName?: string; roles?: string[]; employeeId?: string | null }) =>
+    fetchApi<LocalAccount>('/auth/local/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  update: (id: number, data: { displayName?: string; isActive?: boolean; roles?: string[]; employeeId?: string | null }) =>
+    fetchApi<LocalAccount>(`/auth/local/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  resetPassword: (id: number, newPassword: string) =>
+    fetchApi<void>(`/auth/local/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ newPassword }),
+    }),
+  remove: (id: number) =>
+    fetchApi<void>(`/auth/local/${id}`, { method: 'DELETE' }),
+}
+
+// ── Public on-call coverage (perm-ink; unauthenticated) ──
+export const publicApi = {
+  getOnCallCoverage: (token: string) =>
+    fetchApi<PublicCoverage>(`/public/schedule/on-call/${encodeURIComponent(token)}`),
 }

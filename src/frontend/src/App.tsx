@@ -14,6 +14,7 @@ import SettingsPage from '@/pages/SettingsPage'
 import CompliancePage from '@/pages/CompliancePage'
 import EscalationPage from '@/pages/EscalationPage'
 import LandingPage from '@/pages/LandingPage'
+import PublicSchedulePage from '@/pages/PublicSchedulePage'
 import AdminPage from '@/pages/AdminPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -39,6 +40,8 @@ export default function App() {
         {/* Public routes */}
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage {...auth} />} />
+        {/* Public on-call coverage permalink — no auth required */}
+        <Route path="/on-call/:token" element={<PublicSchedulePage />} />
 
         {/* Protected routes */}
         <Route

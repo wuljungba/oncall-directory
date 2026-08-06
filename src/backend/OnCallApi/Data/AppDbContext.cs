@@ -28,6 +28,8 @@ public class AppDbContext : DbContext
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantAdmin> TenantAdmins => Set<TenantAdmin>();
     public DbSet<LocalAccount> LocalAccounts => Set<LocalAccount>();
+    public DbSet<PermissionGrant> PermissionGrants => Set<PermissionGrant>();
+    public DbSet<PublicShare> PublicShares => Set<PublicShare>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -275,6 +277,35 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<LocalAccount>(entity =>
         {
             entity.Ignore(x => x.Roles);
+        });
+
+        // ── PermissionGrant ──
+        modelBuilder.Entity<PermissionGrant>(g =>
+        {
+            g.HasIndex(x => new { x.PrincipalType, x.ExternalPrincipalId });
+            g.HasIndex(x => x.LocalUserId);
+
+            g.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            g.HasOne(x => x.LocalUser)
+                .WithMany()
+                .HasForeignKey(x => x.LocalUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ── PublicShare ──
+        modelBuilder.Entity<PublicShare>(s =>
+        {
+            s.HasIndex(x => x.TenantId);
+            s.HasIndex(x => x.Token).IsUnique();
+
+            s.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         // ── Seed Data ──

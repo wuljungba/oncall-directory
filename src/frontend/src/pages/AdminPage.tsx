@@ -7,8 +7,10 @@ import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi } from 
 import { useAuth } from '@/hooks/useAuth'
 import type { Employee, Department, TimeOff, Tenant, TenantAdmin } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
+import PermissionsSection from './admin/PermissionsSection'
+import SharedSchedulesSection from './admin/SharedSchedulesSection'
 
-type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants'
+type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('overview')
@@ -35,9 +37,11 @@ export default function AdminPage() {
     { key: 'locations', label: 'Code Call Locations' },
   ]
 
-  // Add Tenants tab for super admins only
+  // Add user/permission + subscriptions tabs for admins (full or tenant-manage)
   if (isAdmin || canTenantManage) {
-    tabs.push({ key: 'tenants', label: 'Tenants' })
+    tabs.push({ key: 'permissions', label: 'Users & Permissions' })
+    tabs.push({ key: 'shares', label: 'Public Schedule' })
+    tabs.push({ key: 'tenants', label: 'Subscriptions' })
   }
 
   // Get the current tenant name for display
@@ -91,12 +95,14 @@ export default function AdminPage() {
 
       {/* Tab content */}
       {tab === 'overview' && <AdminOverview onSelectTab={setTab} />}
-      {tab === 'accounts' && <AccountsSection />}
-      {tab === 'departments' && <DepartmentsSection />}
+      {tab === 'accounts' && <AccountsSection tenants={tenants} canPickTenant={isAdmin || canTenantManage} activeTenantId={activeTenantId} />}
+      {tab === 'departments' && <DepartmentsSection tenants={tenants} canPickTenant={isAdmin || canTenantManage} activeTenantId={activeTenantId} />}
       {tab === 'integrations' && <IntegrationsSection />}
       {tab === 'timeoff' && <TimeOffApprovalSection />}
       {tab === 'locations' && <CodeCallLocationsSection />}
-      {tab === 'tenants' && <TenantsSection />}
+      {tab === 'tenants' && <TenantsSection setActiveTenantId={setActiveTenantId} />}
+      {tab === 'permissions' && <PermissionsSection />}
+      {tab === 'shares' && <SharedSchedulesSection />}
     </div>
   )
 }
@@ -237,7 +243,11 @@ function AdminFeatureCard({ icon: Icon, iconColor, title, description, onClick }
 
 // ─── ACCOUNTS ────────────────────────────────────────────────────────────
 
-function AccountsSection() {
+function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
+  tenants: Tenant[]
+  canPickTenant: boolean
+  activeTenantId: number | null
+}) {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(true)
@@ -396,6 +406,9 @@ function AccountsSection() {
           employee={editingEmployee}
           departments={departments}
           employees={employees}
+          tenants={tenants}
+          canPickTenant={canPickTenant}
+          activeTenantId={activeTenantId}
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditingEmployee(null) }}
         />
@@ -404,10 +417,13 @@ function AccountsSection() {
   )
 }
 
-function EmployeeFormModal({ employee, departments, employees, onSave, onClose }: {
+function EmployeeFormModal({ employee, departments, employees, tenants, canPickTenant, activeTenantId, onSave, onClose }: {
   employee: Employee | null
   departments: Department[]
   employees: Employee[]
+  tenants: Tenant[]
+  canPickTenant: boolean
+  activeTenantId: number | null
   onSave: (data: Partial<Employee>) => Promise<void>
   onClose: () => void
 }) {
@@ -421,6 +437,7 @@ function EmployeeFormModal({ employee, departments, employees, onSave, onClose }
   const [mobilePhone, setMobilePhone] = useState(employee?.mobilePhone || '')
   const [officeLocation, setOfficeLocation] = useState(employee?.officeLocation || '')
   const [departmentId, setDepartmentId] = useState<number | ''>(employee?.departmentId ?? '')
+  const [tenantId, setTenantId] = useState<number | ''>(employee?.tenantId ?? activeTenantId ?? '')
   const [managerId, setManagerId] = useState<string | ''>(employee?.managerId ?? '')
   const [isActive, setIsActive] = useState(employee?.isActive ?? true)
   const [saving, setSaving] = useState(false)
@@ -447,6 +464,7 @@ function EmployeeFormModal({ employee, departments, employees, onSave, onClose }
         officeLocation: officeLocation || undefined,
         departmentId: departmentId || undefined,
         managerId: managerId ? managerId as unknown as number : undefined,
+        tenantId: canPickTenant ? tenantId || undefined : undefined,
         isActive,
       } as Partial<Employee>)
     } catch (err) {
@@ -565,6 +583,18 @@ function EmployeeFormModal({ employee, departments, employees, onSave, onClose }
             )}
           </div>
 
+          {canPickTenant && (
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Subscription (tenant)</label>
+              <select value={tenantId} onChange={e => setTenantId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
+                <option value="">Unassigned</option>
+                {tenants.filter(t => t.isActive).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <p className="text-xs text-gray-600 mt-1">Choose the subscription this user belongs to (super admin only).</p>
+            </div>
+          )}
+
           <div className="flex justify-end gap-2 pt-4 border-t border-gray-800">
             <button type="button" onClick={onClose}
               className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
@@ -582,7 +612,11 @@ function EmployeeFormModal({ employee, departments, employees, onSave, onClose }
 
 // ─── DEPARTMENTS ─────────────────────────────────────────────────────────
 
-function DepartmentsSection() {
+function DepartmentsSection({ tenants, canPickTenant, activeTenantId }: {
+  tenants: Tenant[]
+  canPickTenant: boolean
+  activeTenantId: number | null
+}) {
   const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -721,6 +755,9 @@ function DepartmentsSection() {
       {showModal && (
         <DepartmentFormModal
           department={editingDepartment}
+          tenants={tenants}
+          canPickTenant={canPickTenant}
+          activeTenantId={activeTenantId}
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditingDepartment(null) }}
         />
@@ -764,14 +801,18 @@ function DepartmentsSection() {
 
 const CATEGORIES = ['Healthcare', 'Technology', 'Corporate', 'Business', 'Operations', 'Education', 'Manufacturing', 'Retail', 'Other']
 
-function DepartmentFormModal({ department, onSave, onClose }: {
+function DepartmentFormModal({ department, tenants, canPickTenant, activeTenantId, onSave, onClose }: {
   department: Department | null
+  tenants: Tenant[]
+  canPickTenant: boolean
+  activeTenantId: number | null
   onSave: (data: Partial<Department>) => Promise<void>
   onClose: () => void
 }) {
   const [name, setName] = useState(department?.name || '')
   const [description, setDescription] = useState(department?.description || '')
   const [category, setCategory] = useState(department?.category || '')
+  const [tenantId, setTenantId] = useState<number | ''>(department?.tenantId ?? activeTenantId ?? '')
   const [isActive, setIsActive] = useState(department?.isActive ?? true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -782,7 +823,7 @@ function DepartmentFormModal({ department, onSave, onClose }: {
     setSaving(true)
     setError(null)
     try {
-      await onSave({ name: name.trim(), description: description.trim() || undefined, category: category || undefined, isActive })
+      await onSave({ name: name.trim(), description: description.trim() || undefined, category: category || undefined, tenantId: canPickTenant ? tenantId || undefined : undefined, isActive })
     } catch { setError('Failed to save department.') }
     finally { setSaving(false) }
   }
@@ -818,6 +859,17 @@ function DepartmentFormModal({ department, onSave, onClose }: {
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
+          {canPickTenant && (
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Subscription (tenant)</label>
+              <select value={tenantId} onChange={e => setTenantId(e.target.value ? Number(e.target.value) : '')}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
+                <option value="">Unassigned</option>
+                {tenants.filter(t => t.isActive).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <p className="text-xs text-gray-600 mt-1">Choose the subscription this unit belongs to (super admin only).</p>
+            </div>
+          )}
           {department && (
             <div className="flex items-center gap-3">
               <label className="text-sm text-gray-500">Active</label>
@@ -1206,7 +1258,7 @@ function TimeOffApprovalSection() {
 
 // ─── TENANTS (Business/Facility Management) ────────────────────────────────
 
-function TenantsSection() {
+function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number | null) => void }) {
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [admins, setAdmins] = useState<Record<number, TenantAdmin[]>>({})
   const [loading, setLoading] = useState(true)
@@ -1216,6 +1268,7 @@ function TenantsSection() {
   const [showAdminModal, setShowAdminModal] = useState(false)
   const [adminTenantId, setAdminTenantId] = useState<number | null>(null)
   const [expandedTenant, setExpandedTenant] = useState<number | null>(null)
+  const [showNewSubscription, setShowNewSubscription] = useState(false)
 
   useEffect(() => { loadData() }, [])
 
@@ -1300,12 +1353,20 @@ function TenantsSection() {
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-500">{tenants.length} tenant{tenants.length !== 1 ? 's' : ''}</p>
-        <button
-          onClick={() => { setEditingTenant(null); setShowModal(true) }}
-          className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
-        >
-          <Plus className="w-4 h-4" /> Add Tenant
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowNewSubscription(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Plus className="w-4 h-4" /> Onboard Subscription
+          </button>
+          <button
+            onClick={() => { setEditingTenant(null); setShowModal(true) }}
+            className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Building className="w-4 h-4" /> Add Tenant
+          </button>
+        </div>
       </div>
 
       <div className="bg-gray-900 border border-gray-800 rounded-xl">
@@ -1427,6 +1488,124 @@ function TenantsSection() {
           onClose={() => { setShowAdminModal(false); setAdminTenantId(null) }}
         />
       )}
+
+      {/* Onboard Subscription Modal */}
+      {showNewSubscription && (
+        <NewSubscriptionModal
+          onClose={() => setShowNewSubscription(false)}
+          onCreated={(id) => {
+            setShowNewSubscription(false)
+            setActiveTenantId(id)
+            loadData()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── NEW SUBSCRIPTION (guided onboarding) ─────────────────────────────────
+
+function NewSubscriptionModal({ onClose, onCreated }: {
+  onClose: () => void
+  onCreated: (tenantId: number) => void
+}) {
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [contactEmail, setContactEmail] = useState('')
+  const [adminOid, setAdminOid] = useState('')
+  const [adminRole, setAdminRole] = useState('DepartmentAdmin')
+  const [deptName, setDeptName] = useState('General')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!name.trim()) { setError('Subscription name is required.'); return }
+    setSaving(true)
+    setError(null)
+    try {
+      // 1) Create the subscription (tenant)
+      const tenant = await tenantsApi.create({ name: name.trim(), description: description.trim() || undefined, contactEmail: contactEmail.trim() || undefined } as Record<string, unknown>)
+      // 2) Create a default department inside it
+      await adminApi.createDepartment({ name: deptName.trim() || 'General', tenantId: tenant.id } as Record<string, unknown>)
+      // 3) Optionally assign a tenant admin
+      if (adminOid.trim()) {
+        await tenantsApi.assignAdmin(tenant.id, { azureAdObjectId: adminOid.trim(), role: adminRole })
+      }
+      onCreated(tenant.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create the subscription.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+          <h2 className="text-lg font-medium">Onboard New Subscription</h2>
+          <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <p className="text-xs text-gray-500">Creates the subscription, a default department, and (optionally) a tenant admin. You can then import or sync users into it.</p>
+          {error && (
+            <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
+            </div>
+          )}
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Subscription name *</label>
+            <input type="text" required value={name} onChange={e => setName(e.target.value)} placeholder="e.g. St. Mary's — West Wing"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Description</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 resize-none" />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Default department</label>
+              <input type="text" value={deptName} onChange={e => setDeptName(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+            </div>
+            <div>
+              <label className="block text-sm text-gray-500 mb-1">Contact email</label>
+              <input type="email" value={contactEmail} onChange={e => setContactEmail(e.target.value)}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+            </div>
+          </div>
+          <div className="border-t border-gray-800 pt-4 space-y-3">
+            <p className="text-xs text-gray-500">Optional — assign this subscription's first administrator:</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-gray-500 mb-1">Their Entra object id</label>
+                <input type="text" value={adminOid} onChange={e => setAdminOid(e.target.value)} placeholder="oid (optional)"
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-500 mb-1">Role</label>
+                <select value={adminRole} onChange={e => setAdminRole(e.target.value)}
+                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
+                  <option value="DepartmentAdmin">Department Admin</option>
+                  <option value="SuperAdmin">Super Admin</option>
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
+            <button type="button" onClick={onClose}
+              className="px-4 py-2 text-sm bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">Cancel</button>
+            <button type="submit" disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium disabled:opacity-50">
+              {saving ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" /> : <Plus className="w-4 h-4" />}
+              {saving ? 'Creating...' : 'Create Subscription'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }

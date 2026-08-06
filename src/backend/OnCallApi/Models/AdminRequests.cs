@@ -16,7 +16,8 @@ public record CreateEmployeeRequest(
     int? DepartmentId,
     Guid? ManagerId,
     List<string>? Certifications,
-    List<string>? Languages
+    List<string>? Languages,
+    int? TenantId = null
 );
 
 /// <summary>Request to update an existing employee account.</summary>
@@ -35,7 +36,8 @@ public record UpdateEmployeeRequest(
     Guid? ManagerId,
     List<string>? Certifications,
     List<string>? Languages,
-    bool? IsActive
+    bool? IsActive,
+    int? TenantId = null
 );
 
 /// <summary>Request to create a new department (sub-account).</summary>
@@ -43,7 +45,8 @@ public record CreateDepartmentRequest(
     string Name,
     string? Description,
     string? Category,
-    string? AzureAdGroupId
+    string? AzureAdGroupId,
+    int? TenantId = null
 );
 
 /// <summary>Request to update a department.</summary>
@@ -51,7 +54,8 @@ public record UpdateDepartmentRequest(
     string Name,
     string? Description,
     string? Category,
-    bool? IsActive
+    bool? IsActive,
+    int? TenantId = null
 );
 
 // ── Tenant Requests ──

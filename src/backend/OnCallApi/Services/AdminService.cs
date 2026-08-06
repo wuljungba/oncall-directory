@@ -73,6 +73,19 @@ public class AdminService : IAdminService
         return tenantIds.FirstOrDefault();
     }
 
+    /// <summary>
+    /// Resolves the tenant for a create operation. A super admin may pick any
+    /// tenant (or none); a sub-admin is always forced to their own tenant and any
+    /// requested value is ignored — this keeps tenant isolation even through the
+    /// admin GUI.
+    /// </summary>
+    private async Task<int?> ResolveCreateTenantId(int? requested)
+    {
+        if (CurrentUser != null && _tenantContext.IsSuperAdmin(CurrentUser))
+            return requested;
+        return await GetCurrentUserTenantId();
+    }
+
     // ── Employees ──
 
     public async Task<List<Employee>> GetAllEmployeesAsync(bool includeInactive = false)
@@ -104,7 +117,7 @@ public class AdminService : IAdminService
 
     public async Task<Employee> CreateEmployeeAsync(CreateEmployeeRequest request)
     {
-        var tenantId = await GetCurrentUserTenantId();
+        var tenantId = await ResolveCreateTenantId(request.TenantId);
 
         var employee = new Employee
         {
@@ -191,6 +204,9 @@ public class AdminService : IAdminService
             existing.Languages = JsonSerializer.Serialize(request.Languages);
         if (request.IsActive.HasValue)
             existing.IsActive = request.IsActive.Value;
+        // Super admin may move an employee between subscriptions.
+        if (request.TenantId.HasValue && CurrentUser != null && _tenantContext.IsSuperAdmin(CurrentUser))
+            existing.TenantId = request.TenantId.Value;
         existing.UpdatedAt = DateTime.UtcNow;
 
         try
@@ -272,7 +288,7 @@ public class AdminService : IAdminService
 
     public async Task<Department> CreateDepartmentAsync(CreateDepartmentRequest request)
     {
-        var tenantId = await GetCurrentUserTenantId();
+        var tenantId = await ResolveCreateTenantId(request.TenantId);
 
         var department = new Department
         {
@@ -302,6 +318,9 @@ public class AdminService : IAdminService
         existing.Category = request.Category ?? existing.Category;
         if (request.IsActive.HasValue)
             existing.IsActive = request.IsActive.Value;
+        // Super admin may move a department to another subscription.
+        if (request.TenantId.HasValue && CurrentUser != null && _tenantContext.IsSuperAdmin(CurrentUser))
+            existing.TenantId = request.TenantId.Value;
 
         await _db.SaveChangesAsync();
         return existing;

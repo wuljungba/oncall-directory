@@ -77,6 +77,12 @@ public class TenantClaimsMiddleware
                         }
                     }
                 }
+
+                // Explicit per-user permission grants (PermissionGrant rows). Runs for every
+                // authenticated user — for a super admin it's harmless (existing claims win;
+                // AddClaim via HasClaim guard de-dupes). This is how external Entra/Google
+                // users receive assignable Schedule.Read/Write permissions from the dashboard.
+                await AddPermissionGrantsAsync(identity, context.User, db);
             }
             catch (Exception ex)
             {
@@ -282,6 +288,43 @@ public class TenantClaimsMiddleware
             catch
             {
                 // Tenants table missing / DB not ready — roles+permissions above still grant access.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Expands explicit per-user <see cref="PermissionGrant"/> rows into
+    /// <c>Permission</c> claims (and a tenant claim when the grant is tenant-scoped).
+    /// Match is by Entra object id OR email for external principals; local accounts
+    /// match by the same email they sign in with.
+    /// </summary>
+    private static async Task AddPermissionGrantsAsync(ClaimsIdentity identity, ClaimsPrincipal user, AppDbContext db)
+    {
+        var oid = GetAzureAdObjectId(user);
+        var email = GetEmail(user);
+
+        if (string.IsNullOrEmpty(oid) && string.IsNullOrEmpty(email))
+            return;
+
+        var grants = await db.PermissionGrants
+            .Where(g => g.IsActive &&
+                (g.ExternalPrincipalId == oid || (email != null && g.ExternalPrincipalId == email)))
+            .ToListAsync();
+
+        foreach (var grant in grants)
+        {
+            if (grant.TenantId.HasValue &&
+                !identity.Claims.Any(c => c.Type == $"TenantId:{grant.TenantId.Value}"))
+            {
+                identity.AddClaim(new Claim($"TenantId:{grant.TenantId.Value}", "PermissionGrant"));
+            }
+
+            foreach (var perm in Permissions.ParsePermissionCsv(grant.Permissions))
+            {
+                if (!identity.HasClaim(Permissions.ClaimType, perm))
+                {
+                    identity.AddClaim(new Claim(Permissions.ClaimType, perm));
+                }
             }
         }
     }

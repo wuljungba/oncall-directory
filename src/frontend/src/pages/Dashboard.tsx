@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom'
 import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail } from 'lucide-react'
 import { scheduleApi, directoryApi } from '@/services/api'
 import { useSignalR } from '@/hooks/useSignalR'
+import { Card } from '@/components/ui/Card'
+import { Stat } from '@/components/ui/Stat'
+import { Badge } from '@/components/ui/Badge'
 import type { Employee, Shift } from '@/types'
 
 interface OnCallSummary {
@@ -93,41 +96,14 @@ export default function Dashboard() {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Currently On Call</p>
-              <p className="text-3xl font-bold text-amber-500 mt-1">{stats.onCall}</p>
-            </div>
-            <Clock className="w-10 h-10 text-amber-600/30" />
-          </div>
-        </div>
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Departments</p>
-              <p className="text-3xl font-bold text-blue-500 mt-1">{stats.departments}</p>
-            </div>
-            <Users className="w-10 h-10 text-blue-600/30" />
-          </div>
-        </div>
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Directory Entries</p>
-              <p className="text-3xl font-bold text-green-500 mt-1">{stats.employees}</p>
-            </div>
-            <Phone className="w-10 h-10 text-green-600/30" />
-          </div>
-        </div>
+        <Stat label="Currently On Call" value={stats.onCall} tone="amber" icon={<Clock className="w-10 h-10" />} />
+        <Stat label="Departments Covering" value={stats.departments} tone="blue" icon={<Users className="w-10 h-10" />} />
+        <Stat label="Directory Entries" value={stats.employees} tone="green" icon={<Phone className="w-10 h-10" />} />
       </div>
 
       {/* Currently On Call */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl" aria-live="polite">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="font-semibold">Currently On Call</h2>
-        </div>
-        <div className="p-5">
+      <Card title="Currently On Call">
+        <div aria-live="polite">
           {onCallNow.length === 0 ? (
             <div className="flex items-center gap-3 text-gray-500 py-8 justify-center">
               <AlertTriangle className="w-5 h-5" />
@@ -182,17 +158,9 @@ export default function Dashboard() {
                       )}
                     </div>
                     <div className="text-right">
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full ${
-                          person.tier === 'primary'
-                            ? 'bg-amber-600/20 text-amber-500'
-                            : person.tier === 'secondary'
-                            ? 'bg-blue-600/20 text-blue-500'
-                            : 'bg-gray-600/20 text-gray-400'
-                        }`}
-                      >
+                      <Badge tone={person.tier === 'primary' ? 'amber' : person.tier === 'secondary' ? 'blue' : 'gray'}>
                         {person.tier}
-                      </span>
+                      </Badge>
                       <p className="text-xs text-gray-500 mt-1">
                         until {person.until}
                       </p>
@@ -203,7 +171,7 @@ export default function Dashboard() {
             </div>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

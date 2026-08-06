@@ -28,6 +28,7 @@ export interface Department {
   description?: string
   category?: string
   azureAdGroupId?: string
+  tenantId?: number
   isActive: boolean
 }
 
@@ -46,6 +47,7 @@ export interface Employee {
   officeLocation?: string
   departmentId?: number
   department?: Department
+  tenantId?: number
   managerId?: string
   manager?: Employee
   certifications?: string[]
@@ -249,4 +251,60 @@ export interface EscalationEvent {
   triggeredAt: string
   resolvedAt?: string
   details: string
+}
+
+// ── Permission grants (admin → user) ──
+
+export interface PermissionGrant {
+  id: number
+  tenantId?: number
+  principalType: 'external' | 'local'
+  externalPrincipalId: string
+  permissions: string[]
+  isActive: boolean
+  createdAt: string
+  updatedAt?: string
+}
+
+// ── Local accounts (admin managed) ──
+
+export interface LocalAccount {
+  id: number
+  email: string
+  displayName: string
+  roles: string[]
+  employeeId?: string | null
+  isActive: boolean
+  createdAt: string
+  lastLoginAt?: string | null
+}
+
+// ── Public on-call permalink shares ──
+
+export interface PublicShare {
+  id: number
+  tenantId: number
+  tenant?: string
+  token: string
+  label: string
+  isActive: boolean
+  createdAt: string
+  permalink: string
+}
+
+export interface PublicCoveredTier {
+  covered: boolean
+  assignments: number
+}
+
+export interface PublicCoveredUnit {
+  departmentId: number
+  department: string
+  tiers: Record<string, PublicCoveredTier>
+}
+
+export interface PublicCoverage {
+  coverageAt: string
+  tenant: string
+  units: PublicCoveredUnit[]
 }
