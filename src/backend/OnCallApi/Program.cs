@@ -541,6 +541,66 @@ using (var scope = app.Services.CreateScope())
         // This works around nvarchar(max) and other SQL Server-specific syntax in migrations
         // that SQLite cannot parse. HasData() seed values from OnModelCreating are applied.
         await db.Database.EnsureCreatedAsync();
+
+        // Ensure tables added AFTER this schema first existed get created even on an
+        // existing database. EnsureCreated is a no-op once any table exists, so tables
+        // introduced later would be missing. Create them idempotently here (guarded so
+        // this is a no-op if they already exist). Never alters or drops existing data —
+        // an explicit alternative to the destructive Db:Recreate toggle.
+        foreach (var ddl in new[]
+        {
+            // PermissionGrant (per-user on-call permission assignment)
+            """
+            IF OBJECT_ID(N'dbo.PermissionGrants') IS NULL
+            BEGIN
+                CREATE TABLE dbo.PermissionGrants (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NULL,
+                    PrincipalType nvarchar(20) NOT NULL,
+                    ExternalPrincipalId nvarchar(200) NOT NULL,
+                    LocalUserId int NULL,
+                    Permissions nvarchar(max) NOT NULL,
+                    IsActive bit NOT NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    UpdatedAt datetime2 NULL,
+                    CONSTRAINT FK_PermissionGrants_Tenant FOREIGN KEY (TenantId) REFERENCES dbo.Tenants(Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_PermissionGrants_Local FOREIGN KEY (LocalUserId) REFERENCES dbo.LocalAccounts(Id) ON DELETE CASCADE
+                );
+                CREATE INDEX IX_PermissionGrants_Principal ON dbo.PermissionGrants (PrincipalType, ExternalPrincipalId);
+                CREATE INDEX IX_PermissionGrants_LocalUserId ON dbo.PermissionGrants (LocalUserId);
+            END;
+            """,
+            // PublicShares (public coverage-only permalink token)
+            """
+            IF OBJECT_ID(N'dbo.PublicShares') IS NULL
+            BEGIN
+                CREATE TABLE dbo.PublicShares (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NOT NULL,
+                    Token uniqueidentifier NOT NULL,
+                    Label nvarchar(max) NOT NULL,
+                    IsActive bit NOT NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    CONSTRAINT FK_PublicShares_Tenant FOREIGN KEY (TenantId) REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
+                );
+                CREATE UNIQUE INDEX uq_PublicShares_Token ON dbo.PublicShares (Token);
+                CREATE INDEX IX_PublicShares_TenantId ON dbo.PublicShares (TenantId);
+            END;
+            """,
+        })
+        {
+            try
+            {
+                await db.Database.ExecuteSqlRawAsync(ddl);
+            }
+            catch (Exception ex)
+            {
+                // Non-fatal: the app still booted; the feature's endpoints will surface a
+                // clear error if the table is genuinely missing/permissions are off.
+                scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                    .LogWarning(ex, "Could not ensure table exists on startup (may already exist).");
+            }
+        }
     }
 }
 
