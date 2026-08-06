@@ -61,7 +61,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       alwaysOn: true
       minTlsVersion: '1.2'
       appSettings: [
-        { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString/)' }
+        { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString)' }
         { name: 'AzureAd__Instance', value: replace(environment().authentication.loginEndpoint, '/$', '') }
         { name: 'AzureAd__Domain', value: entraDomain }
         { name: 'AzureAd__TenantId', value: entraTenantId }
@@ -93,7 +93,7 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
       alwaysOn: true
       minTlsVersion: '1.2'
       appSettings: [
-        { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString/)' }
+        { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString)' }
         { name: 'AzureAd__Instance', value: replace(environment().authentication.loginEndpoint, '/$', '') }
         { name: 'AzureAd__Domain', value: entraDomain }
         { name: 'AzureAd__TenantId', value: entraTenantId }
@@ -106,5 +106,31 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'DevAuth__Enabled', value: 'false' }
       ]
     }
+  }
+}
+
+// ── Key Vault RBAC: grant both app identities (web app + staging slot) the
+//    "Key Vault Secrets User" role so the ConnectionStrings__DefaultConnection
+//    reference resolves at runtime. The vault uses RBAC authorization, which
+//    ignores classic access policies, so a role assignment is required.
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: kvName
+}
+
+resource kvSecretsUserApp 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, webApp.id, 'kvsecrets-user')
+  properties: {
+    roleDefinitionId: '/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6'
+    principalId: webApp.identity.principalId
+  }
+}
+
+resource kvSecretsUserSlot 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: keyVault
+  name: guid(keyVault.id, stagingSlot.id, 'kvsecrets-user')
+  properties: {
+    roleDefinitionId: '/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6'
+    principalId: stagingSlot.identity.principalId
   }
 }
