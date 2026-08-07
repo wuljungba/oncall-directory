@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle, Plus, ShieldCheck, Trash2 } from 'lucide-react'
-import { permissionsAdminApi } from '@/services/api'
+import { localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
-import type { PermissionGrant } from '@/types'
+import type { LocalAccount, PermissionGrant, Tenant } from '@/types'
 
 const PERMISSION_OPTIONS: { key: string; label: string }[] = [
   { key: 'Schedule.Read', label: 'On-Call Schedule — Read' },
@@ -19,6 +19,7 @@ const PERMISSION_OPTIONS: { key: string; label: string }[] = [
 export default function PermissionsSection() {
   const { activeTenantId, tenantIds } = useAuth()
   const [grants, setGrants] = useState<PermissionGrant[]>([])
+  const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
@@ -26,11 +27,13 @@ export default function PermissionsSection() {
   const [principal, setPrincipal] = useState('')
   const [tenantId, setTenantId] = useState<number | ''>(activeTenantId ?? '')
   const [perms, setPerms] = useState<Set<string>>(new Set(['Schedule.Read', 'Schedule.Write']))
+  const tenantTouched = useRef(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
       setGrants(await permissionsAdminApi.list(undefined))
+      setTenants(await tenantsApi.getAll(true))
     } catch {
       setError('Failed to load permission grants.')
     }
@@ -38,7 +41,14 @@ export default function PermissionsSection() {
   }, [])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { if (activeTenantId != null) setTenantId(activeTenantId) }, [activeTenantId])
+  // Auto-select the active subscription only until the user picks one themselves.
+  useEffect(() => {
+    if (activeTenantId != null && !tenantTouched.current) setTenantId(activeTenantId)
+  }, [activeTenantId])
+
+  const tenantName = (id?: number) => id == null
+    ? 'All tenants (system-wide)'
+    : tenants.find(t => t.id === id)?.name ?? `Tenant ${id}`
 
   const togglePerm = (p: string) =>
     setPerms(prev => { const next = new Set(prev); if (next.has(p)) next.delete(p); else next.add(p); return next })
@@ -109,13 +119,13 @@ export default function PermissionsSection() {
           <div>
             <label className="block text-sm text-gray-500 mb-1">Subscription (tenant)</label>
             <select
-              value={tenantId} onChange={e => setTenantId(e.target.value ? Number(e.target.value) : '')}
+              value={tenantId} onChange={e => { tenantTouched.current = true; setTenantId(e.target.value ? Number(e.target.value) : '') }}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
             >
               <option value={''}>All tenants (system-wide)</option>
-              {tenantIds.map(id => <option key={id} value={id}>Tenant {id}</option>)}
+              {tenantIds.map(id => <option key={id} value={id}>{tenantName(id)}</option>)}
             </select>
-            <p className="text-xs text-gray-600 mt-1">Existing subscribers shown for context; entering a tenant id assigns scoped.</p>
+            <p className="text-xs text-gray-600 mt-1">Scope the grant to one subscription (super admins may also grant system-wide).</p>
           </div>
         </div>
 
@@ -170,7 +180,7 @@ export default function PermissionsSection() {
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-sm text-gray-200 truncate">{g.externalPrincipalId}</span>
                     {g.tenantId ? (
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-500">Tenant {g.tenantId}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-500">{tenantName(g.tenantId)}</span>
                     ) : (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-purple-600/20 text-purple-500">All</span>
                     )}
@@ -196,6 +206,105 @@ export default function PermissionsSection() {
           </div>
         )}
       </section>
+
+      <LocalAccountsSection />
     </div>
+  )
+}
+
+function LocalAccountsSection() {
+  const [accounts, setAccounts] = useState<LocalAccount[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setAccounts(await localAccountsApi.list()) } catch { setError('Failed to load local accounts.') }
+    setLoading(false)
+  }, [])
+  useEffect(() => { load() }, [load])
+
+  async function create() {
+    setError(null); setMessage(null)
+    if (!email.trim() || password.length < 8) { setError('Email and a password of 8+ characters are required.'); return }
+    setSaving(true)
+    try {
+      await localAccountsApi.create({ email: email.trim(), password, displayName: displayName.trim() || undefined })
+      setEmail(''); setPassword(''); setDisplayName('')
+      await load()
+      setMessage('Local account created.'); setTimeout(() => setMessage(null), 2500)
+    } catch (e) { setError(e instanceof Error ? e.message : 'Failed to create local account.') }
+    finally { setSaving(false) }
+  }
+
+  async function resetPassword(acc: LocalAccount) {
+    const next = window.prompt(`New password for ${acc.email} (8+ characters):`)
+    if (!next || next.length < 8) { setError('Password must be 8+ characters.'); return }
+    setError(null)
+    try { await localAccountsApi.resetPassword(acc.id, next); setMessage('Password reset.'); setTimeout(() => setMessage(null), 2500) }
+    catch (e) { setError(e instanceof Error ? e.message : 'Failed to reset password.') }
+  }
+
+  async function deactivate(acc: LocalAccount) {
+    setError(null)
+    try { await localAccountsApi.remove(acc.id); setAccounts(prev => prev.filter(a => a.id !== acc.id)) }
+    catch { setError('Failed to deactivate the local account.') }
+  }
+
+  return (
+    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+      <h2 className="font-medium flex items-center gap-2">
+        <ShieldCheck className="w-5 h-5 text-amber-500" /> Local Accounts
+      </h2>
+      {error && (
+        <div className="flex items-center gap-3 bg-red-600/10 border border-red-600/30 rounded-xl px-5 py-3 text-sm text-red-400">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" /><span>{error}</span>
+        </div>
+      )}
+      {message && (
+        <div className="flex items-center gap-3 bg-green-600/10 border border-green-600/30 rounded-xl px-5 py-3 text-sm text-green-400">
+          <CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{message}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <input value={email} onChange={e => setEmail(e.target.value)} placeholder="email@host"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600" />
+        <input value={displayName} onChange={e => setDisplayName(e.target.value)} placeholder="Display name"
+          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600" />
+        <div className="flex gap-2">
+          <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (8+)"
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600" />
+          <button onClick={create} disabled={saving}
+            className="flex items-center gap-1 px-3 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium disabled:opacity-50">
+            <Plus className="w-4 h-4" />{saving ? '…' : 'Add'}
+          </button>
+        </div>
+      </div>
+
+      <div className="divide-y divide-gray-800">
+        {loading ? (
+          <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-amber-600" /></div>
+        ) : accounts.length === 0 ? (
+          <p className="py-10 text-center text-sm text-gray-500">No local accounts yet.</p>
+        ) : accounts.map(a => (
+          <div key={a.id} className="py-3 flex items-center justify-between">
+            <div className="min-w-0">
+              <p className="text-sm font-medium truncate">{a.displayName || a.email}</p>
+              <p className="text-xs text-gray-500 truncate">{a.email} · {a.roles.join(', ')}</p>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button onClick={() => resetPassword(a)} className="text-xs text-gray-400 hover:text-gray-200">Reset pwd</button>
+              <button onClick={() => deactivate(a)} className="text-xs text-red-500 hover:text-red-400">Deactivate</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   )
 }

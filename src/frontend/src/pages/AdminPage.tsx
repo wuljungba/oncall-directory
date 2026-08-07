@@ -1524,17 +1524,24 @@ function NewSubscriptionModal({ onClose, onCreated }: {
     if (!name.trim()) { setError('Subscription name is required.'); return }
     setSaving(true)
     setError(null)
+    let tenantId: number | null = null
     try {
       // 1) Create the subscription (tenant)
       const tenant = await tenantsApi.create({ name: name.trim(), description: description.trim() || undefined, contactEmail: contactEmail.trim() || undefined } as Record<string, unknown>)
+      tenantId = tenant.id
       // 2) Create a default department inside it
       await adminApi.createDepartment({ name: deptName.trim() || 'General', tenantId: tenant.id } as Record<string, unknown>)
       // 3) Optionally assign a tenant admin
       if (adminOid.trim()) {
         await tenantsApi.assignAdmin(tenant.id, { azureAdObjectId: adminOid.trim(), role: adminRole })
       }
-      onCreated(tenant.id)
+      onCreated(tenantId)
     } catch (err) {
+      // Compensation: if steps 2/3 failed, roll back the just-created subscription so we
+      // don't leave an orphaned tenant the user can't see.
+      if (tenantId != null) {
+        try { await tenantsApi.deactivate(tenantId) } catch { /* best effort */ }
+      }
       setError(err instanceof Error ? err.message : 'Failed to create the subscription.')
     } finally {
       setSaving(false)
@@ -1590,7 +1597,7 @@ function NewSubscriptionModal({ onClose, onCreated }: {
                 <select value={adminRole} onChange={e => setAdminRole(e.target.value)}
                   className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
                   <option value="DepartmentAdmin">Department Admin</option>
-                  <option value="SuperAdmin">Super Admin</option>
+                  <option value="SuperAdmin">Scoped Super Admin (this subscription only)</option>
                 </select>
               </div>
             </div>
@@ -1732,7 +1739,7 @@ function AssignAdminModal({ tenantName, onAssign, onClose }: {
             <select value={role} onChange={e => setRole(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
               <option value="DepartmentAdmin">Department Admin (scoped to tenant)</option>
-              <option value="SuperAdmin">Super Admin (full access within tenant)</option>
+              <option value="SuperAdmin">Scoped Super Admin (this subscription only)</option>
             </select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
