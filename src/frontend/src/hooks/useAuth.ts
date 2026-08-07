@@ -99,18 +99,25 @@ export function useAuth(): AuthState {
     setAuthProvider(providerType)
 
     provider.init()
-      .then(() => {
+      .then(async () => {
         const currentUser = provider.getCurrentUser()
         setUser(currentUser)
 
-        if (currentUser) {
-          // Fetch permissions from the /api/auth/me endpoint
-          authApi.me()
-            .then(res => handleAuthResponse(res))
-            .catch(() => setPermissions([]))
+        // Keep isLoading true until BOTH identity and permissions are known.
+        // AdminRoute/ProtectedRoute guards must never render (and possibly
+        // redirect) on unloaded permissions — otherwise a cold load of /admin
+        // bounces to /dashboard before /api/auth/me flips isAdmin to true.
+        try {
+          if (currentUser) {
+            // Fetch permissions from the /api/auth/me endpoint
+            const res = await authApi.me()
+            handleAuthResponse(res)
+          }
+        } catch {
+          setPermissions([])
+        } finally {
+          setIsLoading(false)
         }
-
-        setIsLoading(false)
       })
       .catch((err) => {
         console.error('[useAuth] Auth init failed:', err)
