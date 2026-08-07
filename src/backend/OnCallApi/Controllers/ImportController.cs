@@ -9,11 +9,13 @@ namespace OnCallApi.Controllers;
 public class ImportController : ControllerBase
 {
     private readonly BulkImportService _importService;
+    private readonly ITenantContextService _tenants;
     private readonly ILogger<ImportController> _logger;
 
-    public ImportController(BulkImportService importService, ILogger<ImportController> logger)
+    public ImportController(BulkImportService importService, ITenantContextService tenants, ILogger<ImportController> logger)
     {
         _importService = importService;
+        _tenants = tenants;
         _logger = logger;
     }
 
@@ -64,10 +66,18 @@ public class ImportController : ControllerBase
             using var memoryStream = new MemoryStream();
             await file.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
-            var result = await _importService.ImportEmployeesAsync(memoryStream, tenantId);
+
+            // Tenant scoping: a super admin may import into the requested subscription;
+            // any other caller (sub-admin / Directory.Write) is forced to their own tenant
+            // regardless of the query param — prevents cross-tenant employee writes.
+            var effectiveTenantId = _tenants.IsSuperAdmin(User)
+                ? tenantId
+                : (await _tenants.GetAuthorizedTenantIdsAsync(User)).FirstOrDefault();
+
+            var result = await _importService.ImportEmployeesAsync(memoryStream, effectiveTenantId);
 
             _logger.LogInformation("Import result: {TotalRows} total, {Imported} imported, {Errors} errors (tenantId={TenantId})",
-                result.TotalRows, result.Imported, result.Errors.Count, tenantId);
+                result.TotalRows, result.Imported, result.Errors.Count, effectiveTenantId);
 
             if (!result.IsValid)
             {

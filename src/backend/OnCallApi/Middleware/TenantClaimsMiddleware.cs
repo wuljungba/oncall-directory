@@ -82,7 +82,17 @@ public class TenantClaimsMiddleware
                 // authenticated user — for a super admin it's harmless (existing claims win;
                 // AddClaim via HasClaim guard de-dupes). This is how external Entra/Google
                 // users receive assignable Schedule.Read/Write permissions from the dashboard.
-                await AddPermissionGrantsAsync(identity, context.User, db);
+                try
+                {
+                    await AddPermissionGrantsAsync(identity, context.User, db);
+                }
+                catch (Exception ex)
+                {
+                    // Isolated on purpose: a missing/misconfigured PermissionGrants table
+                    // must NOT break the broader tenant-claim expansion above.
+                    context.RequestServices.GetRequiredService<ILogger<TenantClaimsMiddleware>>()
+                        .LogWarning(ex, "Per-user permission grant expansion failed — continuing without grants");
+                }
             }
             catch (Exception ex)
             {
@@ -308,7 +318,7 @@ public class TenantClaimsMiddleware
 
         var grants = await db.PermissionGrants
             .Where(g => g.IsActive &&
-                (g.ExternalPrincipalId == oid || (email != null && g.ExternalPrincipalId == email)))
+                ((oid != null && g.ExternalPrincipalId == oid) || (email != null && g.ExternalPrincipalId == email)))
             .ToListAsync();
 
         foreach (var grant in grants)

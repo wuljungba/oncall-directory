@@ -60,12 +60,12 @@ public class UserPermissionsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<PermissionGrantResponse>> Create(CreatePermissionGrantRequest request)
     {
-        var perms = Permissions.ParsePermissionCsv(request.Permissions);
+        var perms = Permissions.ParseAssignablePermissionCsv(request.Permissions);
         if (perms.Length == 0)
         {
             return BadRequest(new
             {
-                error = "At least one valid permission is required (e.g. Schedule.Read, Schedule.Write, Directory.Read, Directory.Write)."
+                error = "At least one valid assignable permission is required (Schedule.Read, Schedule.Write, Directory.Read, Directory.Write, CodeCall.Write)."
             });
         }
 
@@ -103,13 +103,15 @@ public class UserPermissionsController : ControllerBase
 
         if (grant.TenantId.HasValue && !await CanManageTenantAsync(grant.TenantId.Value))
             return Forbid();
+        if (!grant.TenantId.HasValue && !_tenants.IsSuperAdmin(User))
+            return Forbid();
 
         if (request.Permissions != null)
         {
-            var perms = Permissions.ParsePermissionCsv(request.Permissions);
+            var perms = Permissions.ParseAssignablePermissionCsv(request.Permissions);
             if (perms.Length == 0)
             {
-                return BadRequest(new { error = "At least one valid permission is required." });
+                return BadRequest(new { error = "At least one valid assignable permission is required." });
             }
             grant.Permissions = string.Join(",", perms);
         }
@@ -130,6 +132,8 @@ public class UserPermissionsController : ControllerBase
         var grant = await _db.PermissionGrants.FindAsync(id);
         if (grant == null) return NotFound();
         if (grant.TenantId.HasValue && !await CanManageTenantAsync(grant.TenantId.Value))
+            return Forbid();
+        if (!grant.TenantId.HasValue && !_tenants.IsSuperAdmin(User))
             return Forbid();
 
         _db.PermissionGrants.Remove(grant);

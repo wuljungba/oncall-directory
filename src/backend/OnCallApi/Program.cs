@@ -547,6 +547,10 @@ using (var scope = app.Services.CreateScope())
         // introduced later would be missing. Create them idempotently here (guarded so
         // this is a no-op if they already exist). Never alters or drops existing data —
         // an explicit alternative to the destructive Db:Recreate toggle.
+        // The DDL is T-SQL, so run it only on SQL Server (a no-op on other providers,
+        // whose fresh schema already includes the tables via EnsureCreated).
+        if (provider.Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+        {
         foreach (var ddl in new[]
         {
             // PermissionGrant (per-user on-call permission assignment)
@@ -600,6 +604,7 @@ using (var scope = app.Services.CreateScope())
                 scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
                     .LogWarning(ex, "Could not ensure table exists on startup (may already exist).");
             }
+        }
         }
     }
 }

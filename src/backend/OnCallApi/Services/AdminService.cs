@@ -82,7 +82,15 @@ public class AdminService : IAdminService
     private async Task<int?> ResolveCreateTenantId(int? requested)
     {
         if (CurrentUser != null && _tenantContext.IsSuperAdmin(CurrentUser))
+        {
+            if (requested.HasValue)
+            {
+                var exists = await _db.Tenants.AnyAsync(t => t.Id == requested.Value);
+                if (!exists)
+                    throw new InvalidOperationException($"Subscription (tenant) {requested.Value} does not exist.");
+            }
             return requested;
+        }
         return await GetCurrentUserTenantId();
     }
 

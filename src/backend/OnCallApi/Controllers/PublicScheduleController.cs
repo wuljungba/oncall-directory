@@ -16,6 +16,7 @@ namespace OnCallApi.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/public")]
+[EnableRateLimiting("Api")]
 public class PublicScheduleController : ControllerBase
 {
     private readonly AppDbContext _db;
@@ -47,7 +48,9 @@ public class PublicScheduleController : ControllerBase
                 && sh.StartTime <= now && sh.EndTime > now
                 && sh.Schedule.Department != null
                 && sh.Schedule.Department.TenantId == tenantId)
-            .GroupBy(sh => new { sh.Schedule.Department!.Id, sh.Schedule.Department!.Name, sh.Tier })
+            // Group tier by its lowercased form so mixed-case data can't collide into a
+            // duplicate dictionary key below.
+            .GroupBy(sh => new { sh.Schedule.Department!.Id, sh.Schedule.Department!.Name, Tier = sh.Tier.ToLowerInvariant() })
             .Select(g => new { g.Key.Id, g.Key.Name, g.Key.Tier, Count = g.Count() })
             .ToListAsync();
 
@@ -58,7 +61,7 @@ public class PublicScheduleController : ControllerBase
                 DepartmentId = g.Key.Id,
                 Department = g.Key.Name,
                 Tiers = g.ToDictionary(
-                    a => a.Tier.ToLowerInvariant(),
+                    a => a.Tier,
                     a => new PublicCoveredTier { Covered = a.Count > 0, Assignments = a.Count }),
             })
             .OrderBy(u => u.Department)

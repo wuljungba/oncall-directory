@@ -11,6 +11,11 @@ export default function DirectoryPage() {
   const canPickTenant = isAdmin || canTenantManage
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [importTenantId, setImportTenantId] = useState<number | ''>(activeTenantId ?? '')
+
+  // Keep the import target in sync once the active subscription resolves (async).
+  useEffect(() => {
+    if (activeTenantId != null) setImportTenantId(activeTenantId)
+  }, [activeTenantId])
   const [query, setQuery] = useState('')
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)

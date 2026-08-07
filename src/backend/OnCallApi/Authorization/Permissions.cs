@@ -106,4 +106,15 @@ public static class Permissions
             .Where(IsKnownPermission)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+
+    /// <summary>
+    /// Parses a permission CSV to ONLY the permissions an administrator is allowed to
+    /// assign to another user (the <see cref="AssignablePermissions"/> allow-list).
+    /// Admin-only permissions (Admin.Full, Admin.Scoped, Tenant.Manage) are never
+    /// returned, so a grant can never silently promote a user to super-admin.
+    /// </summary>
+    public static string[] ParseAssignablePermissionCsv(string? csv) =>
+        ParsePermissionCsv(csv)
+            .Where(AssignablePermissions.Contains)
+            .ToArray();
 }
