@@ -91,18 +91,22 @@ public class AdSyncBackgroundService : BackgroundService
                 }
             }
 
-            // Mark users not in AD as inactive
+            // Mark users not in AD as inactive. Employees with a synthetic CSV-import id
+            // (csv-import-*) were created manually (CSV/onboarding) and are NOT AD-managed,
+            // so they must never be deactivated by AD sync — otherwise every CSV import
+            // would disappear 15 minutes later.
             var activeUsers = await db.Employees
                 .Where(e => e.IsActive)
                 .ToListAsync(ct);
 
             foreach (var active in activeUsers)
             {
-                if (!string.IsNullOrEmpty(active.AzureAdObjectId) && !adObjectIds.Contains(active.AzureAdObjectId))
-                {
-                    active.IsActive = false;
-                    active.UpdatedAt = DateTime.UtcNow;
-                }
+                if (string.IsNullOrEmpty(active.AzureAdObjectId)) continue;
+                if (active.AzureAdObjectId.StartsWith("csv-import-", StringComparison.OrdinalIgnoreCase)) continue;
+                if (adObjectIds.Contains(active.AzureAdObjectId)) continue;
+
+                active.IsActive = false;
+                active.UpdatedAt = DateTime.UtcNow;
             }
 
             await db.SaveChangesAsync(ct);
