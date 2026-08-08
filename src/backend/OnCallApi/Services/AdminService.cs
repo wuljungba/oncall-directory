@@ -147,6 +147,7 @@ public class AdminService : IAdminService
             Certifications = JsonSerializer.Serialize(request.Certifications ?? new List<string>()),
             Languages = JsonSerializer.Serialize(request.Languages ?? new List<string>()),
             IsActive = true,
+            Source = "Local",
             Presence = "unknown",
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,

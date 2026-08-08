@@ -591,6 +591,12 @@ using (var scope = app.Services.CreateScope())
                 CREATE INDEX IX_PublicShares_TenantId ON dbo.PublicShares (TenantId);
             END;
             """,
+            // Employees.Source (AD vs locally-managed origin). Added later than the base
+            // schema — backport idempotently on existing databases without a migration.
+            """
+            IF COL_LENGTH(N'dbo.Employees', N'Source') IS NULL
+                ALTER TABLE dbo.Employees ADD Source nvarchar(64) NULL;
+            """,
         })
         {
             try

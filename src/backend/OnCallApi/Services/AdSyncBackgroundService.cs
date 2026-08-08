@@ -82,27 +82,30 @@ public class AdSyncBackgroundService : BackgroundService
                     existing.OfficePhone = user.OfficePhone;
                     existing.MobilePhone = user.MobilePhone;
                     existing.OfficeLocation = user.OfficeLocation;
+                    existing.Source = "Ad";
                     existing.LastSyncedAt = DateTime.UtcNow;
                 }
                 else
                 {
+                    user.Source = "Ad";
                     user.LastSyncedAt = DateTime.UtcNow;
                     db.Employees.Add(user);
                 }
             }
 
-            // Mark users not in AD as inactive. Employees with a synthetic CSV-import id
-            // (csv-import-*) were created manually (CSV/onboarding) and are NOT AD-managed,
-            // so they must never be deactivated by AD sync — otherwise every CSV import
-            // would disappear 15 minutes later.
+            // Deactivate AD-managed employees that disappeared from AD.
+            //
+            // Only records explicitly marked Source="Ad" (i.e. users this AD sync has itself
+            // created/confirmed) are eligible. Locally-created records — CSV imports, manual
+            // adds, and synthetic csv-import-* ids — are never deactivated by AD sync, no
+            // matter what value their AzureAdObjectId happens to carry. This is what keeps a
+            // CSV import from silently vanishing 15 minutes later.
             var activeUsers = await db.Employees
-                .Where(e => e.IsActive)
+                .Where(e => e.IsActive && e.Source == "Ad")
                 .ToListAsync(ct);
 
             foreach (var active in activeUsers)
             {
-                if (string.IsNullOrEmpty(active.AzureAdObjectId)) continue;
-                if (active.AzureAdObjectId.StartsWith("csv-import-", StringComparison.OrdinalIgnoreCase)) continue;
                 if (adObjectIds.Contains(active.AzureAdObjectId)) continue;
 
                 active.IsActive = false;

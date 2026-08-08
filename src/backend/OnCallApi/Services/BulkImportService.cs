@@ -82,6 +82,7 @@ public class BulkImportService
                         OfficeLocation = row.OfficeLocation,
                         DepartmentId = row.DepartmentId,
                         TenantId = tenantId,
+                        Source = "Local",
                         LastSyncedAt = DateTime.UtcNow,
                     });
                     _logger.LogDebug("Created employee {EmployeeName}", row.AzureAdObjectId);

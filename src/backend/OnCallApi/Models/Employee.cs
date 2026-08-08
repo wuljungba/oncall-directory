@@ -67,6 +67,15 @@ public class Employee
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Record origin. "Ad" = created/confirmed by the Azure AD sync (and therefore
+    /// eligible for AD-driven deactivation). Any other value ("Local", "CsvImport",
+    /// or empty) = a locally/CSV-managed account that the AD sync must NEVER
+    /// deactivate, regardless of what its <see cref="AzureAdObjectId"/> looks like.
+    /// </summary>
+    [MaxLength(64)]
+    public string Source { get; set; } = "";
+
     // Navigation properties
     public ICollection<Employee> DirectReports { get; set; } = new List<Employee>();
     public ICollection<Shift> Shifts { get; set; } = new List<Shift>();
