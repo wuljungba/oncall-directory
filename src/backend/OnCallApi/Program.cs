@@ -593,9 +593,18 @@ using (var scope = app.Services.CreateScope())
             """,
             // Employees.Source (AD vs locally-managed origin). Added later than the base
             // schema — backport idempotently on existing databases without a migration.
+            // NOT NULL with a default: the model reads it as a non-nullable string, so a
+            // nullable column with NULL rows crashes every SELECT ("Data is Null").
             """
             IF COL_LENGTH(N'dbo.Employees', N'Source') IS NULL
-                ALTER TABLE dbo.Employees ADD Source nvarchar(64) NULL;
+                ALTER TABLE dbo.Employees ADD Source nvarchar(64) NOT NULL CONSTRAINT DF_Employees_Source DEFAULT N'';
+            ELSE
+            BEGIN
+                UPDATE dbo.Employees SET Source = N'' WHERE Source IS NULL;
+                IF EXISTS (SELECT 1 FROM sys.columns
+                           WHERE object_id = OBJECT_ID(N'dbo.Employees') AND name = N'Source' AND is_nullable = 1)
+                    ALTER TABLE dbo.Employees ALTER COLUMN Source nvarchar(64) NOT NULL;
+            END;
             """,
         })
         {
