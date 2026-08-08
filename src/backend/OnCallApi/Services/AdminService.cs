@@ -269,6 +269,42 @@ public class AdminService : IAdminService
         await _db.SaveChangesAsync();
     }
 
+    public async Task DeleteEmployeeAsync(Guid id)
+    {
+        var employee = await _db.Employees.FindAsync(id)
+            ?? throw new KeyNotFoundException($"Employee {id} not found.");
+
+        // Ensure sub-admin can only delete employees in their tenant
+        if (!_tenantContext.IsSuperAdmin(CurrentUser!))
+        {
+            var tenantIds = await _tenantContext.GetAuthorizedTenantIdsAsync(CurrentUser!);
+            if (!employee.TenantId.HasValue || !tenantIds.Contains(employee.TenantId.Value))
+                throw new KeyNotFoundException($"Employee {id} not found.");
+        }
+
+        // Detach any direct reports so the manager link doesn't block the delete.
+        var reports = await _db.Employees.Where(r => r.ManagerId == id).ToListAsync();
+        foreach (var report in reports)
+        {
+            report.ManagerId = null;
+            report.UpdatedAt = DateTime.UtcNow;
+        }
+
+        _db.Employees.Remove(employee);
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            // References from schedule/time-off/phone-tree rows remain — refuse to corrupt
+            // history rather than silently orphaning it.
+            throw new InvalidOperationException(
+                "This employee is referenced by schedule, time-off, or phone-tree history " +
+                "and cannot be permanently deleted. Deactivate the account instead.");
+        }
+    }
+
     public async Task<List<Employee>> GetDirectReportsAsync(Guid managerId)
     {
         var query = _db.Employees

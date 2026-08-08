@@ -114,6 +114,28 @@ public class AdminController : ControllerBase
         }
     }
 
+    /// <summary>Permanently delete an employee account (tenant-guarded). Fails with a
+    /// conflict if the employee is still referenced by schedule/time-off/phone-tree rows.</summary>
+    [HttpDelete("employees/{id}/hard-delete")]
+    [Authorize(Policy = "RequireDirectoryWrite")]
+    public async Task<ActionResult> DeleteEmployee(Guid id)
+    {
+        try
+        {
+            await _adminService.DeleteEmployeeAsync(id);
+            await _hub.Clients.All.SendAsync("EmployeeDeleted", new { id });
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+    }
+
     /// <summary>Get direct reports for a manager.</summary>
     [HttpGet("employees/{id}/direct-reports")]
     [Authorize(Policy = "RequireDirectoryRead")]

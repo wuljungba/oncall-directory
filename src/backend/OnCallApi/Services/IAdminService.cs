@@ -11,6 +11,7 @@ public interface IAdminService
     Task<Employee> UpdateEmployeeAsync(Guid id, UpdateEmployeeRequest request);
     Task DeactivateEmployeeAsync(Guid id);
     Task ReactivateEmployeeAsync(Guid id);
+    Task DeleteEmployeeAsync(Guid id);
     Task<List<Employee>> GetDirectReportsAsync(Guid managerId);
 
     // ── Departments (Sub-accounts) ──

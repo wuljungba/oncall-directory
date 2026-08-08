@@ -53,6 +53,15 @@ export default function DirectoryPage() {
     setLoading(false)
   }
 
+  // Refetch the full directory. Called after an import closes so newly-imported
+  // employees appear without a manual page refresh.
+  async function reloadEmployees() {
+    try {
+      const data = await directoryApi.search('')
+      setEmployees(data)
+    } catch { /* ignore */ }
+  }
+
   function handleDownloadTemplate() {
     const headers = [
       'azureAdObjectId', 'firstName', 'lastName', 'email', 'title',
@@ -330,7 +339,7 @@ export default function DirectoryPage() {
       {/* Import Modal */}
       <ImportModal
         isOpen={showImport}
-        onClose={() => setShowImport(false)}
+        onClose={() => { setShowImport(false); reloadEmployees() }}
         title="Import Employees"
         description="Upload a CSV file with employee data. Columns: azureAdObjectId (optional, leave blank for manual accounts), firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId. Phone numbers must be in E.164 format (e.g. +12025551234)."
         extra={canPickTenant ? (

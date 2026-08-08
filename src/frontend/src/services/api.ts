@@ -433,6 +433,8 @@ export const adminApi = {
     fetchApi<void>(`/admin/employees/${id}`, { method: 'DELETE' }),
   reactivateEmployee: (id: string) =>
     fetchApi<void>(`/admin/employees/${id}/reactivate`, { method: 'POST' }),
+  hardDeleteEmployee: (id: string) =>
+    fetchApi<void>(`/admin/employees/${id}/hard-delete`, { method: 'DELETE' }),
   getDirectReports: (id: string) =>
     fetchApi<Employee[]>(`/admin/employees/${id}/direct-reports`),
 

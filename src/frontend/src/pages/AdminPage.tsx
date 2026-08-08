@@ -308,6 +308,20 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
     } catch { setError('Failed to update employee status.') }
   }
 
+  async function handleDeleteEmployee(emp: Employee) {
+    const ok = window.confirm(
+      `Permanently delete ${emp.firstName} ${emp.lastName} (${emp.email})?\n\nThis cannot be undone. If they're referenced by schedules, time-off, or phone trees, deletion will be blocked.`
+    )
+    if (!ok) return
+    try {
+      setError(null)
+      await adminApi.hardDeleteEmployee(emp.id)
+      setEmployees(prev => prev.filter(e => e.id !== emp.id))
+    } catch {
+      setError('Delete blocked — this employee is referenced by schedule, time-off, or phone-tree history. Deactivate instead.')
+    }
+  }
+
   if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
 
   return (
@@ -392,6 +406,13 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
                         ? <Trash2 className="w-4 h-4 text-gray-400 hover:text-red-400" />
                         : <CheckCircle className="w-4 h-4 text-gray-400 hover:text-green-400" />
                       }
+                    </button>
+                    <button
+                      onClick={() => handleDeleteEmployee(emp)}
+                      className="p-1.5 hover:bg-gray-800 rounded-lg transition-colors"
+                      title="Delete permanently"
+                    >
+                      <X className="w-4 h-4 text-gray-400 hover:text-red-400" />
                     </button>
                   </div>
                 </div>
