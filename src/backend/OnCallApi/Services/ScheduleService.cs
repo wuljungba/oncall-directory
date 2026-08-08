@@ -174,6 +174,7 @@ public class ScheduleService : IScheduleService
             return new List<TimeOff>();
 
         return await _db.TimeOffs
+            .Include(t => t.ApprovedBy)
             .Where(t => t.EmployeeId == employee.Id)
             .OrderByDescending(t => t.CreatedAt)
             .ToListAsync();
@@ -182,7 +183,21 @@ public class ScheduleService : IScheduleService
     public async Task<List<TimeOff>> GetTimeOffAsync(Guid employeeId)
     {
         return await _db.TimeOffs
+            .Include(t => t.ApprovedBy)
             .Where(t => t.EmployeeId == employeeId)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync();
+    }
+
+    /// <summary>Pending time-off requested by an employee whose manager is the given employee.</summary>
+    public async Task<List<TimeOff>> GetPendingTimeOffForManagerAsync(Guid managerEmployeeId)
+    {
+        return await _db.TimeOffs
+            .Include(t => t.Employee)
+            .Include(t => t.ApprovedBy)
+            .Where(t => t.Status == "pending"
+                && t.Employee != null
+                && t.Employee.ManagerId == managerEmployeeId)
             .OrderByDescending(t => t.CreatedAt)
             .ToListAsync();
     }
@@ -327,7 +342,7 @@ public class ScheduleService : IScheduleService
         _logger.LogInformation("Cancelled time-off {Id} for employee {EmpId}", id, requesterId);
     }
 
-    public async Task<TimeOff> ApproveTimeOffAsync(int id, Guid approvedById)
+    public async Task<TimeOff> ApproveTimeOffAsync(int id, Guid? approvedById, string? reason = null)
     {
         var timeOff = await _db.TimeOffs.FindAsync(id)
             ?? throw new KeyNotFoundException($"Time-off {id} not found");
@@ -337,14 +352,16 @@ public class ScheduleService : IScheduleService
 
         timeOff.Status = "approved";
         timeOff.ApprovedById = approvedById;
+        timeOff.ApprovalReason = reason;
         timeOff.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Approved time-off {Id} by approver {ApproverId}", id, approvedById);
+        _logger.LogInformation("Approved time-off {Id} by approver {ApproverId} (reason: {Reason})",
+            id, approvedById, reason ?? "-");
         return timeOff;
     }
 
-    public async Task<TimeOff> DenyTimeOffAsync(int id, Guid approvedById)
+    public async Task<TimeOff> DenyTimeOffAsync(int id, Guid? approvedById, string? reason = null)
     {
         var timeOff = await _db.TimeOffs.FindAsync(id)
             ?? throw new KeyNotFoundException($"Time-off {id} not found");
@@ -354,10 +371,12 @@ public class ScheduleService : IScheduleService
 
         timeOff.Status = "denied";
         timeOff.ApprovedById = approvedById;
+        timeOff.ApprovalReason = reason;
         timeOff.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Denied time-off {Id} by approver {ApproverId}", id, approvedById);
+        _logger.LogInformation("Denied time-off {Id} by approver {ApproverId} reason: {Reason}",
+            id, approvedById, reason ?? "-");
         return timeOff;
     }
 
@@ -365,6 +384,7 @@ public class ScheduleService : IScheduleService
     {
         var query = _db.TimeOffs
             .Include(t => t.Employee)
+            .Include(t => t.ApprovedBy)
             .AsQueryable();
 
         if (!string.IsNullOrEmpty(statusFilter))

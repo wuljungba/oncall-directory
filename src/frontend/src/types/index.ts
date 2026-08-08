@@ -110,6 +110,11 @@ export interface TimeOff {
   type: 'pto' | 'cme' | 'holiday' | 'sick' | 'personal' | 'bereavement' | 'military' | 'jury_duty' | 'unpaid'
   status: 'pending' | 'approved' | 'denied'
   notes?: string
+  approvedById?: string | null
+  approvedBy?: Employee | null
+  approvalReason?: string | null
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface PhoneTree {
@@ -143,6 +148,7 @@ export interface DutyHourRule {
   maxConsecutiveDays: number
   applicableRoles?: string
   departmentId?: number
+  severity?: number
   isEnabled: boolean
 }
 

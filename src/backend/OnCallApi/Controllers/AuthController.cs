@@ -47,6 +47,7 @@ public class AuthController : ControllerBase
             Permissions = permissions,
             TenantIds = tenantIds,
             TenantRoles = tenantRoles,
+            EmployeeId = await _tenantContext.GetCurrentEmployeeIdAsync(User),
         });
     }
 }
@@ -60,4 +61,7 @@ public record CurrentUserResponse
     public List<string> Permissions { get; init; } = [];
     public List<int> TenantIds { get; init; } = [];
     public Dictionary<string, string> TenantRoles { get; init; } = [];
+
+    /// <summary>The authenticated user's internal Employee.Id, when a profile is linked.</summary>
+    public Guid? EmployeeId { get; init; }
 }

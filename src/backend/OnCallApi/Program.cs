@@ -410,6 +410,8 @@ builder.Services.AddControllers()
     {
         // Prevent circular reference errors from navigation properties (Employee -> Manager -> Employee, etc.)
         options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        // Always emit DateTime as a UTC instant ('Z') so browsers parse real local time.
+        options.JsonSerializerOptions.Converters.Add(new OnCallApi.Json.UtcDateTimeJsonConverter());
     });
 
 var app = builder.Build();
@@ -606,6 +608,18 @@ using (var scope = app.Services.CreateScope())
                     ALTER TABLE dbo.Employees ALTER COLUMN Source nvarchar(64) NOT NULL;
             END;
             """,
+            // TimeOffs.ApprovalReason (approver's optional reason). Added later than the base
+            // schema — backport idempotently on existing databases without a migration.
+            """
+            IF COL_LENGTH(N'dbo.TimeOffs', N'ApprovalReason') IS NULL
+                ALTER TABLE dbo.TimeOffs ADD ApprovalReason nvarchar(500) NULL;
+            """,
+            // DutyHourRules.Severity (1 = warning, 2 = breach). Added later than the base
+            // schema — backport idempotently on existing databases without a migration.
+            """
+            IF COL_LENGTH(N'dbo.DutyHourRules', N'Severity') IS NULL
+                ALTER TABLE dbo.DutyHourRules ADD Severity int NOT NULL CONSTRAINT DF_DutyHourRules_Severity DEFAULT 2;
+            """,
         })
         {
             try
@@ -620,6 +634,47 @@ using (var scope = app.Services.CreateScope())
                     .LogWarning(ex, "Could not ensure table exists on startup (may already exist).");
             }
         }
+        }
+
+        // ── Default duty-hour rules (idempotent — only seeds when the table is empty). ──
+        // Without any rules the Compliance page is trivially "all clear"; these make it
+        // meaningful out of the box. Rules remain editable via the admin API.
+        // Best-effort: on a stale local/test SQLite DB (created before a schema change)
+        // EnsureCreated can't add new columns, so a seed failure must not crash startup.
+        try
+        {
+            if (!await db.DutyHourRules.AnyAsync())
+            {
+                db.DutyHourRules.AddRange(
+                    new OnCallApi.Models.DutyHourRule
+                    {
+                        Name = "80-hour weekly limit", MaxHoursPerPeriod = 80, PeriodDays = 7,
+                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7, Severity = 2,
+                    },
+                    new OnCallApi.Models.DutyHourRule
+                    {
+                        Name = "24-hour shift cap", MaxHoursPerPeriod = 80, PeriodDays = 7,
+                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7, Severity = 2,
+                    },
+                    new OnCallApi.Models.DutyHourRule
+                    {
+                        Name = "10-hour rest between shifts", MaxHoursPerPeriod = 80, PeriodDays = 7,
+                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7, Severity = 2,
+                    },
+                    new OnCallApi.Models.DutyHourRule
+                    {
+                        Name = "12-hour shift warning", MaxHoursPerPeriod = 80, PeriodDays = 7,
+                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 12, MaxConsecutiveDays = 7, Severity = 1,
+                    });
+                await db.SaveChangesAsync();
+                scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                    .LogInformation("Seeded 4 default duty-hour rules on startup");
+            }
+        }
+        catch (Exception ex)
+        {
+            scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                .LogWarning(ex, "Could not seed default duty-hour rules (stale schema?). Continuing.");
         }
     }
 }

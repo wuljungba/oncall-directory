@@ -17,6 +17,8 @@ public class TimeOff
     public string? Notes { get; set; }
     public Guid? ApprovedById { get; set; }
     public Employee? ApprovedBy { get; set; }
+    [MaxLength(500)]
+    public string? ApprovalReason { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

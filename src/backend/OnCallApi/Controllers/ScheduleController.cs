@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
+using OnCallApi.Authorization;
 using OnCallApi.Data;
 using OnCallApi.Hubs;
 using OnCallApi.Models;
@@ -17,17 +18,20 @@ public class ScheduleController : ControllerBase
     private readonly IScheduleService _scheduleService;
     private readonly IHubContext<OnCallNotificationHub> _hub;
     private readonly AppDbContext _db;
+    private readonly ITenantContextService _tenantContext;
     private readonly ILogger<ScheduleController> _logger;
 
     public ScheduleController(
         IScheduleService scheduleService,
         IHubContext<OnCallNotificationHub> hub,
         AppDbContext db,
+        ITenantContextService tenantContext,
         ILogger<ScheduleController> logger)
     {
         _scheduleService = scheduleService;
         _hub = hub;
         _db = db;
+        _tenantContext = tenantContext;
         _logger = logger;
     }
 
@@ -184,10 +188,17 @@ public class ScheduleController : ControllerBase
         return await _scheduleService.GetTimeOffAsync(employeeId);
     }
 
-    /// <summary>Request time off.</summary>
+    /// <summary>Request time off — bound to the authenticated user's employee profile.</summary>
     [HttpPost("time-off")]
     public async Task<ActionResult<TimeOff>> RequestTimeOff(TimeOff timeOff)
     {
+        var employeeId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        if (!employeeId.HasValue)
+            return BadRequest(new { error = "No employee profile is linked to your account. Contact an administrator." });
+
+        // Never trust a client-supplied EmployeeId.
+        timeOff.EmployeeId = employeeId.Value;
+
         var created = await _scheduleService.RequestTimeOffAsync(timeOff);
         await _hub.Clients.All.SendAsync("TimeOffUpdated", created);
         return CreatedAtAction(nameof(GetTimeOff), new { employeeId = timeOff.EmployeeId }, created);
@@ -199,8 +210,9 @@ public class ScheduleController : ControllerBase
     {
         try
         {
-            var requesterId = GetCurrentUserId();
-            var updated = await _scheduleService.UpdateTimeOffAsync(id, request, requesterId);
+            var requesterId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+            if (!requesterId.HasValue) return BadRequest(new { error = "No employee profile is linked to your account." });
+            var updated = await _scheduleService.UpdateTimeOffAsync(id, request, requesterId.Value);
             await _hub.Clients.All.SendAsync("TimeOffUpdated", updated);
             return Ok(updated);
         }
@@ -214,8 +226,9 @@ public class ScheduleController : ControllerBase
     {
         try
         {
-            var requesterId = GetCurrentUserId();
-            await _scheduleService.CancelTimeOffAsync(id, requesterId);
+            var requesterId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+            if (!requesterId.HasValue) return BadRequest(new { error = "No employee profile is linked to your account." });
+            await _scheduleService.CancelTimeOffAsync(id, requesterId.Value);
             await _hub.Clients.All.SendAsync("TimeOffUpdated", new { id, action = "cancelled" });
             return NoContent();
         }
@@ -223,15 +236,18 @@ public class ScheduleController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
     }
 
-    /// <summary>Approve a pending time-off request (admin only).</summary>
+    /// <summary>
+    /// Approve a pending time-off request. Allowed for the requester's manager, plus
+    /// any super admin or scoped tenant admin (admin fallback).
+    /// </summary>
     [HttpPost("time-off/{id}/approve")]
-    [Authorize(Policy = "RequireAdminFull")]
-    public async Task<ActionResult<TimeOff>> ApproveTimeOff(int id)
+    public async Task<ActionResult<TimeOff>> ApproveTimeOff(int id, [FromBody] TimeOffApprovalRequest? request = null)
     {
         try
         {
-            var approvedById = GetCurrentUserId();
-            var approved = await _scheduleService.ApproveTimeOffAsync(id, approvedById);
+            var (allowed, approverId) = await ResolveApproverAsync(id);
+            if (!allowed) return Forbid();
+            var approved = await _scheduleService.ApproveTimeOffAsync(id, approverId, request?.Reason);
             await _hub.Clients.All.SendAsync("TimeOffUpdated", approved);
             return Ok(approved);
         }
@@ -239,20 +255,32 @@ public class ScheduleController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
     }
 
-    /// <summary>Deny a pending time-off request (admin only).</summary>
+    /// <summary>
+    /// Deny a pending time-off request. Allowed for the requester's manager, plus
+    /// any super admin or scoped tenant admin (admin fallback).
+    /// </summary>
     [HttpPost("time-off/{id}/deny")]
-    [Authorize(Policy = "RequireAdminFull")]
-    public async Task<ActionResult<TimeOff>> DenyTimeOff(int id)
+    public async Task<ActionResult<TimeOff>> DenyTimeOff(int id, [FromBody] TimeOffApprovalRequest? request = null)
     {
         try
         {
-            var approvedById = GetCurrentUserId();
-            var denied = await _scheduleService.DenyTimeOffAsync(id, approvedById);
+            var (allowed, approverId) = await ResolveApproverAsync(id);
+            if (!allowed) return Forbid();
+            var denied = await _scheduleService.DenyTimeOffAsync(id, approverId, request?.Reason);
             await _hub.Clients.All.SendAsync("TimeOffUpdated", denied);
             return Ok(denied);
         }
         catch (KeyNotFoundException) { return NotFound(); }
         catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+    }
+
+    /// <summary>Pending time-off requested by the current user's direct reports (manager view).</summary>
+    [HttpGet("time-off/review")]
+    public async Task<ActionResult<List<TimeOff>>> GetTimeOffReview()
+    {
+        var managerId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        if (!managerId.HasValue) return Forbid();
+        return await _scheduleService.GetPendingTimeOffForManagerAsync(managerId.Value);
     }
 
     /// <summary>Get all time-off requests (admin view with optional status filter).</summary>
@@ -263,12 +291,29 @@ public class ScheduleController : ControllerBase
         return await _scheduleService.GetAllTimeOffAsync(status);
     }
 
-    private Guid GetCurrentUserId()
+    /// <summary>
+    /// Resolves who may approve/deny a request: the requester's manager, or any super
+    /// admin / scoped tenant admin (admin fallback). Returns the approver's internal
+    /// Employee.Id (null when a super admin has no linked profile).
+    /// </summary>
+    private async Task<(bool Allowed, Guid? ApproverId)> ResolveApproverAsync(int id)
     {
-        var userIdClaim = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
-            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-        if (userIdClaim == null || !Guid.TryParse(userIdClaim, out var userId))
-            throw new UnauthorizedAccessException("User identity not found in token.");
-        return userId;
+        var timeOff = await _db.TimeOffs
+            .Include(t => t.Employee)
+            .FirstOrDefaultAsync(t => t.Id == id);
+        if (timeOff == null) throw new KeyNotFoundException($"Time-off {id} not found");
+
+        if (_tenantContext.IsSuperAdmin(User)
+            || User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped))
+        {
+            // Admin fallback — record the approver's profile id if they have one.
+            return (true, await _tenantContext.GetCurrentEmployeeIdAsync(User));
+        }
+
+        var approverId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        if (!approverId.HasValue) return (false, null);
+
+        var isManager = timeOff.Employee != null && timeOff.Employee.ManagerId == approverId.Value;
+        return (isManager, isManager ? approverId.Value : null);
     }
 }

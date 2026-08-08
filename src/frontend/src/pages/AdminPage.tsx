@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
+import { formatDateOnly } from '@/utils/date'
 import type { Employee, Department, TimeOff, Tenant, TenantAdmin } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
 import PermissionsSection from './admin/PermissionsSection'
@@ -1169,20 +1170,24 @@ function TimeOffApprovalSection() {
     }
   }
 
-  async function handleApprove(id: number) {
+  async function handleApprove(req: TimeOff) {
+    const who = req.employee ? `${req.employee.firstName} ${req.employee.lastName}` : 'this request'
+    const reason = window.prompt(`${who} — approve (optional reason):`, '') ?? ''
     try {
       setError(null)
-      await scheduleApi.approveTimeOff(id)
+      await scheduleApi.approveTimeOff(req.id, reason || undefined)
       await loadRequests()
     } catch {
       setError('Failed to approve request.')
     }
   }
 
-  async function handleDeny(id: number) {
+  async function handleDeny(req: TimeOff) {
+    const who = req.employee ? `${req.employee.firstName} ${req.employee.lastName}` : 'this request'
+    const reason = window.prompt(`${who} — deny (optional reason):`, '') ?? ''
     try {
       setError(null)
-      await scheduleApi.denyTimeOff(id)
+      await scheduleApi.denyTimeOff(req.id, reason || undefined)
       await loadRequests()
     } catch {
       setError('Failed to deny request.')
@@ -1239,21 +1244,28 @@ function TimeOffApprovalSection() {
                     <span className="text-xs text-gray-500 ml-2 font-normal">{typeLabels[req.type] || req.type}</span>
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {new Date(req.startDate).toLocaleDateString()} — {new Date(req.endDate).toLocaleDateString()}
+                    {formatDateOnly(req.startDate)} — {formatDateOnly(req.endDate)}
                   </p>
                   {req.notes && <p className="text-xs text-gray-600 mt-1">{req.notes}</p>}
+                  {req.status !== 'pending' && (
+                    <p className="text-xs text-gray-600 mt-1">
+                      {req.status === 'approved' ? 'Approved' : 'Denied'}
+                      {req.approvedBy ? ` by ${req.approvedBy.firstName} ${req.approvedBy.lastName}` : ''}
+                      {req.approvalReason ? ` — "${req.approvalReason}"` : ''}
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {req.status === 'pending' && (
                     <>
                       <button
-                        onClick={() => handleApprove(req.id)}
+                        onClick={() => handleApprove(req)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-green-600/20 hover:bg-green-600/30 text-green-500 rounded-lg text-xs transition-colors"
                       >
                         <CheckCircle className="w-3.5 h-3.5" /> Approve
                       </button>
                       <button
-                        onClick={() => handleDeny(req.id)}
+                        onClick={() => handleDeny(req)}
                         className="flex items-center gap-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-500 rounded-lg text-xs transition-colors"
                       >
                         <X className="w-3.5 h-3.5" /> Deny

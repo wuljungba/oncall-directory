@@ -27,6 +27,9 @@ public class DutyHourRule
     /// <summary>Maximum consecutive days worked (e.g., 7).</summary>
     public int MaxConsecutiveDays { get; set; } = 7;
 
+    /// <summary>Severity of a violation of this rule: 1 = warning, 2 = breach.</summary>
+    public int Severity { get; set; } = 2;
+
     /// <summary>JSON array of clinical roles this rule applies to (null = all).</summary>
     [MaxLength(1000)]
     public string? ApplicableRoles { get; set; }

@@ -159,10 +159,18 @@ export const scheduleApi = {
     }),
   cancelTimeOff: (id: number) =>
     fetchApi<void>(`/schedule/time-off/${id}`, { method: 'DELETE' }),
-  approveTimeOff: (id: number) =>
-    fetchApi<TimeOff>(`/schedule/time-off/${id}/approve`, { method: 'POST' }),
-  denyTimeOff: (id: number) =>
-    fetchApi<TimeOff>(`/schedule/time-off/${id}/deny`, { method: 'POST' }),
+  approveTimeOff: (id: number, reason?: string) =>
+    fetchApi<TimeOff>(`/schedule/time-off/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? '' }),
+    }),
+  denyTimeOff: (id: number, reason?: string) =>
+    fetchApi<TimeOff>(`/schedule/time-off/${id}/deny`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason ?? '' }),
+    }),
+  getTimeOffReview: () =>
+    fetchApi<TimeOff[]>('/schedule/time-off/review'),
   getAllTimeOff: (status?: string) =>
     fetchApi<TimeOff[]>(`/schedule/time-off/all${status ? `?status=${status}` : ''}`),
 }
@@ -394,6 +402,7 @@ export interface CurrentUserResponse {
   permissions: string[]
   tenantIds: number[]
   tenantRoles: Record<string, string>
+  employeeId?: string | null
 }
 
 // ── Tenant Management ──

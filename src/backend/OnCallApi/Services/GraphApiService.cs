@@ -139,13 +139,27 @@ public class GraphApiService : IGraphApiService
         try
         {
             var presence = await GetClient().Users[azureAdObjectId].Presence.GetAsync(cancellationToken: ct);
-            return presence?.Availability ?? "unknown";
+            return NormalizePresence(presence?.Availability);
         }
         catch
         {
             return "unknown";
         }
     }
+
+    /// <summary>
+    /// Normalizes Graph presence to the canonical lowercase set the frontend expects
+    /// ('available' | 'busy' | 'dnd' | 'offline' | 'unknown'). Graph returns capitalized
+    /// values and its own convenience states ("DoNotDisturb", "OutOfOffice", "BeRightBack",
+    /// "PresenceUnknown"), which the UI previously never matched.
+    /// </summary>
+    private static string NormalizePresence(string? raw) => (raw?.ToLowerInvariant()) switch
+    {
+        "available" => "available",
+        "busy" or "dnd" => "dnd",
+        "offline" or "presenceunknown" or "away" or "berightback" or "outofoffice" => "offline",
+        _ => "unknown",
+    };
 
     public async Task SendTeamsNotificationAsync(string userId, string title, string message, CancellationToken ct = default)
     {

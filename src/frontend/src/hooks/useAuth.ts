@@ -27,6 +27,9 @@ interface AuthState {
   canAdminScoped: boolean
   canTenantManage: boolean
 
+  // Linked profile
+  employeeId: string | null
+
   // Tenant context
   tenantIds: number[]
   tenantRoles: Record<string, string>
@@ -51,6 +54,7 @@ export function useAuth(): AuthState {
   const [permissions, setPermissions] = useState<string[]>(DEV_AUTH ? ALL_PERMISSIONS : [])
   const [tenantIds, setTenantIds] = useState<number[]>([])
   const [tenantRoles, setTenantRoles] = useState<Record<string, string>>({})
+  const [employeeId, setEmployeeId] = useState<string | null>(null)
   const [activeTenantId, setActiveTenantId] = useState<number | null>(() => {
     const stored = sessionStorage.getItem('activeTenantId')
     return stored ? Number(stored) : null
@@ -66,10 +70,11 @@ export function useAuth(): AuthState {
   }, [])
 
   // Shared handler for processing auth/me response
-  const handleAuthResponse = useCallback((res: { permissions: string[]; tenantIds?: number[]; tenantRoles?: Record<string, string> }) => {
+  const handleAuthResponse = useCallback((res: { permissions: string[]; tenantIds?: number[]; tenantRoles?: Record<string, string>; employeeId?: string | null }) => {
     setPermissions(res.permissions)
     if (res.tenantIds) setTenantIds(res.tenantIds)
     if (res.tenantRoles) setTenantRoles(res.tenantRoles)
+    setEmployeeId(res.employeeId ?? null)
 
     // Auto-set activeTenantId for scoped admins with only one tenant
     const hasScoped = res.permissions.includes('Admin.Scoped')
@@ -207,6 +212,7 @@ export function useAuth(): AuthState {
     canAdminFull: perms.includes('Admin.Full'),
     canAdminScoped: perms.includes('Admin.Scoped'),
     canTenantManage: perms.includes('Tenant.Manage'),
+    employeeId,
     tenantIds,
     tenantRoles,
     activeTenantId,

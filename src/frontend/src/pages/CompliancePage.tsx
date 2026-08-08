@@ -1,10 +1,20 @@
 import { useState, useEffect, useMemo } from 'react'
-import { AlertTriangle, CheckCircle, Clock, ShieldAlert, Download } from 'lucide-react'
+import { AlertTriangle, CheckCircle, Clock, ShieldAlert, Download, ShieldCheck } from 'lucide-react'
 import { complianceApi } from '@/services/api'
-import type { DutyHourViolation } from '@/types'
+import type { DutyHourRule, DutyHourViolation } from '@/types'
+
+function ruleSummary(r: DutyHourRule): string {
+  const parts: string[] = []
+  if (r.maxHoursPerPeriod > 0) parts.push(`${r.maxHoursPerPeriod}h / ${r.periodDays}d`)
+  if (r.maxShiftLengthHours > 0) parts.push(`${r.maxShiftLengthHours}h shift max`)
+  if (r.minHoursBetweenShifts > 0) parts.push(`${r.minHoursBetweenShifts}h rest`)
+  if (r.maxConsecutiveDays > 0) parts.push(`${r.maxConsecutiveDays}d consecutive max`)
+  return parts.join(' · ')
+}
 
 export default function CompliancePage() {
   const [violations, setViolations] = useState<DutyHourViolation[]>([])
+  const [rules, setRules] = useState<DutyHourRule[]>([])
   const [loading, setLoading] = useState(true)
   const [weeksBack, setWeeksBack] = useState(4)
 
@@ -17,8 +27,12 @@ export default function CompliancePage() {
       setLoading(true)
       const from = new Date(Date.now() - weeksBack * 7 * 24 * 60 * 60 * 1000).toISOString()
       const to = new Date().toISOString()
-      const data = await complianceApi.checkAll(from, to)
+      const [data, ruleData] = await Promise.all([
+        complianceApi.checkAll(from, to),
+        complianceApi.getRules(),
+      ])
       setViolations(data)
+      setRules(ruleData)
     } catch { /* ignore */ }
     finally { setLoading(false) }
   }
@@ -80,6 +94,30 @@ export default function CompliancePage() {
         </div>
       </div>
 
+      {/* Current Rules */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <ShieldCheck className="w-4 h-4 text-amber-500" />
+          <h2 className="font-medium">Duty-Hour Rules</h2>
+          <span className="text-xs text-gray-500 ml-auto">{rules.length} active</span>
+        </div>
+        {rules.length === 0 ? (
+          <p className="text-sm text-gray-500">No duty-hour rules configured.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {rules.map(r => (
+              <span
+                key={r.id}
+                className={`text-xs px-2.5 py-1 rounded-lg ${r.severity === 1 ? 'bg-yellow-600/15 text-yellow-400' : 'bg-gray-800 text-gray-300'}`}
+                title={ruleSummary(r)}
+              >
+                {r.name}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -88,7 +126,7 @@ export default function CompliancePage() {
               <p className="text-sm text-gray-500">Total Violations</p>
               <p className={`text-3xl font-bold mt-1 ${stats.total > 0 ? 'text-red-500' : 'text-green-500'}`}>{stats.total}</p>
             </div>
-            <ShieldAlert className="w-10 h-10 text-red-600/30" />
+            <ShieldAlertIcon />
           </div>
         </div>
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -149,7 +187,7 @@ export default function CompliancePage() {
           ) : violations.length === 0 ? (
             <div className="flex flex-col items-center py-12 text-gray-500">
               <CheckCircle className="w-12 h-12 mb-4 text-green-600/50" />
-              <p className="text-sm">All clear — no duty-hour violations</p>
+              <p className="text-sm">{rules.length === 0 ? 'No duty-hour rules configured yet' : 'All clear — no duty-hour violations'}</p>
             </div>
           ) : (
             <div className="space-y-2 max-h-[500px] overflow-y-auto">
@@ -159,9 +197,12 @@ export default function CompliancePage() {
                     <div className="flex items-start gap-3 min-w-0">
                       {v.severity >= 2 ? <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" /> : <Clock className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />}
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{v.employee?.firstName} {v.employee?.lastName}</p>
+                        <p className="text-sm font-medium truncate">
+                          {v.employee?.firstName} {v.employee?.lastName}
+                          <span className="text-xs text-gray-500 ml-2 font-normal">{v.rule?.name}</span>
+                        </p>
                         <p className="text-xs text-gray-400 mt-0.5">{v.description}</p>
-                        <p className="text-xs text-gray-600 mt-0.5">{new Date(v.violatedAt).toLocaleDateString()}{v.rule ? ` · ${v.rule.name}` : ''}</p>
+                        <p className="text-xs text-gray-600 mt-0.5">{new Date(v.violatedAt).toLocaleDateString()}</p>
                       </div>
                     </div>
                     <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${v.severity >= 2 ? 'bg-red-600/20 text-red-500' : 'bg-yellow-600/20 text-yellow-500'}`}>
@@ -176,4 +217,8 @@ export default function CompliancePage() {
       </div>
     </div>
   )
+}
+
+function ShieldAlertIcon() {
+  return <ShieldAlert className="w-10 h-10 text-red-600/30" />
 }

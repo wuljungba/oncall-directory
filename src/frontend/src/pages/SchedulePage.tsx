@@ -6,6 +6,7 @@ import {
 import { scheduleApi, departmentsApi, directoryApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useSignalR } from '@/hooks/useSignalR'
+import { formatTimeRange, formatDateOnly } from '@/utils/date'
 import type { Schedule, Shift, Department, Employee } from '@/types'
 
 export default function SchedulePage() {
@@ -457,7 +458,7 @@ export default function SchedulePage() {
                           <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] ${tierColor(s.tier)}`}>
                             {s.tier}
                           </span>
-                          {' '}until {new Date(s.endTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {' '}{formatTimeRange(s.startTime, s.endTime)}
                         </p>
                       </div>
                     </div>
@@ -901,7 +902,7 @@ function SwapModal({
           )}
 
           <div className="text-sm text-gray-400 bg-gray-800 rounded-lg p-3">
-            <p><span className="text-gray-500">Shift:</span> {shift.tier} — {new Date(shift.startTime).toLocaleDateString()} {new Date(shift.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+            <p><span className="text-gray-500">Shift:</span> {shift.tier} — {formatDateOnly(shift.startTime)} {formatTimeRange(shift.startTime, shift.endTime)}</p>
             {shift.employee && <p><span className="text-gray-500">Currently assigned:</span> {shift.employee.firstName} {shift.employee.lastName}</p>}
           </div>
 

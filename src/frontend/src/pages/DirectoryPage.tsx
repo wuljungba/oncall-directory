@@ -4,6 +4,7 @@ import { directoryApi, importApi, adminApi, departmentsApi, tenantsApi } from '@
 import { useAuth } from '@/hooks/useAuth'
 import ImportModal from '@/components/ImportModal'
 import { isValidE164 } from '@/utils/validation'
+import { presenceLabel } from '@/utils/presence'
 import type { Employee, Department, Tenant } from '@/types'
 
 export default function DirectoryPage() {
@@ -205,6 +206,7 @@ export default function DirectoryPage() {
                       </div>
                       <div
                         className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-gray-900 ${presenceColor(emp.presence)}`}
+                        title={presenceLabel(emp.presence)}
                       />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -275,6 +277,10 @@ export default function DirectoryPage() {
                 <div className="flex items-center gap-3 text-sm">
                   <Mail className="w-4 h-4 text-gray-500" />
                   <span>{selectedEmployee.email}</span>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <span className={`w-2 h-2 rounded-full flex-shrink-0 ${presenceColor(selectedEmployee.presence)}`} />
+                  <span>Presence · {presenceLabel(selectedEmployee.presence)}</span>
                 </div>
                 {selectedEmployee.officeLocation && (
                   <div className="flex items-center gap-3 text-sm">

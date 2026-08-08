@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { Calendar, Plus, Check, X, AlertTriangle, Edit3, Trash2 } from 'lucide-react'
+import { Calendar, Plus, Check, X, AlertTriangle, Edit3, Trash2, Users } from 'lucide-react'
 import { scheduleApi } from '@/services/api'
 import { useSignalR } from '@/hooks/useSignalR'
+import { formatDateOnly } from '@/utils/date'
 import type { TimeOff } from '@/types'
 
 type TimeOffType = TimeOff['type']
@@ -28,6 +29,8 @@ const TYPE_LABELS: Record<string, string> = {
 export default function TimeOffPage() {
   const [requests, setRequests] = useState<TimeOff[]>([])
   const [loading, setLoading] = useState(true)
+  const [teamRequests, setTeamRequests] = useState<TimeOff[]>([])
+  const [teamLoading, setTeamLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editingRequest, setEditingRequest] = useState<TimeOff | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -44,7 +47,21 @@ export default function TimeOffPage() {
 
   useEffect(() => {
     loadRequests()
+    loadTeamRequests()
   }, [])
+
+  async function loadTeamRequests() {
+    try {
+      setTeamLoading(true)
+      const data = await scheduleApi.getTimeOffReview()
+      setTeamRequests(data)
+    } catch {
+      // 403 when the caller has no manager profile — silently show no team requests.
+      setTeamRequests([])
+    } finally {
+      setTeamLoading(false)
+    }
+  }
 
   // Re-fetch on SignalR events
   useEffect(() => {
@@ -53,6 +70,7 @@ export default function TimeOffPage() {
     if (eventKey === prevEventRef.current) return
     prevEventRef.current = eventKey
     loadRequests()
+    loadTeamRequests()
   }, [lastEvent])
 
   async function loadRequests() {
@@ -141,6 +159,22 @@ export default function TimeOffPage() {
     } catch (err) {
       console.error('Failed to cancel time-off request:', err)
       setError('Failed to cancel request.')
+    }
+  }
+
+  async function handleTeamDecision(request: TimeOff, approve: boolean) {
+    const who = request.employee ? `${request.employee.firstName} ${request.employee.lastName}` : 'this employee'
+    const reason = window.prompt(`${who}'s request — ${approve ? 'approve' : 'deny'} (optional reason):`, '') ?? ''
+    setError(null)
+    try {
+      if (approve) {
+        await scheduleApi.approveTimeOff(request.id, reason || undefined)
+      } else {
+        await scheduleApi.denyTimeOff(request.id, reason || undefined)
+      }
+      await Promise.all([loadRequests(), loadTeamRequests()])
+    } catch {
+      setError(approve ? 'Failed to approve request.' : 'Failed to deny request.')
     }
   }
 
@@ -301,11 +335,18 @@ export default function TimeOffPage() {
                       {TYPE_LABELS[req.type] || req.type}
                     </p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {new Date(req.startDate).toLocaleDateString()} —{' '}
-                      {new Date(req.endDate).toLocaleDateString()}
+                      {formatDateOnly(req.startDate)} —{' '}
+                      {formatDateOnly(req.endDate)}
                     </p>
                     {req.notes && (
                       <p className="text-xs text-gray-600 mt-1">{req.notes}</p>
+                    )}
+                    {req.status !== 'pending' && (
+                      <p className="text-xs text-gray-600 mt-1">
+                        {req.status === 'approved' ? 'Approved' : 'Denied'}
+                        {req.approvedBy ? ` by ${req.approvedBy.firstName} ${req.approvedBy.lastName}` : ''}
+                        {req.approvalReason ? ` — "${req.approvalReason}"` : ''}
+                      </p>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
@@ -341,6 +382,47 @@ export default function TimeOffPage() {
           )}
         </div>
       </div>
+
+      {/* Team Requests — pending requests from the current user's direct reports */}
+      {!teamLoading && teamRequests.length > 0 && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl">
+          <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
+            <h2 className="font-medium flex items-center gap-2">
+              <Users className="w-4 h-4 text-amber-500" /> Team Requests (Pending)
+            </h2>
+            <span className="text-xs text-gray-500">{teamRequests.length} awaiting approval</span>
+          </div>
+          <div className="divide-y divide-gray-800">
+            {teamRequests.map(req => (
+              <div key={req.id} className="px-5 py-4 flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    {req.employee?.firstName} {req.employee?.lastName}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {TYPE_LABELS[req.type] || req.type} · {formatDateOnly(req.startDate)} — {formatDateOnly(req.endDate)}
+                  </p>
+                  {req.notes && <p className="text-xs text-gray-600 mt-1 truncate">{req.notes}</p>}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => handleTeamDecision(req, true)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-green-600/20 hover:bg-green-600/30 text-green-500 rounded-lg text-xs transition-colors"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Approve
+                  </button>
+                  <button
+                    onClick={() => handleTeamDecision(req, false)}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-red-600/20 hover:bg-red-600/30 text-red-500 rounded-lg text-xs transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" /> Deny
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
