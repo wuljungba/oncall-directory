@@ -68,10 +68,11 @@ public class Employee
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>
-    /// Record origin. "Ad" = created/confirmed by the Azure AD sync (and therefore
-    /// eligible for AD-driven deactivation). Any other value ("Local", "CsvImport",
-    /// or empty) = a locally/CSV-managed account that the AD sync must NEVER
-    /// deactivate, regardless of what its <see cref="AzureAdObjectId"/> looks like.
+    /// Record origin (see docs/onboarding-standard.md). Standard values:
+    /// "Ad" (created/confirmed by the Azure AD sync — the only source eligible for
+    /// AD-driven deactivation), "CsvImport" (bulk CSV import), "Local" (manually
+    /// created). Any non-"Ad" record is locally-managed and the AD sync must NEVER
+    /// deactivate it, regardless of its <see cref="AzureAdObjectId"/>.
     /// </summary>
     [MaxLength(64)]
     public string Source { get; set; } = "";
