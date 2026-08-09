@@ -153,8 +153,13 @@ public class ScheduleController : ControllerBase
     [HttpPost("swaps")]
     public async Task<ActionResult<ShiftSwap>> RequestSwap([FromBody] SwapRequest request)
     {
+        // RequestedById must be the caller's own internal Employee.Id (never the client's
+        // claim), matching the Employee FK — the AD oid Guid is a different namespace.
+        var me = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        if (!me.HasValue) return BadRequest(new { error = "No employee profile is linked to your account." });
+
         var swap = await _scheduleService.RequestSwapAsync(
-            request.ShiftId, request.RequestedById, request.ReplacementUserId, request.Reason ?? string.Empty);
+            request.ShiftId, me.Value, request.ReplacementUserId, request.Reason ?? string.Empty);
 
         await _hub.Clients.All.SendAsync("SwapRequested", swap);
         return CreatedAtAction(nameof(RequestSwap), swap);
@@ -165,8 +170,10 @@ public class ScheduleController : ControllerBase
     [Authorize(Policy = "RequireScheduleWrite")]
     public async Task<ActionResult<ShiftSwap>> ApproveSwap(int id)
     {
-        var userId = Guid.Parse(User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")!.Value);
-        var swap = await _scheduleService.ApproveSwapAsync(id, userId);
+        var approverId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        if (!approverId.HasValue) return BadRequest(new { error = "No employee profile is linked to your account." });
+
+        var swap = await _scheduleService.ApproveSwapAsync(id, approverId.Value);
 
         await _hub.Clients.All.SendAsync("SwapApproved", swap);
         return swap;
