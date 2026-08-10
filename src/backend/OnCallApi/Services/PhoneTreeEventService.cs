@@ -39,6 +39,13 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         evt.Status = "active";
         _db.PhoneTreeEvents.Add(evt);
         await _db.SaveChangesAsync();
+
+        // Reload with the PhoneTree so callers can read the correct code type
+        // (e.g., for dispatch). Without this, TreeType always fell back to "emergency".
+        evt = await _db.PhoneTreeEvents
+            .Include(e => e.PhoneTree)
+            .FirstAsync(e => e.Id == evt.Id);
+
         _logger.LogInformation("Created phone tree event {Id} for tree {TreeId}", evt.Id, evt.PhoneTreeId);
         return evt;
     }

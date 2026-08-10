@@ -308,7 +308,7 @@ export const phoneTreesApi = {
     fetchApi<PhoneTreeEvent[]>(`/phone-trees/${treeId}/events`),
   getEvent: (eventId: number) =>
     fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}`),
-  createEvent: (treeId: number, evt: Partial<PhoneTreeEvent>) =>
+  createEvent: (treeId: number, evt: Partial<PhoneTreeEvent> & { confirm: boolean }) =>
     fetchApi<PhoneTreeEvent>(`/phone-trees/${treeId}/events`, { method: 'POST', body: JSON.stringify(evt) }),
   updateEvent: (eventId: number, evt: Partial<PhoneTreeEvent>) =>
     fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}`, { method: 'PUT', body: JSON.stringify(evt) }),

@@ -133,7 +133,8 @@ export default function CommandCenterPage() {
         location,
         notes: notes || undefined,
         requestedByName: requestedByName.trim() || undefined,
-      })
+        confirm: true,
+      } as any)
       addLogEntry('dispatch', `Incident #${evt.id} created — ${codeType} @ ${location}${requestedByName.trim() ? ` — reported by ${requestedByName.trim()}` : ''}`)
       setShowActivateModal(false)
     } catch (err) {

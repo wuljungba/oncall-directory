@@ -133,14 +133,27 @@ public class PhoneTreeEventsController : ControllerBase
     /// <summary>Create a new phone tree event (start a code call) and begin dispatch.</summary>
     [HttpPost("{treeId}/events")]
     [Authorize(Policy = "RequireScheduleWrite")]
-    public async Task<ActionResult<PhoneTreeEvent>> CreateEvent(int treeId, PhoneTreeEvent evt)
+    public async Task<ActionResult<PhoneTreeEvent>> CreateEvent(int treeId, [FromBody] StartCodeCallRequest request)
     {
-        evt.PhoneTreeId = treeId;
+        // Server-side consent gate: firing a live code call (broadcast/paging) always
+        // requires explicit operator confirmation. A raw client POST without it is
+        // rejected — no silent or accidental dispatch.
+        if (request == null || !request.Confirm)
+            return BadRequest(new { error = "Operator confirmation required to dispatch a code call." });
 
-        // On-call log detail: the operator who triggered the code is stamped from the
-        // authenticated user (never trusted from the client body). The reporter (who
-        // called in the code) is captured as free-text RequestedByName.
-        evt.InitiatedById = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        var evt = new PhoneTreeEvent
+        {
+            PhoneTreeId = treeId,
+            StartedAt = request.StartedAt ?? DateTime.UtcNow,
+            Location = request.Location,
+            LocationZone = request.LocationZone,
+            Notes = request.Notes,
+            RequestedByName = request.RequestedByName,
+
+            // The operator who triggered the code is stamped from the authenticated user
+            // (never trusted from the client body); the reporter is free-text RequestedByName.
+            InitiatedById = await _tenantContext.GetCurrentEmployeeIdAsync(User),
+        };
 
         var created = await _service.CreateEventAsync(evt);
 

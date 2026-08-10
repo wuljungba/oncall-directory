@@ -8,6 +8,23 @@ public record ResolveEventRequest(string? Outcome);
 /// <summary>Request DTO for saving debrief notes.</summary>
 public record SaveDebriefNotesRequest(string? Notes);
 
+/// <summary>
+/// Request DTO for starting a code call (dispatch). <see cref="Confirm"/> must be true —
+/// an explicit operator confirmation that they intend to fire a live broadcast. This is
+/// the server-side consent gate: a raw client POST without confirmation is rejected.
+/// </summary>
+public class StartCodeCallRequest
+{
+    public DateTime? StartedAt { get; set; }
+    public string? Location { get; set; }
+    public string? LocationZone { get; set; }
+    public string? Notes { get; set; }
+    public string? RequestedByName { get; set; }
+
+    /// <summary>Operator confirmation that a live code call should be dispatched.</summary>
+    public bool Confirm { get; set; }
+}
+
 public class PhoneTreeEvent
 {
     public int Id { get; set; }
