@@ -614,6 +614,12 @@ using (var scope = app.Services.CreateScope())
             IF COL_LENGTH(N'dbo.TimeOffs', N'ApprovalReason') IS NULL
                 ALTER TABLE dbo.TimeOffs ADD ApprovalReason nvarchar(500) NULL;
             """,
+            // PhoneTreeEvents.RequestedByName (reporter who called in the code). Added later
+            // than the base schema — backport idempotently on existing databases.
+            """
+            IF COL_LENGTH(N'dbo.PhoneTreeEvents', N'RequestedByName') IS NULL
+                ALTER TABLE dbo.PhoneTreeEvents ADD RequestedByName nvarchar(200) NULL;
+            """,
             // DutyHourRules.Severity (1 = warning, 2 = breach). Added later than the base
             // schema — backport idempotently on existing databases without a migration.
             """

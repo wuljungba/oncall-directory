@@ -17,17 +17,20 @@ public class PhoneTreeEventsController : ControllerBase
     private readonly IHubContext<OnCallNotificationHub> _hub;
     private readonly ICodeCallDispatchService _dispatch;
     private readonly DispatchBackgroundService _dispatchStatus;
+    private readonly ITenantContextService _tenantContext;
 
     public PhoneTreeEventsController(
         IPhoneTreeEventService service,
         IHubContext<OnCallNotificationHub> hub,
         ICodeCallDispatchService dispatch,
-        DispatchBackgroundService dispatchStatus)
+        DispatchBackgroundService dispatchStatus,
+        ITenantContextService tenantContext)
     {
         _service = service;
         _hub = hub;
         _dispatch = dispatch;
         _dispatchStatus = dispatchStatus;
+        _tenantContext = tenantContext;
     }
 
     // ── Command Center Endpoints ──
@@ -133,6 +136,12 @@ public class PhoneTreeEventsController : ControllerBase
     public async Task<ActionResult<PhoneTreeEvent>> CreateEvent(int treeId, PhoneTreeEvent evt)
     {
         evt.PhoneTreeId = treeId;
+
+        // On-call log detail: the operator who triggered the code is stamped from the
+        // authenticated user (never trusted from the client body). The reporter (who
+        // called in the code) is captured as free-text RequestedByName.
+        evt.InitiatedById = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+
         var created = await _service.CreateEventAsync(evt);
 
         // Determine code type from the associated phone tree

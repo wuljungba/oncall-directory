@@ -24,6 +24,10 @@ public class PhoneTreeEvent
     public Guid? InitiatedById { get; set; }
     public Employee? InitiatedBy { get; set; }
 
+    /// <summary>Free-text name of the person who called in / ordered the code (the reporter).</summary>
+    [MaxLength(200)]
+    public string? RequestedByName { get; set; }
+
     [MaxLength(200)]
     public string? Location { get; set; }
 

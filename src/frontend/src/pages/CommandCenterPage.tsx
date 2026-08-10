@@ -121,7 +121,7 @@ export default function CommandCenterPage() {
     return tree
   }
 
-  async function handleActivate(codeType: string, location: string, notes: string) {
+  async function handleActivate(codeType: string, location: string, notes: string, requestedByName = '') {
     const tree = await ensurePhoneTree(codeType)
     if (!tree) {
       addLogEntry('info', 'Could not activate: no code call configured and auto-creation failed.')
@@ -132,8 +132,9 @@ export default function CommandCenterPage() {
         startedAt: new Date().toISOString(),
         location,
         notes: notes || undefined,
+        requestedByName: requestedByName.trim() || undefined,
       })
-      addLogEntry('dispatch', `Incident #${evt.id} created — ${codeType} @ ${location}`)
+      addLogEntry('dispatch', `Incident #${evt.id} created — ${codeType} @ ${location}${requestedByName.trim() ? ` — reported by ${requestedByName.trim()}` : ''}`)
       setShowActivateModal(false)
     } catch (err) {
       addLogEntry('info', `Failed to create incident: ${err}`)
@@ -155,7 +156,11 @@ export default function CommandCenterPage() {
     } catch { /* ignore */ }
   }, [])
 
-  function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
+  function fmt(s?: string) {
+  return s ? new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'
+}
+
+function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
     if (evt.status === 'completed') return 'done'
     const step = evt.dispatchSteps?.find(s => s.stepKey === stepKey)
     if (!step) return stepKey === 'created' ? 'done' : 'pending'
@@ -213,7 +218,18 @@ export default function CommandCenterPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-sm font-bold">#{inc.id} — {inc.phoneTree?.name || inc.phoneTree?.treeType || 'Code Call'}</p>
-                      <p className="text-xs text-gray-500 mt-0.5">{inc.location}{inc.notes ? ` · ${inc.notes}` : ''}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {inc.location && <span className="capitalize">{inc.location}</span>}
+                        {inc.requestedByName ? <span> · Reported by <span className="text-gray-300">{inc.requestedByName}</span></span> : ''}
+                        {inc.initiatedBy ? <span> · Triggered by <span className="text-gray-300">{inc.initiatedBy.firstName} {inc.initiatedBy.lastName}</span></span> : ''}
+                        <span> · {fmt(inc.startedAt)}{inc.endedAt ? <> – {fmt(inc.endedAt)}</> : ' (active)'}</span>
+                      </p>
+                      {inc.notes && <p className="text-xs text-gray-600 mt-0.5">{inc.notes}</p>}
+                      {inc.participants && inc.participants.length > 0 && (
+                        <p className="text-xs text-gray-500 mt-0.5 truncate" title={inc.participants.map(p => p.employee ? `${p.employee.firstName} ${p.employee.lastName}` : (p.role || '—')).join(', ')}>
+                          Notified: {inc.participants.map(p => p.employee ? `${p.employee.firstName} ${p.employee.lastName}` : (p.role || '—')).join(', ')}
+                        </p>
+                      )}
                     </div>
                     <div className={`font-mono text-xl font-bold ${inc.status === 'completed' ? 'text-green-500' : 'text-red-500'}`}>
                       {formatElapsed(inc.startedAt, inc.endedAt)}
@@ -297,6 +313,9 @@ export default function CommandCenterPage() {
               <tr className="text-left text-xs text-gray-500 uppercase tracking-wider">
                 <th className="px-5 py-3 font-medium">Incident</th>
                 <th className="px-5 py-3 font-medium">Location</th>
+                <th className="px-5 py-3 font-medium">Code</th>
+                <th className="px-5 py-3 font-medium">Reported / Triggered</th>
+                <th className="px-5 py-3 font-medium">Time</th>
                 <th className="px-5 py-3 font-medium">Response Time</th>
                 <th className="px-5 py-3 font-medium">Outcome</th>
                 <th className="px-5 py-3 font-medium">Notes</th>
@@ -304,12 +323,20 @@ export default function CommandCenterPage() {
             </thead>
             <tbody className="divide-y divide-gray-800">
               {resolvedIncidents.length === 0 ? (
-                <tr><td colSpan={5} className="text-center text-gray-600 py-10 text-sm">No resolved incidents yet.</td></tr>
+                <tr><td colSpan={8} className="text-center text-gray-600 py-10 text-sm">No resolved incidents yet.</td></tr>
               ) : (
                 resolvedIncidents.map(inc => (
                   <tr key={inc.id}>
                     <td className="px-5 py-3 text-gray-300">#{inc.id} — {inc.phoneTree?.name || 'Code Call'}</td>
                     <td className="px-5 py-3 text-gray-500">{inc.location || '—'}</td>
+                    <td className="px-5 py-3 text-gray-500">{inc.phoneTree?.treeType || '—'}</td>
+                    <td className="px-5 py-3 text-gray-400">
+                      {inc.requestedByName ? <span>Reported by <span className="text-gray-200">{inc.requestedByName}</span></span> : null}
+                      {inc.requestedByName && inc.initiatedBy ? <span className="text-gray-600"> · </span> : null}
+                      {inc.initiatedBy ? <span>Triggered by <span className="text-gray-200">{inc.initiatedBy.firstName} {inc.initiatedBy.lastName}</span></span> : null}
+                      {!inc.requestedByName && !inc.initiatedBy ? '—' : ''}
+                    </td>
+                    <td className="px-5 py-3 text-gray-300 font-mono">{fmt(inc.startedAt)}{inc.endedAt ? ` – ${fmt(inc.endedAt)}` : ''}</td>
                     <td className="px-5 py-3 text-gray-300 font-mono">
                       {inc.responseTimeSeconds ? `${Math.floor(inc.responseTimeSeconds / 60)}m ${inc.responseTimeSeconds % 60}s` : '—'}
                     </td>
@@ -360,12 +387,13 @@ function ActivateCodeModal({
   trees: PhoneTree[]
   locations: string[]
   codeTypes: typeof CODE_TYPES
-  onActivate: (codeType: string, location: string, notes: string) => Promise<void>
+  onActivate: (codeType: string, location: string, notes: string, requestedByName?: string) => Promise<void>
   onClose: () => void
 }) {
   const [selectedCode, setSelectedCode] = useState(codeTypes[0].key)
   const [location, setLocation] = useState(locations[0])
   const [notes, setNotes] = useState('')
+  const [requestedByName, setRequestedByName] = useState('')
   const [activating, setActivating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -376,7 +404,7 @@ function ActivateCodeModal({
     setActivating(true)
     setError(null)
     try {
-      await onActivate(selectedCode, location, notes)
+      await onActivate(selectedCode, location, notes, requestedByName)
       onClose()
     } catch { setError('Failed to activate.') }
     finally { setActivating(false) }
@@ -426,6 +454,13 @@ function ActivateCodeModal({
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-amber-600">
               {locations.map(l => <option key={l} value={l}>{l}</option>)}
             </select>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 uppercase tracking-wider mb-2">Called in by (reporter, optional)</label>
+            <input type="text" value={requestedByName} onChange={e => setRequestedByName(e.target.value)}
+              placeholder="e.g. RN Smith, Emergency Dept"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-amber-600" />
           </div>
 
           <div>
