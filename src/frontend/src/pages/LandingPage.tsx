@@ -1,4 +1,4 @@
-import { Shield, Users, Phone, Clock, CalendarDays, CheckCircle, ArrowRight, Menu, X } from 'lucide-react'
+import { Shield, ShieldCheck, FileText, Users, Phone, Clock, CalendarDays, CheckCircle, ArrowRight, Menu, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
 
@@ -40,7 +40,7 @@ const features = [
 const policies = [
   {
     title: 'HIPAA Compliance',
-    description: 'All PHI fields are column-encrypted at rest. Access is audited via immutable audit logs. Sessions auto-expire after inactivity.',
+    description: 'PHI fields are column-encrypted at rest. Access is audited via immutable audit logs. Sessions auto-expire after inactivity. Audit records are retained per policy.',
     icon: Shield,
   },
   {
@@ -50,8 +50,74 @@ const policies = [
   },
   {
     title: 'Access Control',
-    description: 'Role-based access with Viewer, Scheduler, and Admin tiers. Every API call is authorized against granular permission claims.',
+    description: 'Role-based access with Viewer, Scheduler, Admin, and tenant-scoped tiers. Every API call is authorized against granular permission claims. Access is logged.',
     icon: Users,
+  },
+  {
+    title: 'PHI & Privacy',
+    description: 'Protected health information is handled in a restricted set of endpoints. Access is audited; data is scoped to the tenant/role of the signed-in user.',
+    icon: ShieldCheck,
+  },
+  {
+    title: 'Data Retention & Offboarding',
+    description: 'Inactive and deactivated records are handled per organizational policy, with an option to permanently delete history where it is not otherwise retained.',
+    icon: Clock,
+  },
+  {
+    title: 'Audit & Accountability',
+    description: 'Security-relevant events are recorded for accountability. Duty-hour and compliance checks run on actual schedule data to keep records defensible.',
+    icon: FileText,
+  },
+]
+
+// Expanded legal/trust copy shown below the policy cards.
+const legalSections = [
+  {
+    title: 'Privacy and Data Handling',
+    items: [
+      'We collect only the data needed for on-call scheduling and the phone directory: names, contact details, department, schedule/shift history, presence, and time-off requests.',
+      'Protected health information (PHI) is limited to the fields you configure; it is encrypted at rest and audited when accessed. Do not enter clinical notes beyond what your organization permits.',
+      'Data is scoped by organization/tenant and role, so users see only what their role authorizes.',
+    ],
+  },
+  {
+    title: 'Security',
+    items: [
+      'Traffic is encrypted in transit (TLS 1.2+). Authentication is performed by trusted identity providers (Microsoft Entra ID and Google); the application does not store your password.',
+      'Granular permission claims authorize every API call. Sessions expire after inactivity.',
+      'Diagnostic information shared with support may include event IDs and timestamps but never raw PHI values.',
+    ],
+  },
+  {
+    title: 'Intended Use and Limitations',
+    items: [
+      'OnCall is a scheduling and communication tool for your organization. It is not a medical device and is not for use in life-threatening or emergency care.',
+      'Presence and availability data, duty-hour checks, and escalation notifications are informational and best-effort; they are not a substitute for clinical judgment or certified medical systems.',
+      'You are responsible for verifying the accuracy of directory, schedule, and on-call data you enter.',
+    ],
+  },
+  {
+    title: 'Acceptable Use',
+    items: [
+      'Access is authorized for staff with a legitimate need. Accounts must not be shared.',
+      'Operators who trigger code calls are accountable for the accuracy and necessity of each activation; a record of who triggered and who was notified is kept.',
+      'Do not misuse the platform, staff contact data, or PHI, or use it for any unauthorized purpose.',
+    ],
+  },
+  {
+    title: 'Disclaimer of Warranties',
+    items: [
+      'The service is provided "as is" without warranties of any kind, including availability, fitness for a particular purpose, or non-infringement.',
+      'We do not guarantee that the service will be uninterrupted or error-free. Timely code-call delivery depends on the availability of configured telecom and messaging channels.',
+      'Neither the platform nor its operators provide legal or medical advice.',
+    ],
+  },
+  {
+    title: 'Contact',
+    items: [
+      'For privacy, security, access, or compliance questions, contact your organization’s administrator or the authorized system administrator for this instance.',
+      'Report suspected unauthorized access or a data incident to your administrator immediately.',
+    ],
   },
 ]
 
@@ -75,6 +141,7 @@ export default function LandingPage() {
             <div className="hidden md:flex items-center gap-6">
               <a href="#features" className="text-sm text-gray-400 hover:text-gray-200 transition-colors">Features</a>
               <a href="#policies" className="text-sm text-gray-400 hover:text-gray-200 transition-colors">Policies</a>
+              <a href="#legal" className="text-sm text-gray-400 hover:text-gray-200 transition-colors">Legal</a>
               <Link
                 to="/login"
                 className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
@@ -214,6 +281,38 @@ export default function LandingPage() {
               </div>
             ))}
           </div>
+        </div>
+      </section>
+
+      {/* Legal & Trust Section */}
+      <section id="legal" className="py-20 sm:py-28 border-t border-gray-800/50">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold">
+              Legal & <span className="text-amber-500">Trust</span>
+            </h2>
+            <p className="mt-4 text-gray-400 max-w-2xl mx-auto">
+              How your data is handled and protected, and the terms under which the service is provided.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {legalSections.map((section) => (
+              <div key={section.title} className="p-6 rounded-xl bg-gray-900/50 border border-gray-800">
+                <h3 className="font-medium mb-3 text-amber-500">{section.title}</h3>
+                <ul className="space-y-2">
+                  {section.items.map((item, i) => (
+                    <li key={i} className="text-sm text-gray-400 leading-relaxed flex gap-2">
+                      <span className="text-amber-500/60 shrink-0">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+          <p className="mt-8 text-center text-xs text-gray-600 max-w-3xl mx-auto">
+            This page summarizes the controls and intended use of the service. Your organization's policies, agreements, and applicable law govern your use. Last updated {new Date().getFullYear()}.
+          </p>
         </div>
       </section>
 

@@ -105,13 +105,23 @@ export class GoogleAuthProvider implements IAuthProvider {
 
         // Trigger the sign-in prompt
         google.accounts.id.prompt((notification: any) => {
+          // If One Tap is suppressed (e.g., 3rd-party cookies blocked or iOS),
+          // fall back to a visible standard "Sign in with Google" button. The
+          // earlier code rendered into a detached div, so nothing appeared — the
+          // button must be attached to the document to be usable.
           if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            // If One Tap is not displayed (e.g., 3rd-party cookies blocked),
-            // fall back to the standard button flow
-            google.accounts.id.renderButton(
-              document.createElement('div'),
-              { type: 'standard', shape: 'rectangular' },
-            )
+            let el = document.getElementById('google-fallback-btn')
+            if (!el) {
+              el = document.createElement('div')
+              el.id = 'google-fallback-btn'
+              Object.assign((el as HTMLElement).style, {
+                position: 'fixed', top: '35%', left: '50%', transform: 'translate(-50%, -50%)',
+                zIndex: '2147483647', background: '#fff', padding: '10px', borderRadius: '10px',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+              })
+              document.body.appendChild(el)
+            }
+            google.accounts.id.renderButton(el as HTMLElement, { type: 'standard', shape: 'rectangular' })
           }
         })
       } catch (err) {

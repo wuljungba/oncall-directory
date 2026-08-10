@@ -9,19 +9,13 @@ interface LoginPageProps {
   signIn: (provider?: AuthProviderType, email?: string, password?: string) => Promise<void>
 }
 
-type LoginTab = 'sso' | 'local'
-
 export default function LoginPage({
   isLoading,
   isAuthenticated,
   signIn,
 }: LoginPageProps) {
   const navigate = useNavigate()
-  const [tab, setTab] = useState<LoginTab>('sso')
   const [selectedProvider, setSelectedProvider] = useState<AuthProviderType | null>(null)
-  const [localEmail, setLocalEmail] = useState('')
-  const [localPassword, setLocalPassword] = useState('')
-  const [localError, setLocalError] = useState<string | null>(null)
 
   useEffect(() => {
     if (isAuthenticated) navigate('/dashboard', { replace: true })
@@ -29,23 +23,7 @@ export default function LoginPage({
 
   async function handleSsoSignIn(provider: AuthProviderType) {
     setSelectedProvider(provider)
-    setLocalError(null)
     await signIn(provider)
-  }
-
-  async function handleLocalSignIn(e: React.FormEvent) {
-    e.preventDefault()
-    if (!localEmail.trim() || !localPassword.trim()) {
-      setLocalError('Email and password are required.')
-      return
-    }
-    setLocalError(null)
-    setSelectedProvider('local')
-    try {
-      await signIn('local', localEmail.trim(), localPassword)
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Login failed. Please check your credentials.')
-    }
   }
 
   if (isLoading) {
@@ -81,28 +59,7 @@ export default function LoginPage({
           </p>
         </div>
 
-        {/* Tab selector */}
-        <div className="flex gap-1 bg-gray-900 border border-gray-800 rounded-xl p-1 mb-6">
-          <button
-            onClick={() => setTab('sso')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'sso' ? 'bg-amber-600/20 text-amber-500' : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            SSO
-          </button>
-          <button
-            onClick={() => setTab('local')}
-            className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              tab === 'local' ? 'bg-amber-600/20 text-amber-500' : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            Local Account
-          </button>
-        </div>
-
-        {tab === 'sso' ? (
-          <div className="space-y-3">
+        <div className="space-y-3">
             {/* Microsoft */}
             <button
               onClick={() => handleSsoSignIn('microsoft')}
@@ -140,48 +97,6 @@ export default function LoginPage({
               {selectedProvider === 'google' && isLoading ? 'Signing in...' : 'Sign in with Google'}
             </button>
           </div>
-        ) : (
-          /* Local account tab */
-          <form onSubmit={handleLocalSignIn} className="space-y-4">
-            {localError && (
-              <div className="text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3 text-center">
-                {localError}
-              </div>
-            )}
-            <div>
-              <label className="block text-sm text-gray-500 mb-1">Email</label>
-              <input
-                type="email"
-                required
-                value={localEmail}
-                onChange={e => setLocalEmail(e.target.value)}
-                placeholder="you@hospital.org"
-                className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-600 text-gray-100 placeholder-gray-600"
-              />
-            </div>
-            <div>
-              <label className="block text-sm text-gray-500 mb-1">Password</label>
-              <input
-                type="password"
-                required
-                value={localPassword}
-                onChange={e => setLocalPassword(e.target.value)}
-                placeholder="Enter your password"
-                className="w-full bg-gray-900 border border-gray-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-amber-600 text-gray-100 placeholder-gray-600"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-amber-600 hover:bg-amber-700 rounded-xl text-sm font-medium transition-colors disabled:opacity-50"
-            >
-              {isLoading ? 'Signing in...' : 'Sign In'}
-            </button>
-            <p className="text-center text-xs text-gray-600">
-              Local accounts are managed by your organization administrator.
-            </p>
-          </form>
-        )}
 
         <p className="text-center text-xs text-gray-600 mt-8">
           Healthcare-grade on-call scheduling & phone directory
