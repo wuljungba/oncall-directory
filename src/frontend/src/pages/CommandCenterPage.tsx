@@ -185,10 +185,11 @@ function trigName(inc: PhoneTreeEvent) {
   return ''
 }
 
-const ARCHIVE_DAYS = 90
-
 function isArchived(inc: PhoneTreeEvent) {
-  const cut = Date.now() - ARCHIVE_DAYS * 24 * 60 * 60 * 1000
+  // Local const (not module scope) so no bundler/minifier ordering can ever put this
+  // in a temporal dead zone for a hoisted helper.
+  const archiveDays = 90
+  const cut = Date.now() - archiveDays * 24 * 60 * 60 * 1000
   return new Date(inc.endedAt || inc.startedAt).getTime() < cut
 }
 
