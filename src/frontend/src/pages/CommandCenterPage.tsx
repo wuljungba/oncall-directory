@@ -38,6 +38,9 @@ export default function CommandCenterPage() {
   const [logEntries, setLogEntries] = useState<{ time: string; tag: string; text: string }[]>([])
   const [clock, setClock] = useState('')
   const [completing, setCompleting] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
+  const [search, setSearch] = useState('')
+  const [showArchived, setShowArchived] = useState(false)
   const [debriefNotes, setDebriefNotes] = useState<Record<number, string>>({})
   const debriefTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
   const { lastEvent } = useSignalR()
@@ -143,13 +146,27 @@ export default function CommandCenterPage() {
   }
 
   async function handleResolve(eventId: number) {
+    const notified = window.prompt('Person(s) notified after dispatch (optional):', '') ?? ''
     setCompleting(eventId)
     try {
-      await commandCenterApi.resolveEvent(eventId)
-      addLogEntry('info', `Incident #${eventId} marked resolved`)
+      await commandCenterApi.resolveEvent(eventId, { notifiedByName: notified || undefined })
+      addLogEntry('info', `Incident #${eventId} marked resolved${notified.trim() ? ` — notified: ${notified.trim()}` : ''}`)
     } catch { /* ignore */ }
     setCompleting(null)
   }
+
+  async function handleDeleteEvent(eventId: number) {
+    if (!window.confirm('Permanently delete this incident from history?')) return
+    setDeletingId(eventId)
+    try {
+      await phoneTreesApi.deleteEvent(eventId)
+      addLogEntry('info', `Incident #${eventId} deleted from history`)
+      await loadData()
+    } catch { /* ignore */ }
+    setDeletingId(null)
+  }
+
+  const filteredResolved = resolvedIncidents.filter(inc => matchesSearch(inc, search) && (showArchived || !isArchived(inc)))
 
   const saveDebriefNote = useCallback(async (eventId: number, notes: string) => {
     try {
@@ -159,6 +176,27 @@ export default function CommandCenterPage() {
 
   function fmt(s?: string) {
   return s ? new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'
+}
+
+/** Operator who triggered the code — pinned signed-in name, else resolved employee name. */
+function trigName(inc: PhoneTreeEvent) {
+  if (inc.initiatedByName) return inc.initiatedByName
+  if (inc.initiatedBy) return `${inc.initiatedBy.firstName} ${inc.initiatedBy.lastName}`.trim()
+  return ''
+}
+
+const ARCHIVE_DAYS = 90
+
+function isArchived(inc: PhoneTreeEvent) {
+  const cut = Date.now() - ARCHIVE_DAYS * 24 * 60 * 60 * 1000
+  return new Date(inc.endedAt || inc.startedAt).getTime() < cut
+}
+
+function matchesSearch(inc: PhoneTreeEvent, q: string) {
+  const s = q.trim().toLowerCase()
+  if (!s) return true
+  const code = inc.phoneTree?.name || inc.phoneTree?.treeType || ''
+  return `${inc.id} ${inc.location || ''} ${code} ${inc.requestedByName || ''} ${inc.initiatedByName || ''} ${trigName(inc)} ${inc.notifiedByName || ''} ${inc.outcome || ''}`.toLowerCase().includes(s)
 }
 
 function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
@@ -222,7 +260,8 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                       <p className="text-xs text-gray-500 mt-0.5">
                         {inc.location && <span className="capitalize">{inc.location}</span>}
                         {inc.requestedByName ? <span> · Reported by <span className="text-gray-300">{inc.requestedByName}</span></span> : ''}
-                        {inc.initiatedBy ? <span> · Triggered by <span className="text-gray-300">{inc.initiatedBy.firstName} {inc.initiatedBy.lastName}</span></span> : ''}
+                        {trigName(inc) ? <span> · Triggered by <span className="text-gray-300">{trigName(inc)}</span></span> : ''}
+                        {inc.notifiedByName ? <span> · Notified: <span className="text-gray-300">{inc.notifiedByName}</span></span> : ''}
                         <span> · {fmt(inc.startedAt)}{inc.endedAt ? <> – {fmt(inc.endedAt)}</> : ' (active)'}</span>
                       </p>
                       {inc.notes && <p className="text-xs text-gray-600 mt-0.5">{inc.notes}</p>}
@@ -265,6 +304,13 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                         {completing === inc.id ? 'Resolving...' : 'Mark Resolved'}
                       </button>
                     )}
+                    <button
+                      onClick={() => handleDeleteEvent(inc.id)}
+                      disabled={deletingId === inc.id}
+                      className="text-xs px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
                   </div>
                 </div>
               ))
@@ -302,10 +348,20 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
 
       {/* Debrief Log */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl">
-        <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between">
-          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Debrief Log</h2>
+        <div className="px-5 py-4 border-b border-gray-800 flex flex-wrap items-center gap-2">
+          <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Incident History</h2>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by code, location, name, id..."
+            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-600 w-52"
+          />
+          <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer">
+            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
+            Show archived (&gt;90d)
+          </label>
           <span className="font-mono text-xs bg-gray-800 px-2 py-0.5 rounded-full text-gray-500">
-            {resolvedIncidents.length} entries
+            {resolvedIncidents.length} total
           </span>
         </div>
         <div className="overflow-x-auto">
@@ -323,19 +379,23 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
-              {resolvedIncidents.length === 0 ? (
-                <tr><td colSpan={8} className="text-center text-gray-600 py-10 text-sm">No resolved incidents yet.</td></tr>
+              {filteredResolved.length === 0 ? (
+                <tr><td colSpan={8} className="text-center text-gray-600 py-10 text-sm">
+                  {resolvedIncidents.length === 0 ? 'No incidents yet.' : 'No incidents match. Try clearing search or showing archived.'}
+                </td></tr>
               ) : (
-                resolvedIncidents.map(inc => (
+                filteredResolved.map(inc => (
                   <tr key={inc.id}>
                     <td className="px-5 py-3 text-gray-300">#{inc.id} — {inc.phoneTree?.name || 'Code Call'}</td>
                     <td className="px-5 py-3 text-gray-500">{inc.location || '—'}</td>
                     <td className="px-5 py-3 text-gray-500">{inc.phoneTree?.treeType || '—'}</td>
                     <td className="px-5 py-3 text-gray-400">
                       {inc.requestedByName ? <span>Reported by <span className="text-gray-200">{inc.requestedByName}</span></span> : null}
-                      {inc.requestedByName && inc.initiatedBy ? <span className="text-gray-600"> · </span> : null}
-                      {inc.initiatedBy ? <span>Triggered by <span className="text-gray-200">{inc.initiatedBy.firstName} {inc.initiatedBy.lastName}</span></span> : null}
-                      {!inc.requestedByName && !inc.initiatedBy ? '—' : ''}
+                      {inc.requestedByName && trigName(inc) ? <span className="text-gray-600"> · </span> : null}
+                      {trigName(inc) ? <span>Triggered by <span className="text-gray-200">{trigName(inc)}</span></span> : null}
+                      {inc.notifiedByName ? <span className="text-gray-600"> · </span> : null}
+                      {inc.notifiedByName ? <span>Notified: <span className="text-gray-200">{inc.notifiedByName}</span></span> : null}
+                      {!inc.requestedByName && !trigName(inc) && !inc.notifiedByName ? '—' : ''}
                     </td>
                     <td className="px-5 py-3 text-gray-300 font-mono">{fmt(inc.startedAt)}{inc.endedAt ? ` – ${fmt(inc.endedAt)}` : ''}</td>
                     <td className="px-5 py-3 text-gray-300 font-mono">
@@ -343,20 +403,30 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                     </td>
                     <td className="px-5 py-3 text-gray-500">{inc.outcome || '—'}</td>
                     <td className="px-5 py-3">
-                      <input
-                        type="text"
-                        placeholder="Add debrief note..."
-                        value={debriefNotes[inc.id] || ''}
-                        onChange={e => {
-                          const val = e.target.value
-                          setDebriefNotes(prev => ({ ...prev, [inc.id]: val }))
-                          if (debriefTimersRef.current[inc.id]) clearTimeout(debriefTimersRef.current[inc.id])
-                          debriefTimersRef.current[inc.id] = setTimeout(() => {
-                            saveDebriefNote(inc.id, val)
-                          }, 800)
-                        }}
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-600"
-                      />
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          placeholder="Add debrief note..."
+                          value={debriefNotes[inc.id] || ''}
+                          onChange={e => {
+                            const val = e.target.value
+                            setDebriefNotes(prev => ({ ...prev, [inc.id]: val }))
+                            if (debriefTimersRef.current[inc.id]) clearTimeout(debriefTimersRef.current[inc.id])
+                            debriefTimersRef.current[inc.id] = setTimeout(() => {
+                              saveDebriefNote(inc.id, val)
+                            }, 800)
+                          }}
+                          className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-600"
+                        />
+                        <button
+                          onClick={() => handleDeleteEvent(inc.id)}
+                          disabled={deletingId === inc.id}
+                          title="Delete from history"
+                          className="shrink-0 px-2 py-1 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded text-xs transition-colors disabled:opacity-50"
+                        >
+                          {deletingId === inc.id ? '…' : 'Delete'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

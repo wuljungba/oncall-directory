@@ -134,7 +134,7 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         return evt;
     }
 
-    public async Task<PhoneTreeEvent> ResolveEventAsync(int eventId, string? outcome)
+    public async Task<PhoneTreeEvent> ResolveEventAsync(int eventId, string? outcome, string? notifiedByName = null)
     {
         var evt = await _db.PhoneTreeEvents.FindAsync(eventId)
             ?? throw new KeyNotFoundException($"Event {eventId} not found");
@@ -145,6 +145,7 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         evt.Status = "completed";
         evt.EndedAt = DateTime.UtcNow;
         evt.Outcome = outcome;
+        if (!string.IsNullOrWhiteSpace(notifiedByName)) evt.NotifiedByName = notifiedByName.Trim();
         evt.ResponseTimeSeconds = evt.AcknowledgedAt.HasValue
             ? (int)(evt.AcknowledgedAt.Value - evt.StartedAt).TotalSeconds
             : (int)(DateTime.UtcNow - evt.StartedAt).TotalSeconds;

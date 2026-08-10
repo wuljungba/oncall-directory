@@ -620,6 +620,14 @@ using (var scope = app.Services.CreateScope())
             IF COL_LENGTH(N'dbo.PhoneTreeEvents', N'RequestedByName') IS NULL
                 ALTER TABLE dbo.PhoneTreeEvents ADD RequestedByName nvarchar(200) NULL;
             """,
+            // PhoneTreeEvents.InitiatedByName + NotifiedByName (operator name + post-dispatch
+            // notified person). Added later than the base schema — backport idempotently.
+            """
+            IF COL_LENGTH(N'dbo.PhoneTreeEvents', N'InitiatedByName') IS NULL
+                ALTER TABLE dbo.PhoneTreeEvents ADD InitiatedByName nvarchar(200) NULL;
+            IF COL_LENGTH(N'dbo.PhoneTreeEvents', N'NotifiedByName') IS NULL
+                ALTER TABLE dbo.PhoneTreeEvents ADD NotifiedByName nvarchar(500) NULL;
+            """,
             // DutyHourRules.Severity (1 = warning, 2 = breach). Added later than the base
             // schema — backport idempotently on existing databases without a migration.
             """

@@ -217,7 +217,9 @@ export interface PhoneTreeEvent {
   acknowledgedAt?: string
   initiatedById?: string
   initiatedBy?: Employee
+  initiatedByName?: string
   requestedByName?: string
+  notifiedByName?: string
   location?: string
   locationZone?: string
   externalIncidentId?: string

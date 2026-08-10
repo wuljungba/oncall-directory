@@ -3,7 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace OnCallApi.Models;
 
 /// <summary>Request DTO for resolving a phone tree event.</summary>
-public record ResolveEventRequest(string? Outcome);
+public record ResolveEventRequest(string? Outcome, string? NotifiedByName = null);
 
 /// <summary>Request DTO for saving debrief notes.</summary>
 public record SaveDebriefNotesRequest(string? Notes);
@@ -41,9 +41,18 @@ public class PhoneTreeEvent
     public Guid? InitiatedById { get; set; }
     public Employee? InitiatedBy { get; set; }
 
+    /// <summary>Name of the signed-in account/operator who triggered the code call. Pinned from
+    /// the authenticated user (reliable across providers where Employee.Id resolution may differ).</summary>
+    [MaxLength(200)]
+    public string? InitiatedByName { get; set; }
+
     /// <summary>Free-text name of the person who called in / ordered the code (the reporter).</summary>
     [MaxLength(200)]
     public string? RequestedByName { get; set; }
+
+    /// <summary>Free-text name of the person(s) notified after dispatch completed.</summary>
+    [MaxLength(500)]
+    public string? NotifiedByName { get; set; }
 
     [MaxLength(200)]
     public string? Location { get; set; }

@@ -328,10 +328,10 @@ export const commandCenterApi = {
     fetchApi<PhoneTreeEvent[]>('/phone-trees/events/resolved'),
   acknowledgeEvent: (eventId: number) =>
     fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}/acknowledge`, { method: 'POST' }),
-  resolveEvent: (eventId: number, outcome?: string) =>
+  resolveEvent: (eventId: number, opts?: { outcome?: string; notifiedByName?: string }) =>
     fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}/resolve`, {
       method: 'POST',
-      body: JSON.stringify({ outcome }),
+      body: JSON.stringify({ outcome: opts?.outcome, notifiedByName: opts?.notifiedByName }),
     }),
   addDispatchStep: (eventId: number, step: Partial<DispatchStep>) =>
     fetchApi<DispatchStep>(`/phone-trees/events/${eventId}/dispatch-step`, {

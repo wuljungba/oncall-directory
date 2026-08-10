@@ -81,7 +81,7 @@ public class PhoneTreeEventsController : ControllerBase
     {
         try
         {
-            var evt = await _service.ResolveEventAsync(eventId, request?.Outcome);
+            var evt = await _service.ResolveEventAsync(eventId, request?.Outcome, request?.NotifiedByName);
             await _hub.Clients.All.SendAsync("IncidentResolved", evt);
             return Ok(evt);
         }
@@ -150,9 +150,10 @@ public class PhoneTreeEventsController : ControllerBase
             Notes = request.Notes,
             RequestedByName = request.RequestedByName,
 
-            // The operator who triggered the code is stamped from the authenticated user
-            // (never trusted from the client body); the reporter is free-text RequestedByName.
+            // Triggered-by: pin the signed-in account's name; the reporter is free-text
+            // RequestedByName. Employee.Id is captured best-effort (caller may lack a profile).
             InitiatedById = await _tenantContext.GetCurrentEmployeeIdAsync(User),
+            InitiatedByName = User.Identity?.Name,
         };
 
         var created = await _service.CreateEventAsync(evt);
