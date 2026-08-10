@@ -182,11 +182,10 @@ export default function SchedulePage() {
   async function handleRequestSwap(shiftId: number, replacementUserId: string, reason: string) {
     try {
       await scheduleApi.requestSwap({
-        originalShiftId: shiftId,
+        shiftId,
         replacementUserId,
         reason,
-        status: 'pending',
-      } as any)
+      })
       setShowSwapModal(false)
       setSwapTargetShift(null)
     } catch (err) {

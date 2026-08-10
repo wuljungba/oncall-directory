@@ -137,7 +137,7 @@ export const scheduleApi = {
     fetchApi<Shift[]>(
       `/schedule/on-call${departmentId ? `?departmentId=${departmentId}` : ''}`
     ),
-  requestSwap: (swap: Partial<ShiftSwap>) =>
+  requestSwap: (swap: { shiftId: number; replacementUserId?: string; reason?: string }) =>
     fetchApi<ShiftSwap>('/schedule/swaps', {
       method: 'POST',
       body: JSON.stringify(swap),

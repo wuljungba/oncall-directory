@@ -296,6 +296,16 @@ public class ScheduleService : IScheduleService
 
     public async Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff)
     {
+        // Server-side: a new request always starts pending and never carries an approver
+        // or reason, and never trusts client-supplied Id/status/approver fields — closing
+        // the self-approval hole where a caller could POST { status: "approved", ... }.
+        timeOff.Id = 0;
+        timeOff.Status = "pending";
+        timeOff.ApprovedById = null;
+        timeOff.ApprovalReason = null;
+        timeOff.CreatedAt = DateTime.UtcNow;
+        timeOff.UpdatedAt = DateTime.UtcNow;
+
         await ValidateNoOverlapAsync(timeOff.EmployeeId, timeOff.StartDate, timeOff.EndDate, null);
         _db.TimeOffs.Add(timeOff);
         await _db.SaveChangesAsync();

@@ -136,6 +136,10 @@ public class TenantContextService : ITenantContextService
 
     public async Task<Guid?> GetCurrentEmployeeIdAsync(ClaimsPrincipal user)
     {
+        // Local accounts carry an explicit "employee_id" claim = the internal Employee.Id.
+        if (Guid.TryParse(user.FindFirst("employee_id")?.Value, out var direct))
+            return direct;
+
         var azureAdObjectId = GetAzureAdObjectId(user);
         if (string.IsNullOrEmpty(azureAdObjectId))
             return null;
@@ -150,11 +154,12 @@ public class TenantContextService : ITenantContextService
 
     private static string? GetAzureAdObjectId(ClaimsPrincipal user)
     {
-        // Try "oid" claim (Azure AD standard)
-        var oid = user.FindFirst("oid")?.Value;
-        if (!string.IsNullOrEmpty(oid)) return oid;
-
-        // Fallback to sub claim
-        return user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        // Azure AD standard "oid"; Microsoft.Identity.Web can map it to the long-form
+        // namespace claim, and the dev handler uses that long form only. Include both,
+        // then "sub", then NameIdentifier — mirroring JwtValidationMiddleware.GetUserId.
+        return user.FindFirst("oid")?.Value
+            ?? user.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
+            ?? user.FindFirst("sub")?.Value
+            ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
     }
 }
