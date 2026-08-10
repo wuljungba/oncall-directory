@@ -82,6 +82,16 @@ identity/permission is acceptable — that's a directory-only entry.
 - Admin → Users & Permissions → Local Accounts → **Add**, matching the employee's email.
 - Role/permission: start with viewer; promote via the permissions tab.
 
+## 3.5 Department & manager (optional enrichment)
+
+- **Department**: optional per the standard, but when a department matters for
+  scheduling, set it. CSV imports support a `departmentId` column (import into the right
+  department the first time); manual adds pick it in the form. Schedules rotate per
+  department, and the directory groups by it.
+- **Manager**: optional per the standard — if unset, time-off approval falls back to an
+  admin. Set `ManagerId` (Admin → Accounts → Edit) to route approvals to that person's
+  manager view and to power the direct-reports enrichment.
+
 ## 4. Post-onboarding verification
 
 After adding a person, confirm (in the app, not just the UI):

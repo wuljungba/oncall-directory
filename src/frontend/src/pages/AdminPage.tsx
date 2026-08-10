@@ -10,8 +10,9 @@ import type { Employee, Department, TimeOff, Tenant, TenantAdmin } from '@/types
 import CodeCallLocationsSection from './CodeCallLocationsSection'
 import PermissionsSection from './admin/PermissionsSection'
 import SharedSchedulesSection from './admin/SharedSchedulesSection'
+import OnboardingHealthSection from './admin/OnboardingHealthSection'
 
-type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares'
+type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares' | 'onboarding'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('overview')
@@ -43,6 +44,7 @@ export default function AdminPage() {
     tabs.push({ key: 'permissions', label: 'Users & Permissions' })
     tabs.push({ key: 'shares', label: 'Public Schedule' })
     tabs.push({ key: 'tenants', label: 'Subscriptions' })
+    tabs.push({ key: 'onboarding', label: 'Onboarding' })
   }
 
   // Get the current tenant name for display
@@ -104,6 +106,7 @@ export default function AdminPage() {
       {tab === 'tenants' && <TenantsSection setActiveTenantId={setActiveTenantId} />}
       {tab === 'permissions' && <PermissionsSection />}
       {tab === 'shares' && <SharedSchedulesSection />}
+      {tab === 'onboarding' && <OnboardingHealthSection />}
     </div>
   )
 }

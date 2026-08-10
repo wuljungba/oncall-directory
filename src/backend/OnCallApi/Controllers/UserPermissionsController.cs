@@ -22,11 +22,13 @@ public class UserPermissionsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ITenantContextService _tenants;
+    private readonly IAuditService _audit;
 
-    public UserPermissionsController(AppDbContext db, ITenantContextService tenants)
+    public UserPermissionsController(AppDbContext db, ITenantContextService tenants, IAuditService audit)
     {
         _db = db;
         _tenants = tenants;
+        _audit = audit;
     }
 
     /// <summary>List permission grants. Super admins see all; scoped admins see their tenants' only.</summary>
@@ -91,6 +93,21 @@ public class UserPermissionsController : ControllerBase
 
         _db.PermissionGrants.Add(grant);
         await _db.SaveChangesAsync();
+
+        var uid = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
+            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        _audit.Enqueue(new OnCallApi.Models.AuditLog
+        {
+            UserId = Guid.TryParse(uid, out var parsed) ? parsed : Guid.Empty,
+            UserName = User.Identity?.Name ?? "",
+            Action = "Granted",
+            ResourceType = "PermissionGrant",
+            ResourceId = grant.Id.ToString(),
+            Details = $"Principal={grant.ExternalPrincipalId};Permissions={grant.Permissions}",
+            TenantId = grant.TenantId,
+            Timestamp = DateTime.UtcNow,
+        });
+
         return Ok(ToResponse(grant));
     }
 

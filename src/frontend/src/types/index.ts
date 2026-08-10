@@ -164,6 +164,22 @@ export interface DutyHourViolation {
   violatedAt: string
 }
 
+export interface OnboardingIssue {
+  id: string
+  name: string
+  email: string
+  source: string
+  isActive: boolean
+  problems: string[]
+}
+
+export interface OnboardingHealth {
+  total: number
+  withIssues: number
+  bySource: Record<string, number>
+  issues: OnboardingIssue[]
+}
+
 export interface AppSetting {
   key: string
   value: string

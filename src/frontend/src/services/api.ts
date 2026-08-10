@@ -22,6 +22,7 @@ import type {
   LocalAccount,
   PublicShare,
   PublicCoverage,
+  OnboardingHealth,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -476,6 +477,11 @@ export const permissionsAdminApi = {
     }),
   remove: (id: number) =>
     fetchApi<void>(`/admin/permissions/${id}`, { method: 'DELETE' }),
+}
+
+// ── Admin: onboarding standard health ──
+export const onboardingApi = {
+  getHealth: () => fetchApi<OnboardingHealth>('/admin/onboarding/health'),
 }
 
 // ── Admin: public permalink shares (coverage-only on-call schedule) ──

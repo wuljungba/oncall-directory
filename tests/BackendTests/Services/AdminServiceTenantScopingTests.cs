@@ -121,7 +121,8 @@ public class AdminServiceTenantScopingTests
             db,
             NullLogger<AdminService>.Instance,
             tenantContext,
-            httpContextMock.Object);
+            httpContextMock.Object,
+            new Mock<IAuditService>().Object);
     }
 
     private static ClaimsPrincipal CreateSuperAdminPrincipal()

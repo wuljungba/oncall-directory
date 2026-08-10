@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using OnCallApi.Data;
+using OnCallApi.Models;
 
 namespace OnCallApi.Services;
 
@@ -101,13 +102,13 @@ public class AdSyncBackgroundService : BackgroundService
             // matter what value their AzureAdObjectId happens to carry. This is what keeps a
             // CSV import from silently vanishing 15 minutes later.
             var activeUsers = await db.Employees
-                .Where(e => e.IsActive && e.Source == "Ad")
+                .Where(e => e.IsActive)
                 .ToListAsync(ct);
 
-            foreach (var active in activeUsers)
-            {
-                if (adObjectIds.Contains(active.AzureAdObjectId)) continue;
+            var toDeactivate = SelectEmployeesToDeactivate(activeUsers, adObjectIds);
 
+            foreach (var active in toDeactivate)
+            {
                 active.IsActive = false;
                 active.UpdatedAt = DateTime.UtcNow;
             }
@@ -149,4 +150,15 @@ public class AdSyncBackgroundService : BackgroundService
         }
         await db.SaveChangesAsync(ct);
     }
+
+    /// <summary>
+    /// Pure rule behind AD deactivation: only records tagged <see cref="Employee.Source"/>
+    /// == "Ad" and no longer present in AD are selected. Local/CsvImport/unsourced records
+    /// are never deactivated, regardless of their <see cref="Employee.AzureAdObjectId"/>.
+    /// Kept internal/static so the invariant is unit-testable.
+    /// </summary>
+    internal static List<Employee> SelectEmployeesToDeactivate(IEnumerable<Employee> activeEmployees, HashSet<string> adObjectIds) =>
+        activeEmployees
+            .Where(e => e.Source == "Ad" && !adObjectIds.Contains(e.AzureAdObjectId))
+            .ToList();
 }

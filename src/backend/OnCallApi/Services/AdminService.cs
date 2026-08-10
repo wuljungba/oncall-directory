@@ -12,17 +12,20 @@ public class AdminService : IAdminService
     private readonly ILogger<AdminService> _logger;
     private readonly ITenantContextService _tenantContext;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IAuditService _audit;
 
     public AdminService(
         AppDbContext db,
         ILogger<AdminService> logger,
         ITenantContextService tenantContext,
-        IHttpContextAccessor httpContextAccessor)
+        IHttpContextAccessor httpContextAccessor,
+        IAuditService audit)
     {
         _db = db;
         _logger = logger;
         _tenantContext = tenantContext;
         _httpContextAccessor = httpContextAccessor;
+        _audit = audit;
     }
 
     /// <summary>
@@ -127,6 +130,16 @@ public class AdminService : IAdminService
     {
         var tenantId = await ResolveCreateTenantId(request.TenantId);
 
+        // One employee per email (onboarding standard). Prevents duplicate directory
+        // entries for the same person no matter which path creates them.
+        if (!string.IsNullOrWhiteSpace(request.Email))
+        {
+            var existingEmail = await _db.Employees
+                .AnyAsync(e => e.Email.ToLower() == request.Email.ToLowerInvariant().Trim());
+            if (existingEmail)
+                throw new InvalidOperationException("An employee with this email already exists.");
+        }
+
         var employee = new Employee
         {
             Id = Guid.NewGuid(),
@@ -165,10 +178,29 @@ public class AdminService : IAdminService
         }
 
         // Reload with navigation properties
-        return (await _db.Employees
+        var created = (await _db.Employees
             .Include(e => e.Department)
             .Include(e => e.Manager)
             .FirstAsync(e => e.Id == employee.Id))!;
+
+        var userId = Guid.Empty;
+        var uid = CurrentUser?.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
+            ?? CurrentUser?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (Guid.TryParse(uid, out var parsedUid)) userId = parsedUid;
+
+        _audit.Enqueue(new OnCallApi.Models.AuditLog
+        {
+            UserId = userId,
+            UserName = CurrentUser?.Identity?.Name ?? "",
+            Action = "Created",
+            ResourceType = "Employee",
+            ResourceId = created.Id.ToString(),
+            Details = $"Source={created.Source};Email={created.Email}",
+            TenantId = created.TenantId,
+            Timestamp = DateTime.UtcNow,
+        });
+
+        return created;
     }
 
     public async Task<Employee> UpdateEmployeeAsync(Guid id, UpdateEmployeeRequest request)

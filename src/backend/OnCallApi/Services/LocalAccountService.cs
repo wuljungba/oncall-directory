@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using OnCallApi.Authentication;
+using OnCallApi.Authorization;
 using OnCallApi.Data;
 using OnCallApi.Models;
 
@@ -55,6 +56,23 @@ public class LocalAccountService : ILocalAccountService
 
         _db.LocalAccounts.Add(account);
         await _db.SaveChangesAsync();
+
+        // Onboarding standard: every sign-in-capable account gets the staff baseline
+        // (Schedule.Read + Directory.Read). Admins can demote/adjust afterward.
+        var hasBaseline = await _db.PermissionGrants.AnyAsync(g =>
+            g.IsActive && g.ExternalPrincipalId == account.Email && (g.Permissions ?? string.Empty).Contains(Permissions.ScheduleRead));
+        if (!hasBaseline)
+        {
+            _db.PermissionGrants.Add(new PermissionGrant
+            {
+                PrincipalType = "local",
+                ExternalPrincipalId = account.Email,
+                LocalUserId = account.Id,
+                Permissions = $"{Permissions.ScheduleRead},{Permissions.DirectoryRead}",
+                IsActive = true,
+            });
+            await _db.SaveChangesAsync();
+        }
 
         _logger.LogInformation("Local account registered: {Email} (Id={Id})", account.Email, account.Id);
         return account;

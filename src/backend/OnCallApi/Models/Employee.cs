@@ -71,11 +71,12 @@ public class Employee
     /// Record origin (see docs/onboarding-standard.md). Standard values:
     /// "Ad" (created/confirmed by the Azure AD sync — the only source eligible for
     /// AD-driven deactivation), "CsvImport" (bulk CSV import), "Local" (manually
-    /// created). Any non-"Ad" record is locally-managed and the AD sync must NEVER
+    /// created, and the safe default for any path that doesn't tag an origin).
+    /// Any non-"Ad" record is locally-managed and the AD sync must NEVER
     /// deactivate it, regardless of its <see cref="AzureAdObjectId"/>.
     /// </summary>
     [MaxLength(64)]
-    public string Source { get; set; } = "";
+    public string Source { get; set; } = "Local";
 
     // Navigation properties
     public ICollection<Employee> DirectReports { get; set; } = new List<Employee>();
