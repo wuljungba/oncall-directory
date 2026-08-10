@@ -183,8 +183,12 @@ public class ScheduleController : ControllerBase
     [HttpGet("time-off/me")]
     public async Task<ActionResult<List<TimeOff>>> GetMyTimeOff()
     {
-        var azureAdObjectId = User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
-            ?? throw new UnauthorizedAccessException("User identity not found in token.");
+        var azureAdObjectId = User.FindFirst("oid")?.Value
+            ?? User.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
+            ?? User.FindFirst("sub")?.Value
+            ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        if (string.IsNullOrEmpty(azureAdObjectId))
+            return new List<TimeOff>();
         return await _scheduleService.GetTimeOffForCurrentUserAsync(azureAdObjectId);
     }
 

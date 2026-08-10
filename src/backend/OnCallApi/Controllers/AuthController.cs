@@ -16,9 +16,14 @@ public class AuthController : ControllerBase
         _tenantContext = tenantContext;
     }
 
-    /// <summary>Returns the current user's identity, roles, and granular permissions.</summary>
+    /// <summary>
+/// Returns the current user's identity, roles, and granular permissions.
+/// Any authenticated principal may call this — including Entra/Google users whose
+/// tokens carry no app roles but were granted permission via a PermissionGrant.
+/// (RequireViewer here rejected those users with a 403 and an empty UI.)
+/// </summary>
     [HttpGet("me")]
-    [Authorize(Policy = "RequireViewer")]
+    [Authorize]
     public async Task<ActionResult<CurrentUserResponse>> GetCurrentUser()
     {
         var roles = User.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList();
