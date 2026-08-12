@@ -366,6 +366,23 @@ public class ScheduleService : IScheduleService
         timeOff.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
+
+        // Immediate schedule change: approved time-off means the employee is unavailable,
+        // so mark their scheduled shifts in the window as open gaps (coverage needed).
+        // A scheduler/manager can then fill the gap; the on-call endpoint excludes gaps.
+        var affected = await _db.Shifts
+            .Where(s => s.EmployeeId == timeOff.EmployeeId
+                && s.Status == "scheduled"
+                && s.StartTime >= timeOff.StartDate
+                && s.StartTime < timeOff.EndDate.AddDays(1))
+            .ToListAsync();
+        foreach (var s in affected) s.Status = "gap";
+        if (affected.Count > 0)
+        {
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("Marked {Count} shifts as gap for approved time-off {Id}", affected.Count, id);
+        }
+
         _logger.LogInformation("Approved time-off {Id} by approver {ApproverId} (reason: {Reason})",
             id, approvedById, reason ?? "-");
         return timeOff;

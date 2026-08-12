@@ -23,6 +23,7 @@ import type {
   PublicShare,
   PublicCoverage,
   OnboardingHealth,
+  OnCallReportRow,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -477,6 +478,17 @@ export const permissionsAdminApi = {
     }),
   remove: (id: number) =>
     fetchApi<void>(`/admin/permissions/${id}`, { method: 'DELETE' }),
+}
+
+// ── On-call audit report ──
+export const auditApi = {
+  getOnCallReport: (from?: string, to?: string) => {
+    const params = new URLSearchParams()
+    if (from) params.set('from', from)
+    if (to) params.set('to', to)
+    const qs = params.toString()
+    return fetchApi<OnCallReportRow[]>(`/audit/on-call-report${qs ? `?${qs}` : ''}`)
+  },
 }
 
 // ── Admin: onboarding standard health ──

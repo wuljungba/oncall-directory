@@ -140,32 +140,65 @@ public class EscalationService
 
     private async Task FireEscalation(EscalationPolicy policy, Shift shift, int tier)
     {
-        if (shift.Employee == null) return;
+        // Route to the coverage holder for this tier: tier 1 -> the secondary backup,
+        // tier 2+ -> the tertiary backup, falling back to the primary only if no backup
+        // is assigned. This makes escalation reach the BACKUP instead of re-pinging the
+        // same primary who did not answer.
+        var target = await ResolveEscalationTargetAsync(shift, tier);
 
         var escEvent = new EscalationEvent
         {
             PolicyId = policy.Id,
-            EmployeeId = shift.EmployeeId,
+            EmployeeId = target?.Id ?? shift.EmployeeId,
             ShiftId = shift.Id,
             Tier = tier,
             Status = "pending",
-            Details = $"Tier {tier} escalation for {shift.Employee.FirstName} {shift.Employee.LastName} (policy: {policy.Name})",
+            Details = $"Tier {tier} escalation for {target?.FirstName} {target?.LastName} (policy: {policy.Name})",
         };
 
         _db.EscalationEvents.Add(escEvent);
 
-        // Notify via Teams
-        if (_teams != null && !string.IsNullOrEmpty(shift.Employee.AzureAdObjectId))
+        // Notify the target via Teams (and any configured channel later).
+        if (target != null && _teams != null && !string.IsNullOrEmpty(target.AzureAdObjectId))
         {
             var deptName = shift.Schedule?.Department?.Name ?? "Unknown";
             await _teams.SendEscalationAsync(
-                shift.Employee.AzureAdObjectId,
+                target.AzureAdObjectId,
                 deptName,
                 $"Tier {tier}",
-                $"You have an escalation for your on-call shift. Policy: {policy.Name}");
+                $"Escalation: the primary did not respond within the policy window. Policy: {policy.Name}");
         }
 
         await _db.SaveChangesAsync();
         _logger.LogWarning("Escalation fired: {Details}", escEvent.Details);
+    }
+
+    /// <summary>
+    /// Picks who to contact for an escalation: tier 1 -> the secondary shift holder,
+    /// tier 2+ -> the tertiary holder, falling back to the shift's own (primary) holder.
+    /// </summary>
+    private async Task<Employee?> ResolveEscalationTargetAsync(Shift shift, int tier)
+    {
+        if (shift.Employee == null) return null;
+
+        var targetTier = tier switch
+        {
+            1 => "secondary",
+            _ => "tertiary",
+        };
+
+        var backup = await _db.Shifts
+            .Include(s => s.Employee)
+            .Where(s => s.ScheduleId == shift.ScheduleId
+                && s.StartTime == shift.StartTime
+                && s.EndTime == shift.EndTime
+                && s.Tier == targetTier
+                && s.Status != "gap"
+                && s.Employee != null)
+            .OrderBy(s => s.EmployeeId)
+            .FirstOrDefaultAsync();
+
+        // If no dedicated backup is assigned for this tier, fall back to the primary.
+        return backup?.Employee ?? shift.Employee;
     }
 }

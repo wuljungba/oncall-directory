@@ -180,6 +180,28 @@ export interface OnboardingHealth {
   issues: OnboardingIssue[]
 }
 
+export interface OnCallIncidentSummary {
+  id: number
+  startedAt: string
+  endedAt?: string | null
+  requestedByName?: string
+  initiatedByName?: string
+  notifiedByName?: string
+  location?: string
+  status?: string
+  outcome?: string
+}
+
+export interface OnCallReportRow {
+  employeeId: string
+  employeeName: string
+  tier: string
+  start: string
+  end: string
+  status: string
+  incidents: OnCallIncidentSummary[]
+}
+
 export interface AppSetting {
   key: string
   value: string

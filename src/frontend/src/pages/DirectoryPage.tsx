@@ -165,7 +165,7 @@ export default function DirectoryPage() {
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
         <input
           type="text"
-          placeholder="Search by name, title, department, or email..."
+          placeholder="Search by name, specialty, title, location, department, or email..."
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
           className="w-full bg-gray-900 border border-gray-700 rounded-xl pl-11 pr-4 py-3 text-sm focus:outline-none focus:border-amber-600 transition-colors"

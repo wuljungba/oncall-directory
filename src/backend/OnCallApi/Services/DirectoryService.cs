@@ -26,7 +26,11 @@ public class DirectoryService : IDirectoryService
                 e.FirstName.ToLower().Contains(search) ||
                 e.LastName.ToLower().Contains(search) ||
                 (e.Title != null && e.Title.ToLower().Contains(search)) ||
-                e.Email.ToLower().Contains(search));
+                (e.Specialty != null && e.Specialty.ToLower().Contains(search)) ||
+                (e.ClinicalRole != null && e.ClinicalRole.ToLower().Contains(search)) ||
+                (e.OfficeLocation != null && e.OfficeLocation.ToLower().Contains(search)) ||
+                e.Email.ToLower().Contains(search) ||
+                (e.Department != null && e.Department.Name.ToLower().Contains(search)));
         }
 
         if (departmentId.HasValue)
