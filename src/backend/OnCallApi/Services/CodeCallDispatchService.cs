@@ -79,9 +79,11 @@ public class CodeCallDispatchService : ICodeCallDispatchService
         try
         {
             using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var cucm = scope.ServiceProvider.GetRequiredService<ICiscoCucmClient>();
             var informaCast = scope.ServiceProvider.GetRequiredService<IInformaCastClient>();
             var vocera = scope.ServiceProvider.GetRequiredService<IVoceraClient>();
+            var twilio = scope.ServiceProvider.GetRequiredService<ITwilioClient>();
 
             int successCount = 0;
             int totalChannels = 0;
@@ -172,6 +174,9 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 await RecordStepAndNotify(evt.Id, "vocera", "in_progress",
                     $"Sending Vocera alert to responder group {_options.Vocera.ResponderGroupId}...");
 
+                // NOTE: ResponderGroupId is passed in VMP's recipient field. Verify the
+                // VMP service treats this as a group/id before live firing (the review
+                // flagged it as a single-badge-idsemantic risk).
                 var voceraResult = await vocera.SendAlertAsync(
                     _options.Vocera.ResponderGroupId,
                     $"{codeType} — {evt.Location ?? "Unknown location"} — Respond immediately",
@@ -194,6 +199,43 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             {
                 await RecordStepAndNotify(evt.Id, "vocera", "skipped",
                     "Vocera integration not configured");
+            }
+
+            // ── Step: Twilio SMS to the on-call provider's mobile ──
+            if (_options.Twilio.Enabled)
+            {
+                totalChannels++;
+                await RecordStepAndNotify(evt.Id, "twilio_sms", "in_progress",
+                    "Sending SMS to on-call provider...");
+
+                var mobile = await ResolveOnCallMobileAsync(db, evt);
+                if (string.IsNullOrEmpty(mobile))
+                {
+                    await RecordStepAndNotify(evt.Id, "twilio_sms", "skipped",
+                        "No on-call provider mobile number found for this event");
+                }
+                else
+                {
+                    var smsResult = await twilio.SendSmsAsync(
+                        mobile,
+                        $"{codeType} — {evt.Location ?? "Unknown location"} — Respond immediately");
+                    if (smsResult.Success)
+                    {
+                        await RecordStepAndNotify(evt.Id, "twilio_sms", "completed",
+                            $"SMS sent to on-call provider ({smsResult.IncidentId})");
+                        successCount++;
+                    }
+                    else
+                    {
+                        await RecordStepAndNotify(evt.Id, "twilio_sms", "failed",
+                            $"SMS failed: {smsResult.Detail}");
+                    }
+                }
+            }
+            else
+            {
+                await RecordStepAndNotify(evt.Id, "twilio_sms", "skipped",
+                    "Twilio SMS integration not configured");
             }
 
             // ── Step 4: Overall result ──
@@ -289,6 +331,32 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             return true; // No CUCM configured — skip check
 
         return await cucm.CheckDeviceRegistrationAsync(location);
+    }
+
+    /// <summary>
+    /// Resolves the on-call provider's mobile number for an event: the current active
+    /// primary shift holder in the event's department (via the phone tree's department),
+    /// using their Employee.MobilePhone. Returns null if no holder/number is available.
+    /// </summary>
+    private static async Task<string?> ResolveOnCallMobileAsync(AppDbContext db, PhoneTreeEvent evt)
+    {
+        var phoneTree = await db.PhoneTrees
+            .FirstOrDefaultAsync(t => t.Id == evt.PhoneTreeId);
+        var departmentId = phoneTree?.DepartmentId;
+
+        var now = DateTime.UtcNow;
+        var primary = await db.Shifts
+            .Include(s => s.Employee)
+            .Where(s => departmentId == null || (s.Schedule != null && s.Schedule.DepartmentId == departmentId))
+            .Where(s => s.StartTime <= now && s.EndTime >= now
+                && s.Status != "gap"
+                && s.Tier == "primary"
+                && s.Employee != null)
+            .OrderBy(s => s.StartTime)
+            .ThenByDescending(s => s.EndTime)
+            .FirstOrDefaultAsync();
+
+        return primary?.Employee?.MobilePhone;
     }
 
     private async Task RecordStepAndNotify(int eventId, string stepKey, string status, string detail)

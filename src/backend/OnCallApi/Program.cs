@@ -40,6 +40,29 @@ ValidateSecret("AzureAd:ClientId", builder.Configuration["AzureAd:ClientId"] ?? 
 ValidateSecret("GraphApi:ClientSecret", builder.Configuration["GraphApi:ClientSecret"] ?? "", "your-graph-client-secret", "Graph API Client Secret");
 ValidateSecret("Authentication:Local:SigningKey", builder.Configuration["Authentication:Local:SigningKey"] ?? "", "change-me-to-a-32-char-min-secret-key!!", "Local JWT Signing Key");
 
+// Dispatch channel secrets are only required once a channel is ENABLED. A disabled channel
+// ships with placeholders; flipping Enabled=true without real credentials fails fast in prod.
+static bool Enabled(IConfiguration c, string key) =>
+    string.Equals(c[key] ?? "", "true", StringComparison.OrdinalIgnoreCase);
+if (Enabled(builder.Configuration, "Dispatch:Vocera:Enabled"))
+{
+    ValidateSecret("Dispatch:Vocera:BaseUrl", builder.Configuration["Dispatch:Vocera:BaseUrl"] ?? "", "https://vmp.example.com", "Vocera Base URL");
+    ValidateSecret("Dispatch:Vocera:ApiKey", builder.Configuration["Dispatch:Vocera:ApiKey"] ?? "", "your-vocera-api-key", "Vocera API Key");
+    ValidateSecret("Dispatch:Vocera:ResponderGroupId", builder.Configuration["Dispatch:Vocera:ResponderGroupId"] ?? "", "your-responder-group", "Vocera Responder Group");
+}
+if (Enabled(builder.Configuration, "Dispatch:InformaCast:Enabled"))
+{
+    ValidateSecret("Dispatch:InformaCast:BaseUrl", builder.Configuration["Dispatch:InformaCast:BaseUrl"] ?? "", "https://informacast.example.com", "InformaCast Base URL");
+    ValidateSecret("Dispatch:InformaCast:ApiToken", builder.Configuration["Dispatch:InformaCast:ApiToken"] ?? "", "your-informacast-api-token", "InformaCast API Token");
+    ValidateSecret("Dispatch:InformaCast:ScenarioId", builder.Configuration["Dispatch:InformaCast:ScenarioId"] ?? "", "your-scenario-id", "InformaCast Scenario ID");
+}
+if (Enabled(builder.Configuration, "Dispatch:Twilio:Enabled"))
+{
+    ValidateSecret("Dispatch:Twilio:AccountSid", builder.Configuration["Dispatch:Twilio:AccountSid"] ?? "", "your-twilio-account-sid", "Twilio Account SID");
+    ValidateSecret("Dispatch:Twilio:AuthToken", builder.Configuration["Dispatch:Twilio:AuthToken"] ?? "", "your-twilio-auth-token", "Twilio Auth Token");
+    ValidateSecret("Dispatch:Twilio:FromNumber", builder.Configuration["Dispatch:Twilio:FromNumber"] ?? "", "+12025551234", "Twilio From Number");
+}
+
 // The local JWT signing key must be a strong secret in production — the
 // LocalJwtService dev fallback key is well-known and never safe to ship.
 // Empty or short values fail fast in production.
@@ -363,6 +386,7 @@ builder.Services.AddScoped<ICodeCallDispatchService, CodeCallDispatchService>();
 builder.Services.AddScoped<ICiscoCucmClient, CiscoCucmClient>();
 builder.Services.AddScoped<IInformaCastClient, InformaCastClient>();
 builder.Services.AddScoped<IVoceraClient, VoceraClient>();
+builder.Services.AddScoped<ITwilioClient, TwilioClient>();
 builder.Services.Configure<OnCallApi.Configuration.DispatchOptions>(
     builder.Configuration.GetSection(OnCallApi.Configuration.DispatchOptions.SectionName));
 

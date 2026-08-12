@@ -8,6 +8,7 @@ public class DispatchOptions
     public CucmOptions Cucm { get; set; } = new();
     public InformaCastOptions InformaCast { get; set; } = new();
     public VoceraOptions Vocera { get; set; } = new();
+    public TwilioOptions Twilio { get; set; } = new();
     public SipPbxOptions SipPbx { get; set; } = new();
 }
 
@@ -40,6 +41,15 @@ public class VoceraOptions
     public string BaseUrl { get; set; } = string.Empty;
     public string ApiKey { get; set; } = string.Empty;
     public string ResponderGroupId { get; set; } = string.Empty;
+    public int ConnectionTimeoutSeconds { get; set; } = 30;
+}
+
+public class TwilioOptions
+{
+    public bool Enabled { get; set; }
+    public string AccountSid { get; set; } = string.Empty;
+    public string AuthToken { get; set; } = string.Empty;
+    public string FromNumber { get; set; } = string.Empty;
     public int ConnectionTimeoutSeconds { get; set; } = 30;
 }
 
