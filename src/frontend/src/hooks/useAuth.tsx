@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react'
 import { authApi } from '@/services/api'
 import { getAuthProvider, getActiveProviderType } from '@/services/auth'
 import type { AuthUser, AuthProviderType } from '@/services/auth'
@@ -43,7 +43,15 @@ const ALL_PERMISSIONS = [
   'Admin.Full',
 ]
 
-export function useAuth(): AuthState {
+/**
+ * Owns the single authentication state for the app.
+ *
+ * This is deliberately NOT exported: sign-in state is created once by
+ * <AuthProvider> and read through useAuth(). When every component ran this hook
+ * for itself, a page load fired a dozen parallel /api/auth/me calls and
+ * components could transiently disagree about isLoading and permissions.
+ */
+function useAuthState(): AuthState {
   const [isLoading, setIsLoading] = useState(DEV_AUTH ? false : true)
   const [user, setUser] = useState<AuthUser | null>(
     DEV_AUTH ? { id: 'dev', name: 'dev@local', email: 'dev@local', provider: 'microsoft', raw: {} } as AuthUser : null,
@@ -55,13 +63,19 @@ export function useAuth(): AuthState {
   const [tenantIds, setTenantIds] = useState<number[]>([])
   const [tenantRoles, setTenantRoles] = useState<Record<string, string>>({})
   const [employeeId, setEmployeeId] = useState<string | null>(null)
-  const [activeTenantId, setActiveTenantId] = useState<number | null>(() => {
+  const [activeTenantId, setActiveTenantIdState] = useState<number | null>(() => {
     const stored = sessionStorage.getItem('activeTenantId')
     return stored ? Number(stored) : null
   })
 
+  // Mirrors activeTenantId so handleAuthResponse can read the current value without
+  // taking it as a dependency. Without this the bootstrap effect below re-ran (and
+  // re-fetched the session) every time the active tenant changed.
+  const activeTenantIdRef = useRef(activeTenantId)
+
   const handleSetActiveTenantId = useCallback((id: number | null) => {
-    setActiveTenantId(id)
+    activeTenantIdRef.current = id
+    setActiveTenantIdState(id)
     if (id !== null) {
       sessionStorage.setItem('activeTenantId', String(id))
     } else {
@@ -79,13 +93,21 @@ export function useAuth(): AuthState {
     // Auto-set activeTenantId for scoped admins with only one tenant
     const hasScoped = res.permissions.includes('Admin.Scoped')
     const hasFull = res.permissions.includes('Admin.Full')
-    if (hasScoped && !hasFull && res.tenantIds?.length === 1 && activeTenantId === null) {
-      setActiveTenantId(res.tenantIds[0])
-      sessionStorage.setItem('activeTenantId', String(res.tenantIds[0]))
+    if (hasScoped && !hasFull && res.tenantIds?.length === 1 && activeTenantIdRef.current === null) {
+      handleSetActiveTenantId(res.tenantIds[0])
     }
-  }, [activeTenantId])
+  }, [handleSetActiveTenantId])
+
+  // Bootstrapping the session is a once-per-load job: initialize the auth provider,
+  // restore any existing session, then load permissions. The guard keeps React
+  // StrictMode's development double-invoke from running MSAL init and /api/auth/me
+  // twice on every page load.
+  const didBootstrap = useRef(false)
 
   useEffect(() => {
+    if (didBootstrap.current) return
+    didBootstrap.current = true
+
     if (DEV_AUTH) {
       // Fetch permissions from backend to respect role-switching
       authApi.me()
@@ -173,9 +195,8 @@ export function useAuth(): AuthState {
     setPermissions([])
     setTenantIds([])
     setTenantRoles({})
-    setActiveTenantId(null)
-    sessionStorage.removeItem('activeTenantId')
-  }, [])
+    handleSetActiveTenantId(null)
+  }, [handleSetActiveTenantId])
 
   const refreshToken = useCallback(async (): Promise<string | null> => {
     if (DEV_AUTH) return sessionStorage.getItem('accessToken')
@@ -218,4 +239,29 @@ export function useAuth(): AuthState {
     activeTenantId,
     setActiveTenantId: handleSetActiveTenantId,
   }
+}
+
+const AuthContext = createContext<AuthState | null>(null)
+
+/**
+ * Provides the app's authentication state. Mount once, above the router's routes
+ * (see main.tsx) — every useAuth() call reads from this instance.
+ */
+export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const auth = useAuthState()
+  return <AuthContext.Provider value={auth}>{children}</AuthContext.Provider>
+}
+
+/**
+ * Reads the shared authentication state.
+ *
+ * Throws when used outside <AuthProvider> rather than silently spinning up a second,
+ * divergent copy of the session.
+ */
+export function useAuth(): AuthState {
+  const auth = useContext(AuthContext)
+  if (auth === null) {
+    throw new Error('useAuth must be used within an <AuthProvider>')
+  }
+  return auth
 }

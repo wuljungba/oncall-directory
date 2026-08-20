@@ -6,6 +6,7 @@ using OnCallApi.Data;
 using OnCallApi.Hubs;
 using OnCallApi.Models;
 using OnCallApi.Services.Dispatch;
+using OnCallApi.Validators;
 
 namespace OnCallApi.Services;
 
@@ -208,11 +209,21 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 await RecordStepAndNotify(evt.Id, "twilio_sms", "in_progress",
                     "Sending SMS to on-call provider...");
 
-                var mobile = await ResolveOnCallMobileAsync(db, evt);
+                // Directory numbers are not reliably canonical (AD/Graph and CSV imports
+                // both yield "(202) 555-0134" style values), and Twilio only accepts E.164.
+                var rawMobile = await ResolveOnCallMobileAsync(db, evt);
+                var mobile = ResolveSmsDestination(rawMobile);
+
                 if (string.IsNullOrEmpty(mobile))
                 {
-                    await RecordStepAndNotify(evt.Id, "twilio_sms", "skipped",
-                        "No on-call provider mobile number found for this event");
+                    // Not "skipped": on a code call, having no reachable number for the
+                    // on-call provider is a dispatch failure and must be visible as one.
+                    var reason = string.IsNullOrWhiteSpace(rawMobile)
+                        ? "No on-call provider mobile number on file for this event"
+                        : "On-call provider's mobile number is not a valid phone number";
+                    _logger.LogError(
+                        "Twilio SMS not sent for event {EventId}: {Reason}", evt.Id, reason);
+                    await RecordStepAndNotify(evt.Id, "twilio_sms", "failed", reason);
                 }
                 else
                 {
@@ -221,8 +232,12 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                         $"{codeType} — {evt.Location ?? "Unknown location"} — Respond immediately");
                     if (smsResult.Success)
                     {
+                        // Twilio has accepted the message, not delivered it. The delivery
+                        // callback (/api/public/twilio/status) settles the outcome and can
+                        // still flip this step to failed.
                         await RecordStepAndNotify(evt.Id, "twilio_sms", "completed",
-                            $"SMS sent to on-call provider ({smsResult.IncidentId})");
+                            $"SMS to on-call provider — {smsResult.Detail}",
+                            providerMessageId: smsResult.IncidentId);
                         successCount++;
                     }
                     else
@@ -319,6 +334,14 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             results.Add(voceraStatus);
         }
 
+        if (_options.Twilio.Enabled)
+        {
+            var twilio = scope.ServiceProvider.GetRequiredService<ITwilioClient>();
+            var twilioStatus = await twilio.CheckConnectionAsync();
+            twilioStatus.Detail = $"Twilio: {twilioStatus.Detail}";
+            results.Add(twilioStatus);
+        }
+
         return results;
     }
 
@@ -331,6 +354,27 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             return true; // No CUCM configured — skip check
 
         return await cucm.CheckDeviceRegistrationAsync(location);
+    }
+
+    /// <summary>
+    /// Turns a stored directory number into something Twilio can actually deliver to,
+    /// or null if it cannot.
+    ///
+    /// <see cref="PhoneValidation.NormalizeToE164"/> is deliberately best-effort for
+    /// directory display, so it happily promotes an internal extension ("ext. 4412") to a
+    /// well-formed but unroutable "+14412". Texting that address sends a code-call alert
+    /// into the void. Anything shorter than a plausible subscriber number is therefore
+    /// rejected here so the dispatch step fails loudly instead.
+    /// </summary>
+    private static string? ResolveSmsDestination(string? storedNumber)
+    {
+        var normalized = PhoneValidation.NormalizeToE164(storedNumber);
+        if (normalized == null) return null;
+
+        // Digits after the '+', country code included. NANP mobiles are 11; the shortest
+        // SMS-capable international mobile numbers are around 8.
+        var digitCount = normalized.Count(char.IsDigit);
+        return digitCount >= 8 ? normalized : null;
     }
 
     /// <summary>
@@ -359,7 +403,8 @@ public class CodeCallDispatchService : ICodeCallDispatchService
         return primary?.Employee?.MobilePhone;
     }
 
-    private async Task RecordStepAndNotify(int eventId, string stepKey, string status, string detail)
+    private async Task RecordStepAndNotify(
+        int eventId, string stepKey, string status, string detail, string? providerMessageId = null)
     {
         int? tenantId = null;
         using (var scope = _scopeFactory.CreateScope())
@@ -373,6 +418,7 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 Status = status,
                 CompletedAt = DateTime.UtcNow,
                 Detail = detail,
+                ProviderMessageId = string.IsNullOrWhiteSpace(providerMessageId) ? null : providerMessageId,
             };
             db.DispatchSteps.Add(step);
             await db.SaveChangesAsync();

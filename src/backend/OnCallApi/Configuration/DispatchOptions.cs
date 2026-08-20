@@ -50,7 +50,26 @@ public class TwilioOptions
     public string AccountSid { get; set; } = string.Empty;
     public string AuthToken { get; set; } = string.Empty;
     public string FromNumber { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional Messaging Service SID. When set it is used instead of <see cref="FromNumber"/>.
+    /// Preferred for US A2P 10DLC traffic, where the campaign is attached to the messaging
+    /// service rather than to an individual long code.
+    /// </summary>
+    public string MessagingServiceSid { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Absolute, publicly reachable URL Twilio posts delivery status updates to
+    /// (e.g. https://app-oncall-production.azurewebsites.net/api/public/twilio/status).
+    /// Blank means no status callback is requested — in which case an undelivered
+    /// code-call SMS is never surfaced, so this should always be set in production.
+    /// </summary>
+    public string StatusCallbackUrl { get; set; } = string.Empty;
+
     public int ConnectionTimeoutSeconds { get; set; } = 30;
+
+    /// <summary>The sender to use: the messaging service when configured, else the from number.</summary>
+    public bool UseMessagingService => !string.IsNullOrWhiteSpace(MessagingServiceSid);
 }
 
 public class SipPbxOptions

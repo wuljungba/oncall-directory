@@ -6,7 +6,7 @@ import {
 import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import { formatDateOnly } from '@/utils/date'
-import type { Employee, Department, TimeOff, Tenant, TenantAdmin } from '@/types'
+import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
 import PermissionsSection from './admin/PermissionsSection'
 import SharedSchedulesSection from './admin/SharedSchedulesSection'
@@ -1097,56 +1097,122 @@ function IntegrationsSection() {
           <Phone className="w-5 h-5 text-red-500" />
           Code Call Dispatch Integration
         </h2>
-        <p className="text-xs text-gray-500">Configure external dispatch channels for emergency code call alerts</p>
-        <DispatchConfigField label="InformaCast Base URL" settingKey="dispatch.informacast_base_url" placeholder="https://informacast.hospital.local/api/v1" />
-        <DispatchConfigField label="InformaCast API Token" settingKey="dispatch.informacast_api_token" placeholder="ic_abc123..." type="password" />
-        <div className="border-t border-gray-800 pt-4" />
-        <DispatchConfigField label="Vocera Base URL" settingKey="dispatch.vocera_base_url" placeholder="https://vocera.hospital.local/vmp/api/v1" />
-        <DispatchConfigField label="Vocera API Key" settingKey="dispatch.vocera_api_key" placeholder="vk_..." type="password" />
-        <div className="border-t border-gray-800 pt-4" />
-        <DispatchConfigField label="Cisco CUCM Host" settingKey="dispatch.cucm_host" placeholder="cucm-pub.hospital.local" />
-        <DispatchConfigField label="CUCM AXL Username" settingKey="dispatch.cucm_axl_user" placeholder="axladmin" />
-        <DispatchConfigField label="CUCM AXL Password" settingKey="dispatch.cucm_axl_password" placeholder="******" type="password" />
-        <DispatchConfigField label="CUCM AXL WSDL URL" settingKey="dispatch.cucm_axl_wsdl" placeholder="https://cucm:8443/axl/schema/14.0/AXLAPI.wsdl" />
-        <div className="border-t border-gray-800 pt-4" />
-        <DispatchConfigField label="SIP PBX Host" settingKey="dispatch.sip_pbx_host" placeholder="pbx.hospital.local" />
-        <DispatchConfigField label="SIP Trunk Username" settingKey="dispatch.sip_trunk_user" placeholder="paging-user" />
-        <DispatchConfigField label="SIP Trunk Secret" settingKey="dispatch.sip_trunk_secret" placeholder="******" type="password" />
+        <p className="text-xs text-gray-500">
+          Dispatch credentials are held in App Service configuration / Key Vault, never in
+          the application database. Use these checks to confirm each channel is reachable.
+        </p>
+
+        <TwilioDispatchCard />
+
+        <div className="border-t border-gray-800 pt-4 space-y-3">
+          <DispatchChannelCheck channel="vocera" label="Vocera Alerts" />
+          <DispatchChannelCheck channel="informacast" label="InformaCast Broadcast" />
+          <DispatchChannelCheck channel="cucm" label="Cisco CUCM Paging" />
+        </div>
       </section>
     </div>
   )
 }
 
-function DispatchConfigField({ label, settingKey, placeholder, type = 'text' }: {
-  label: string; settingKey: string; placeholder?: string; type?: string
+/**
+ * Connection check for a dispatch channel. Credentials are configured out-of-band
+ * (Dispatch__* app settings), so this only reports reachability.
+ */
+function DispatchChannelCheck({ channel, label }: {
+  channel: 'twilio' | 'vocera' | 'informacast' | 'cucm'; label: string
 }) {
-  const [value, setValue] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [result, setResult] = useState<ConnectionStatus | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    settingsApi.get(settingKey).then(s => setValue(s?.value || '')).catch(() => {})
-  }, [settingKey])
-
-  async function handleBlur() {
-    setSaving(true)
+  async function handleTest() {
+    setTesting(true)
+    setError(null)
+    setResult(null)
     try {
-      await settingsApi.upsert(settingKey, value)
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } catch { /* ignore */ }
-    setSaving(false)
+      setResult(await integrationsApi.testDispatchChannel(channel))
+    } catch {
+      setError('Check failed — the API could not reach this channel.')
+    }
+    setTesting(false)
   }
 
   return (
-    <div>
-      <label className="block text-sm text-gray-500 mb-1">{label}</label>
-      <div className="flex items-center gap-2">
-        <input type={type} value={value} onChange={e => setValue(e.target.value)} onBlur={handleBlur}
-          placeholder={placeholder}
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
-        {saving && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-amber-600 shrink-0" />}
-        {saved && <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />}
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm">{label}</p>
+        {result && (
+          <p className={`text-xs mt-0.5 ${result.connected ? 'text-green-500' : 'text-red-400'}`}>
+            {result.detail}
+          </p>
+        )}
+        {error && <p className="text-xs text-red-400 mt-0.5">{error}</p>}
+      </div>
+      <button
+        onClick={handleTest}
+        disabled={testing}
+        className="shrink-0 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-xs transition-colors"
+      >
+        {testing ? 'Checking...' : 'Test connection'}
+      </button>
+    </div>
+  )
+}
+
+/** Twilio SMS: connection check plus a test send, so the channel can be proven end-to-end. */
+function TwilioDispatchCard() {
+  const [phone, setPhone] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendResult, setSendResult] = useState<{ ok: boolean; text: string } | null>(null)
+
+  async function handleSend() {
+    if (!phone.trim()) return
+    setSending(true)
+    setSendResult(null)
+    try {
+      const res = await integrationsApi.sendTestSms(phone.trim())
+      setSendResult({
+        ok: res.sent,
+        text: res.sent
+          ? `Test message accepted by Twilio${res.messageSid ? ` (${res.messageSid})` : ''}. Check the handset.`
+          : res.detail || 'Twilio rejected the message.',
+      })
+    } catch {
+      setSendResult({ ok: false, text: 'Send failed — check that Twilio is enabled and configured.' })
+    }
+    setSending(false)
+  }
+
+  return (
+    <div className="space-y-3">
+      <DispatchChannelCheck channel="twilio" label="Twilio SMS to on-call provider" />
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Send a test SMS</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="tel"
+            value={phone}
+            onChange={e => setPhone(e.target.value)}
+            placeholder="+12025551234"
+            className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono"
+          />
+          <button
+            onClick={handleSend}
+            disabled={sending || !phone.trim()}
+            className="shrink-0 px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 rounded-lg text-xs transition-colors"
+          >
+            {sending ? 'Sending...' : 'Send test'}
+          </button>
+        </div>
+        {sendResult && (
+          <p className={`text-xs mt-1.5 ${sendResult.ok ? 'text-green-500' : 'text-red-400'}`}>
+            {sendResult.text}
+          </p>
+        )}
+        <p className="text-xs text-gray-600 mt-1.5">
+          Sends a message marked <span className="font-mono">[TEST]</span> from the hospital's
+          Twilio number. Recorded in the audit log.
+        </p>
       </div>
     </div>
   )

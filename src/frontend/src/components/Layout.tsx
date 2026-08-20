@@ -29,12 +29,18 @@ const navItems = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { user, signOut, isAdmin, canAdminScoped } = useAuth()
+  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions } = useAuth()
   const { isConnected } = useSignalR()
   const { showOnboarding, checking, dismiss } = useOnboarding()
   const visibleNavItems = (isAdmin || canAdminScoped)
     ? [...navItems, { path: '/admin', label: 'Admin', icon: Shield }]
     : navItems
+
+  // A signed-in user with no permissions is a real and expected state: Entra and Google
+  // tokens carry no app roles, so a first-time sign-in has access to nothing until an
+  // admin grants it. Every page would fill with failed requests, which reads as "the app
+  // is broken" rather than "you need to be granted access".
+  const awaitingProvisioning = !isLoading && permissions.length === 0
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
@@ -130,9 +136,45 @@ export default function Layout() {
         </header>
 
         <main role="main" className="flex-1 p-6 overflow-auto" aria-label="Main content">
-          <Outlet />
+          {awaitingProvisioning ? <AwaitingProvisioning email={user?.email} /> : <Outlet />}
         </main>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Shown when a sign-in succeeded but the account holds no permissions yet.
+ *
+ * Real Entra and Google tokens carry no app roles, so a new user has access to nothing
+ * until an administrator grants it (see docs/onboarding-standard.md §2). Saying so beats
+ * rendering a dashboard of 403s.
+ */
+function AwaitingProvisioning({ email }: { email?: string }) {
+  return (
+    <div className="max-w-xl mx-auto mt-16 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center">
+      <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-amber-600/10 mb-4">
+        <Shield className="w-6 h-6 text-amber-500" />
+      </div>
+      <h2 className="text-lg font-medium">You&apos;re signed in — access pending</h2>
+      <p className="text-sm text-gray-400 mt-3">
+        Your account{email ? <> (<span className="text-gray-300">{email}</span>)</> : null} isn&apos;t
+        set up with on-call access yet. An administrator needs to grant you at least
+        <span className="text-gray-300"> Schedule.Read</span> and
+        <span className="text-gray-300"> Directory.Read</span> from
+        Admin → Users &amp; Permissions.
+      </p>
+      <p className="text-xs text-gray-600 mt-4">
+        Nothing is wrong with your sign-in — this step is deliberate, so access to
+        schedules and the directory is granted rather than assumed.
+      </p>
+      {/* A dropped /api/auth/me also lands here, so offer the cheap way out. */}
+      <button
+        onClick={() => window.location.reload()}
+        className="mt-5 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
+      >
+        Check again
+      </button>
     </div>
   )
 }

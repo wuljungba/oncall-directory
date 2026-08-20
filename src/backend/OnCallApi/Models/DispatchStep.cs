@@ -27,4 +27,13 @@ public class DispatchStep
 
     [MaxLength(1000)]
     public string? Detail { get; set; }
+
+    /// <summary>
+    /// The dispatch provider's own identifier for this delivery (currently the Twilio
+    /// Message SID). Used to correlate an asynchronous delivery-status callback back to
+    /// the step that sent it, so a message that Twilio later reports as undelivered can be
+    /// flipped from "sent" to "failed".
+    /// </summary>
+    [MaxLength(64)]
+    public string? ProviderMessageId { get; set; }
 }

@@ -13,6 +13,7 @@ namespace BackendTests.Controllers;
 /// (never fire a code call). Uses the app's HealthEndpointTests factory pattern, with the
 /// webhook key set to a test value so the auth path itself is exercised.
 /// </summary>
+[Collection(WebHostCollection.Name)]
 public class EhrWebhookControllerTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private const string TestKey = "test-ehr-webhook-secret";

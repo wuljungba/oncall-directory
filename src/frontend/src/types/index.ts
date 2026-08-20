@@ -283,6 +283,15 @@ export interface DispatchStep {
   startedAt: string
   completedAt?: string
   detail?: string
+  /** Provider's own message id (Twilio Message SID), used to settle delivery status. */
+  providerMessageId?: string
+}
+
+/** Health-check result for an external dispatch channel. */
+export interface ConnectionStatus {
+  connected: boolean
+  detail: string
+  lastCheckedAt: string
 }
 
 export interface EscalationEvent {

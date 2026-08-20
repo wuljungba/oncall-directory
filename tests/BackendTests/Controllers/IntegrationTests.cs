@@ -9,6 +9,7 @@ namespace BackendTests.Controllers;
 /// Integration tests for unprotected endpoints (health check only).
 /// Protected API endpoints require JWT auth and should be tested via service-level tests.
 /// </summary>
+[Collection(WebHostCollection.Name)]
 public class HealthEndpointTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly WebApplicationFactory<Program> _factory;

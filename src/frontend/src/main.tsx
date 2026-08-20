@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
+import { AuthProvider } from './hooks/useAuth'
 import './index.css'
 
 // Global unhandled promise rejection handler
@@ -25,13 +26,21 @@ const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 const GOOGLE_ENABLED = !DEV_AUTH && !!GOOGLE_CLIENT_ID
 
 // The MicrosoftAuthProvider (from the authFactory singleton) initializes MSAL
-// lazily when useAuth runs, so no eager MSAL bootstrapping is needed here. There
-// is no MsalProvider wrapper: no component consumes @azure/msal-react context.
+// lazily when AuthProvider bootstraps, so no eager MSAL bootstrapping is needed
+// here. There is no MsalProvider wrapper: no component consumes
+// @azure/msal-react context.
+//
+// AuthProvider is mounted once here, above every route, so the whole app shares a
+// single session: one provider.init(), one /api/auth/me, one source of truth for
+// isLoading and permissions. It sits inside GoogleOAuthProvider so the Google
+// Identity Services script is present before any sign-in runs.
 function renderApp() {
   const appContent = (
     <BrowserRouter>
       <ErrorBoundary>
-        <App />
+        <AuthProvider>
+          <App />
+        </AuthProvider>
       </ErrorBoundary>
     </BrowserRouter>
   )

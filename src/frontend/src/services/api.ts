@@ -24,6 +24,7 @@ import type {
   PublicCoverage,
   OnboardingHealth,
   OnCallReportRow,
+  ConnectionStatus,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -65,6 +66,20 @@ function buildQueryString(params: Record<string, string | number | boolean | und
   return '?' + entries.map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`).join('&')
 }
 
+/**
+ * An API call that came back with a non-2xx status.
+ *
+ * Carries the HTTP status so callers can tell "this resource does not exist yet"
+ * (404) apart from "you are not allowed / not signed in" (401/403) — a distinction
+ * that decides, for example, whether the onboarding wizard should appear.
+ */
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function fetchApi<T>(
   endpoint: string,
   options?: RequestInit
@@ -80,7 +95,7 @@ async function fetchApi<T>(
 
   if (!res.ok) {
     const error = await res.text()
-    throw new Error(error || `API error: ${res.status}`)
+    throw new ApiError(res.status, error || `API error: ${res.status}`)
   }
 
   return res.json()
@@ -217,7 +232,7 @@ async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
 
   if (!res.ok) {
     const error = await res.text()
-    throw new Error(error || `API error: ${res.status}`)
+    throw new ApiError(res.status, error || `API error: ${res.status}`)
   }
 
   return res.json()
@@ -260,6 +275,15 @@ export const integrationsApi = {
     }),
   getPresence: (userId: string) =>
     fetchApi<{ userId: string; presence: string }>(`/integrations/presence/${userId}`),
+
+  // ── Dispatch channel diagnostics (admin only) ──
+  testDispatchChannel: (channel: 'twilio' | 'vocera' | 'informacast' | 'cucm') =>
+    fetchApi<ConnectionStatus>(`/integrations/test/${channel}`, { method: 'POST' }),
+  sendTestSms: (toPhone: string) =>
+    fetchApi<{ sent: boolean; messageSid?: string; detail?: string }>('/integrations/test/twilio/send', {
+      method: 'POST',
+      body: JSON.stringify({ toPhone }),
+    }),
 }
 
 // ── Directory ──

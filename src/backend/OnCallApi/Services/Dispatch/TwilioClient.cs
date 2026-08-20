@@ -55,40 +55,95 @@ public class TwilioClient : ITwilioClient
     {
         try
         {
-            var form = new FormUrlEncodedContent(new Dictionary<string, string>
+            var fields = new Dictionary<string, string>
             {
                 ["To"] = toPhone,
-                ["From"] = _options.FromNumber,
                 ["Body"] = message,
-            });
+            };
 
-            var response = await _httpClient.PostAsync($"Accounts/{_options.AccountSid}/Messages.json", form);
+            // A messaging service carries the A2P 10DLC campaign registration; when one is
+            // configured it replaces the individual sender number.
+            if (_options.UseMessagingService)
+                fields["MessagingServiceSid"] = _options.MessagingServiceSid;
+            else
+                fields["From"] = _options.FromNumber;
+
+            // Without a status callback, Twilio's 201 ("queued") is the only signal we get,
+            // and an undelivered code-call alert would look like a success.
+            if (!string.IsNullOrWhiteSpace(_options.StatusCallbackUrl))
+                fields["StatusCallback"] = _options.StatusCallbackUrl;
+
+            var response = await _httpClient.PostAsync(
+                $"Accounts/{_options.AccountSid}/Messages.json", new FormUrlEncodedContent(fields));
             var body = await response.Content.ReadAsStringAsync();
 
             if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Twilio SMS failed ({Code}) for {To}: {Body}",
-                    (int)response.StatusCode, toPhone, body);
-                return new DispatchResult { Success = false, ErrorMessage = $"Twilio error {(int)response.StatusCode}" };
+                // The recipient number is PHI-adjacent directory data — log the failure,
+                // never the number.
+                _logger.LogWarning("Twilio SMS failed ({Code}): {Body}", (int)response.StatusCode, body);
+                return new DispatchResult
+                {
+                    Success = false,
+                    ErrorMessage = $"Twilio error {(int)response.StatusCode}",
+                    Detail = ExtractTwilioError(body) ?? $"Twilio error {(int)response.StatusCode}",
+                };
             }
 
-            // Extract the Message SID from the response for the audit trail.
-            string? sid = null;
-            try
+            // Extract the Message SID (for webhook correlation + the audit trail) and the
+            // initial status, which is "queued"/"accepted" — NOT proof of delivery.
+            var (sid, status) = ParseMessageResponse(body);
+
+            _logger.LogInformation("Twilio SMS accepted (SID {Sid}, status {Status})",
+                sid ?? "n/a", status ?? "unknown");
+
+            return new DispatchResult
             {
-                using var doc = JsonDocument.Parse(body);
-                if (doc.RootElement.TryGetProperty("sid", out var sidProp))
-                    sid = sidProp.GetString();
-            }
-            catch { /* ignore parse */ }
-
-            _logger.LogInformation("Twilio SMS sent to {To} (SID {Sid})", toPhone, sid ?? "n/a");
-            return new DispatchResult { Success = true, IncidentId = sid ?? "", Detail = "SMS delivered" };
+                Success = true,
+                IncidentId = sid ?? "",
+                Detail = string.IsNullOrWhiteSpace(_options.StatusCallbackUrl)
+                    ? $"SMS {status ?? "queued"} (no delivery confirmation configured)"
+                    : $"SMS {status ?? "queued"} — awaiting delivery confirmation",
+            };
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Twilio SMS send failed for {To}", toPhone);
-            return new DispatchResult { Success = false, ErrorMessage = ex.Message };
+            _logger.LogError(ex, "Twilio SMS send failed");
+            return new DispatchResult { Success = false, ErrorMessage = ex.Message, Detail = ex.Message };
+        }
+    }
+
+    private static (string? Sid, string? Status) ParseMessageResponse(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var sid = doc.RootElement.TryGetProperty("sid", out var sidProp) ? sidProp.GetString() : null;
+            var status = doc.RootElement.TryGetProperty("status", out var statusProp) ? statusProp.GetString() : null;
+            return (sid, status);
+        }
+        catch (JsonException)
+        {
+            return (null, null);
+        }
+    }
+
+    /// <summary>Twilio error bodies carry a human-readable "message" and numeric "code".</summary>
+    private static string? ExtractTwilioError(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            var msg = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : null;
+            var code = doc.RootElement.TryGetProperty("code", out var c) && c.TryGetInt32(out var codeVal)
+                ? codeVal.ToString()
+                : null;
+            if (msg == null) return null;
+            return code == null ? msg : $"{msg} (Twilio code {code})";
+        }
+        catch (JsonException)
+        {
+            return null;
         }
     }
 }

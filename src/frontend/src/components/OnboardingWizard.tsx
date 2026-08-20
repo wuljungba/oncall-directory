@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react'
-import { CheckCircle, ArrowRight, RefreshCw, Sparkles, Upload, Cloud } from 'lucide-react'
-import { settingsApi, integrationsApi, scheduleApi, departmentsApi, adminApi } from '@/services/api'
+import { CheckCircle, ArrowRight, RefreshCw, Sparkles, Upload, Cloud, AlertTriangle } from 'lucide-react'
+import { settingsApi, integrationsApi, scheduleApi, departmentsApi, adminApi, ApiError } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/hooks/useAuth'
+
+/** Server error bodies can be long; keep the inline message readable. */
+function truncate(message: string, max = 140): string {
+  return message.length > max ? `${message.slice(0, max)}…` : message
+}
 
 interface OnboardingProps {
   onComplete: () => void
@@ -12,8 +17,9 @@ type StepStatus = 'pending' | 'in_progress' | 'done'
 type ConnectionMode = 'microsoft' | 'local' | null
 
 export default function OnboardingWizard({ onComplete }: OnboardingProps) {
-  const { authProvider } = useAuth()
+  const { authProvider, activeTenantId } = useAuth()
   const [step, setStep] = useState(0)
+  const [directoryError, setDirectoryError] = useState<string | null>(null)
   const [step1Status, setStep1Status] = useState<StepStatus>('in_progress')
   const [step2Status, setStep2Status] = useState<StepStatus>('pending')
   const [step3Status, setStep3Status] = useState<StepStatus>('pending')
@@ -53,26 +59,42 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
   async function handleChooseMicrosoft() {
     setConnectionMode('microsoft')
     setStep1Status('in_progress')
+    setDirectoryError(null)
+    setSyncing(true)
     try {
-      // Verify the connection by trying a Graph API call
-      await integrationsApi.syncAd()
+      // The only honest proof that Microsoft 365 is wired up is a Graph call that works.
+      const result = await integrationsApi.syncAd()
       setStep1Status('done')
-      addToast({ type: 'success', title: 'Connected', description: 'Directory connection verified.' })
+      addToast({
+        type: 'success',
+        title: 'Connected',
+        description: `Directory connection verified — ${result.synced} user(s) found.`,
+      })
       setStep(1)
       setStep2Status('in_progress')
-    } catch {
-      // Connection check may fail if sync endpoint doesn't work,
-      // but the M365 auth might still be valid — treat it as configured
-      setStep1Status('done')
-      addToast({ type: 'success', title: 'Configured', description: 'Microsoft 365 is ready.' })
-      setStep(1)
-      setStep2Status('in_progress')
+    } catch (err) {
+      // Do NOT report success here. A failed Graph call means AD sync will not work, and
+      // claiming "Microsoft 365 is ready" sends the admin away believing setup is done.
+      setStep1Status('in_progress')
+      setDirectoryError(
+        err instanceof Error && err.message
+          ? `Could not reach your directory: ${truncate(err.message)}`
+          : 'Could not reach your directory.',
+      )
+      addToast({
+        type: 'error',
+        title: 'Directory Not Connected',
+        description: 'Check the Graph API credentials in Settings, or continue in local mode.',
+      })
+    } finally {
+      setSyncing(false)
     }
   }
 
   async function handleChooseLocal() {
     setConnectionMode('local')
     setStep1Status('done')
+    setDirectoryError(null)
     addToast({ type: 'success', title: 'Local Mode', description: 'You can import users via CSV any time.' })
     setStep(1)
     setStep2Status('in_progress')
@@ -99,15 +121,16 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
       }
     } catch {
       if (connectionMode === 'local') {
+        // Local mode needs nothing from the server — the CSV import lives elsewhere.
         setStep2Status('done')
         setStep(2)
         setStep3Status('in_progress')
       } else {
+        // The sync failed, so the directory is NOT populated. Let the admin move on
+        // (CSV import still works) but leave the step marked as unfinished.
         addToast({ type: 'error', title: 'Sync Failed', description: 'Could not sync directory. You can use CSV import instead.' })
-        // Still allow proceeding
-        setStep2Status('done')
-        setStep(2)
-        setStep3Status('in_progress')
+        setDirectoryError('Directory sync failed — no users were imported. Use CSV import, or fix the Graph API credentials in Settings.')
+        setStep2Status('in_progress')
       }
     } finally {
       setSyncing(false)
@@ -141,8 +164,9 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
         endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
       } as any)
       setStep3Status('done')
-      // Mark onboarding as complete
-      await settingsApi.upsert('onboarding.completed', 'true', 'Onboarding wizard completed')
+      // Mark onboarding as complete for this tenant
+      await settingsApi.upsert(
+        onboardingCompletedKey(activeTenantId), 'true', 'Onboarding wizard completed')
       addToast({ type: 'success', title: 'All Set!', description: 'Your first schedule is ready. Welcome to OnCall!' })
       onComplete()
     } catch {
@@ -154,9 +178,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
 
   async function handleSkip() {
     try {
-      await settingsApi.upsert('onboarding.completed', 'true', 'Onboarding wizard skipped')
+      await settingsApi.upsert(
+        onboardingCompletedKey(activeTenantId), 'true', 'Onboarding wizard skipped')
     } catch {
-      // Skip works even if settings API is unavailable
+      // Skip works even if the settings write is rejected — onComplete() records the
+      // dismissal locally so the wizard does not come back next login.
     }
     onComplete()
   }
@@ -214,17 +240,25 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
                         {canUseMicrosoft && (
                           <button
                             onClick={handleChooseMicrosoft}
-                            className="w-full flex items-center gap-3 px-5 py-3 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm font-medium transition-colors text-left"
+                            disabled={syncing}
+                            className="w-full flex items-center gap-3 px-5 py-3 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 border border-gray-700 rounded-lg text-sm font-medium transition-colors text-left"
                           >
                             <Cloud className="w-5 h-5 text-blue-500 shrink-0" />
                             <div>
                               <span className="text-gray-200">Microsoft 365 / Active Directory</span>
                               <p className="text-xs text-gray-500 font-normal mt-0.5">
-                                Sync users from Azure AD
+                                {syncing ? 'Checking the connection…' : 'Sync users from Azure AD'}
                               </p>
                             </div>
                             <ArrowRight className="w-4 h-4 text-gray-500 ml-auto shrink-0" />
                           </button>
+                        )}
+
+                        {directoryError && (
+                          <div className="flex items-start gap-2 bg-red-600/10 border border-red-600/30 rounded-lg px-4 py-3 text-xs text-red-400">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span>{directoryError} You can continue in local mode below.</span>
+                          </div>
                         )}
 
                         {/* Local/CSV option */}
@@ -251,18 +285,26 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
                       </div>
                     )}
                     {i === 1 && (
-                      <button
-                        onClick={handleStep2}
-                        disabled={syncing}
-                        className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
-                      >
-                        <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
-                        {syncing
-                          ? 'Processing...'
-                          : connectionMode === 'local'
-                          ? 'Mark as Ready'
-                          : 'Sync Directory Now'}
-                      </button>
+                      <div className="space-y-3">
+                        <button
+                          onClick={handleStep2}
+                          disabled={syncing}
+                          className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          <RefreshCw className={`w-4 h-4 ${syncing ? 'animate-spin' : ''}`} />
+                          {syncing
+                            ? 'Processing...'
+                            : connectionMode === 'local'
+                            ? 'Mark as Ready'
+                            : 'Sync Directory Now'}
+                        </button>
+                        {directoryError && (
+                          <div className="flex items-start gap-2 bg-red-600/10 border border-red-600/30 rounded-lg px-4 py-3 text-xs text-red-400">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span>{directoryError}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {i === 2 && (
                       <div className="space-y-3">
@@ -295,14 +337,14 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
         {/* Footer */}
         <div className="px-8 py-4 border-t border-gray-800 flex items-center justify-between">
           <p className="text-xs text-gray-600">You can always change these settings later.</p>
-          {step < 2 && (
-            <button
-              onClick={handleSkip}
-              className="text-sm text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              Skip setup
-            </button>
-          )}
+          {/* Always available: a blocking first-run modal must have a way out, including
+              from the last step and when a step is failing. */}
+          <button
+            onClick={handleSkip}
+            className="text-sm text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            Skip setup
+          </button>
         </div>
       </div>
     </div>
@@ -310,18 +352,75 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
 }
 
 /**
- * Hook to check if onboarding has been completed.
+ * The completion flag is per tenant: one hospital/business unit finishing setup must not
+ * hide the wizard for the next one. Installs with no tenant context keep the original
+ * global key.
+ */
+export function onboardingCompletedKey(tenantId: number | null): string {
+  return tenantId == null ? 'onboarding.completed' : `onboarding.completed:${tenantId}`
+}
+
+/** Local mirror of "I dismissed this", so a failed settings write still sticks. */
+function localDismissKey(tenantId: number | null): string {
+  return `oncall.${onboardingCompletedKey(tenantId)}`
+}
+
+/**
+ * Decides whether the first-run wizard should be shown.
+ *
+ * Two rules, both learned the hard way:
+ *  - Wait for auth to resolve. Asking before /api/auth/me lands means a 401 on a
+ *    perfectly onboarded install, which used to pop the wizard on every cold load.
+ *  - Only a 404 (the setting genuinely does not exist) means "not onboarded". Any other
+ *    error — 401, 403, offline — is unknown, and guessing "show it" is the wrong guess.
+ *
+ * Every step of the wizard writes through admin-only endpoints, so it is offered only to
+ * users who can actually complete it.
  */
 export function useOnboarding() {
+  const { isLoading, isAuthenticated, canAdminFull, canAdminScoped, activeTenantId } = useAuth()
   const [showOnboarding, setShowOnboarding] = useState(false)
   const [checking, setChecking] = useState(true)
 
-  useEffect(() => {
-    settingsApi.get('onboarding.completed')
-      .then(() => setShowOnboarding(false))
-      .catch(() => setShowOnboarding(true))
-      .finally(() => setChecking(false))
-  }, [])
+  const canCompleteSetup = canAdminFull || canAdminScoped
 
-  return { showOnboarding, checking, dismiss: () => setShowOnboarding(false) }
+  useEffect(() => {
+    if (isLoading) return
+
+    if (!isAuthenticated || !canCompleteSetup) {
+      setShowOnboarding(false)
+      setChecking(false)
+      return
+    }
+
+    if (localStorage.getItem(localDismissKey(activeTenantId)) === 'true') {
+      setShowOnboarding(false)
+      setChecking(false)
+      return
+    }
+
+    let cancelled = false
+    settingsApi.get(onboardingCompletedKey(activeTenantId))
+      .then(() => { if (!cancelled) setShowOnboarding(false) })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setShowOnboarding(err instanceof ApiError && err.status === 404)
+      })
+      .finally(() => { if (!cancelled) setChecking(false) })
+
+    return () => { cancelled = true }
+  }, [isLoading, isAuthenticated, canCompleteSetup, activeTenantId])
+
+  return {
+    showOnboarding,
+    checking,
+    dismiss: () => {
+      // Remember locally too: the settings write can fail (403, offline), and a wizard
+      // that reappears after you dismissed it is worse than one that never showed.
+      try {
+        localStorage.setItem(localDismissKey(activeTenantId), 'true')
+      } catch { /* private browsing / storage disabled */ }
+      setShowOnboarding(false)
+    },
+  }
 }

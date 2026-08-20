@@ -8,6 +8,15 @@ param entraClientId string
 param entraDomain string
 param corsOrigin string = ''
 
+// ── Twilio SMS dispatch (code-call alerts to the on-call provider) ──
+// The Auth Token is NOT a parameter: it is read at runtime from the Key Vault secret
+// 'TwilioAuthToken', so the credential never passes through a deployment parameter file
+// or the deployment history. Leave twilioEnabled=false until the secret exists.
+param twilioEnabled bool = false
+param twilioAccountSid string = ''
+param twilioFromNumber string = ''
+param twilioMessagingServiceSid string = ''
+
 var resourceGroupName = 'rg-oncall-${environmentName}'
 var appName = 'app-oncall-${environmentName}'
 var sqlServerName = 'sql-oncall-${environmentName}'
@@ -19,6 +28,18 @@ var stName = 'stoncall${environmentName}'
 var redisName = 'redis-oncall-${environmentName}'
 var connectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};TrustServerCertificate=False;Encrypt=True;'
 var defaultCorsOrigin = !empty(corsOrigin) ? corsOrigin : 'https://${appName}.azurewebsites.net'
+
+// Twilio posts delivery status here. Slot-specific, so a message sent from staging
+// settles on staging rather than reporting into production's dispatch history.
+var twilioStatusCallbackProd = 'https://${appName}.azurewebsites.net/api/public/twilio/status'
+var twilioStatusCallbackStaging = 'https://${appName}-staging.azurewebsites.net/api/public/twilio/status'
+var twilioSettings = [
+  { name: 'Dispatch__Twilio__Enabled', value: string(twilioEnabled) }
+  { name: 'Dispatch__Twilio__AccountSid', value: twilioAccountSid }
+  { name: 'Dispatch__Twilio__AuthToken', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/TwilioAuthToken)' }
+  { name: 'Dispatch__Twilio__FromNumber', value: twilioFromNumber }
+  { name: 'Dispatch__Twilio__MessagingServiceSid', value: twilioMessagingServiceSid }
+]
 
 // ── Application Insights + Log Analytics ──
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -176,7 +197,7 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
       netFrameworkVersion: 'v8.0'
       alwaysOn: true
       minTlsVersion: '1.2'
-      appSettings: [
+      appSettings: concat([
         { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString)' }
         { name: 'AzureAd__Instance', value: replace(environment().authentication.loginEndpoint, '/$', '') }
         { name: 'AzureAd__Domain', value: entraDomain }
@@ -188,7 +209,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
-      ]
+      ], concat(twilioSettings, [
+        { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackProd }
+      ]))
     }
   }
 }
@@ -208,7 +231,7 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
       netFrameworkVersion: 'v8.0'
       alwaysOn: true
       minTlsVersion: '1.2'
-      appSettings: [
+      appSettings: concat([
         { name: 'ConnectionStrings__DefaultConnection', value: '@Microsoft.KeyVault(SecretUri=https://${kvName}.vault.azure.net/secrets/SqlConnectionString)' }
         { name: 'AzureAd__Instance', value: replace(environment().authentication.loginEndpoint, '/$', '') }
         { name: 'AzureAd__Domain', value: entraDomain }
@@ -220,7 +243,9 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
-      ]
+      ], concat(twilioSettings, [
+        { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackStaging }
+      ]))
     }
   }
 }

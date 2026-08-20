@@ -61,6 +61,36 @@ if (Enabled(builder.Configuration, "Dispatch:Twilio:Enabled"))
     ValidateSecret("Dispatch:Twilio:AccountSid", builder.Configuration["Dispatch:Twilio:AccountSid"] ?? "", "your-twilio-account-sid", "Twilio Account SID");
     ValidateSecret("Dispatch:Twilio:AuthToken", builder.Configuration["Dispatch:Twilio:AuthToken"] ?? "", "your-twilio-auth-token", "Twilio Auth Token");
     ValidateSecret("Dispatch:Twilio:FromNumber", builder.Configuration["Dispatch:Twilio:FromNumber"] ?? "", "+12025551234", "Twilio From Number");
+
+    // A sender is mandatory: either a messaging service (preferred for US A2P 10DLC) or a
+    // from number, which Twilio only accepts in E.164. Getting this wrong means every
+    // code-call SMS is rejected at send time, so it fails fast at startup instead.
+    var twilioFrom = builder.Configuration["Dispatch:Twilio:FromNumber"] ?? "";
+    var twilioMessagingService = builder.Configuration["Dispatch:Twilio:MessagingServiceSid"] ?? "";
+    if (string.IsNullOrWhiteSpace(twilioMessagingService))
+    {
+        if (string.IsNullOrWhiteSpace(twilioFrom))
+        {
+            throw new InvalidOperationException(
+                "Dispatch:Twilio is enabled but neither 'FromNumber' nor 'MessagingServiceSid' is set. "
+                + "Configure one of them before enabling the Twilio dispatch channel.");
+        }
+        if (!OnCallApi.Validators.PhoneValidation.IsValidE164(twilioFrom))
+        {
+            throw new InvalidOperationException(
+                $"Dispatch:Twilio:FromNumber ('{twilioFrom}') is not in E.164 format. "
+                + "Twilio requires the sender in E.164 (e.g. +12025551234).");
+        }
+    }
+
+    // No status callback means Twilio's "queued" acknowledgement is the only signal we
+    // ever get — an undelivered code-call SMS would look like a success. Warn loudly.
+    if (string.IsNullOrWhiteSpace(builder.Configuration["Dispatch:Twilio:StatusCallbackUrl"]))
+    {
+        LoggerFactory.Create(c => c.AddConsole()).CreateLogger("StartupValidation").LogWarning(
+            "⚠️ Dispatch:Twilio:StatusCallbackUrl is not set. Delivery failures for code-call SMS "
+            + "will NOT be detected — set it to <public-base-url>/api/public/twilio/status.");
+    }
 }
 
 // The local JWT signing key must be a strong secret in production — the
@@ -657,6 +687,13 @@ using (var scope = app.Services.CreateScope())
             """
             IF COL_LENGTH(N'dbo.DutyHourRules', N'Severity') IS NULL
                 ALTER TABLE dbo.DutyHourRules ADD Severity int NOT NULL CONSTRAINT DF_DutyHourRules_Severity DEFAULT 2;
+            """,
+            // DispatchSteps.ProviderMessageId (Twilio Message SID) — correlates an
+            // asynchronous delivery-status callback back to the step that sent it.
+            // Added later than the base schema — backport idempotently.
+            """
+            IF COL_LENGTH(N'dbo.DispatchSteps', N'ProviderMessageId') IS NULL
+                ALTER TABLE dbo.DispatchSteps ADD ProviderMessageId nvarchar(64) NULL;
             """,
         })
         {

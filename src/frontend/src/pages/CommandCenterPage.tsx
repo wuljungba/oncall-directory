@@ -13,11 +13,14 @@ const CODE_TYPES = [
   { key: 'code-pink', label: 'Infant Abduction', sub: 'Nursery / peds security' },
 ]
 
+// Keys must match the StepKey values emitted by CodeCallDispatchService — a mismatch
+// leaves the step stuck on "pending" forever.
 const PIPELINE_STEPS = [
   { key: 'created', label: 'Event Created' },
-  { key: 'cucm_check', label: 'CUCM Device Check' },
+  { key: 'cucm_axl_check', label: 'CUCM Device Check' },
   { key: 'informacast', label: 'InformaCast Broadcast' },
   { key: 'vocera', label: 'Vocera Alert' },
+  { key: 'twilio_sms', label: 'SMS to On-Call' },
   { key: 'acknowledged', label: 'Team Acknowledged' },
 ]
 
