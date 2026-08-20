@@ -137,6 +137,31 @@ else
     //   - oncall-directory     →  "Local" scheme
     //   - login.microsoftonline.com → "Bearer" (Microsoft, default)
 
+    // ── SignalR transport authentication ──
+    // Browsers cannot attach an Authorization header to a WebSocket handshake or an
+    // EventSource request, so the SignalR client passes the token as an `access_token`
+    // query parameter instead. Without reading it, those two transports fail to
+    // authenticate and the client silently degrades to long polling.
+    //
+    // Scoped strictly to /hubs. Tokens in query strings end up in server and proxy
+    // logs, so this must never become a way to authenticate ordinary API calls — the
+    // token itself is still fully validated (signature, issuer, audience, lifetime)
+    // by the normal handler.
+    const string HubPathPrefix = "/hubs";
+
+    static string? HubAccessToken(HttpRequest request) =>
+        request.Path.StartsWithSegments(HubPathPrefix)
+            ? request.Query["access_token"].FirstOrDefault()
+            : null;
+
+    static Task UseHubAccessToken(MessageReceivedContext context)
+    {
+        var token = HubAccessToken(context.Request);
+        if (!string.IsNullOrEmpty(token))
+            context.Token = token;
+        return Task.CompletedTask;
+    }
+
     // 1. Set up the default authentication scheme
     var authBuilder = builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme);
 
@@ -159,6 +184,7 @@ else
         };
         options.Events = new JwtBearerEvents
         {
+            OnMessageReceived = UseHubAccessToken,
             OnTokenValidated = async context =>
             {
                 var identity = context.Principal?.Identity as ClaimsIdentity;
@@ -186,6 +212,7 @@ else
     {
         options.Events = new JwtBearerEvents
         {
+            OnMessageReceived = UseHubAccessToken,
             OnTokenValidated = async context =>
             {
                 var identity = context.Principal?.Identity as ClaimsIdentity;
@@ -238,6 +265,19 @@ else
             // Add auth_provider claim to Microsoft Entra ID tokens for consistent
             // provider identification across the auth pipeline (alongside Google and Local).
             options.Events = options.Events ?? new JwtBearerEvents();
+
+            // Pick up the SignalR query-string token, chaining whatever handler
+            // Microsoft.Identity.Web already registered rather than replacing it.
+            var existingOnMessageReceived = options.Events.OnMessageReceived;
+            options.Events.OnMessageReceived = async context =>
+            {
+                await UseHubAccessToken(context);
+                if (existingOnMessageReceived != null)
+                {
+                    await existingOnMessageReceived(context);
+                }
+            };
+
             var existingOnTokenValidated = options.Events.OnTokenValidated;
             options.Events.OnTokenValidated = async context =>
             {
@@ -257,12 +297,13 @@ else
             options.ForwardDefaultSelector = ctx =>
             {
                 var authHeader = ctx.Request.Headers["Authorization"].FirstOrDefault();
-                if (string.IsNullOrEmpty(authHeader))
-                    return JwtBearerDefaults.AuthenticationScheme;
 
-                var token = authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                var token = authHeader != null && authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
                     ? authHeader["Bearer ".Length..].Trim()
-                    : null;
+                    // SignalR's WebSocket and SSE transports send no Authorization header,
+                    // so without this a Google or Local user's hub connection would be
+                    // routed to the Microsoft handler and rejected.
+                    : HubAccessToken(ctx.Request);
 
                 if (string.IsNullOrEmpty(token))
                     return JwtBearerDefaults.AuthenticationScheme;
