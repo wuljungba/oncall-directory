@@ -39,8 +39,10 @@ jobs:
       - name: Build
         run: dotnet build src/backend/OnCallApi/OnCallApi.csproj --no-restore -c Release
 
+      # The API project holds no tests, so pointing `dotnet test` at it silently ran
+      # nothing and every deploy passed an empty gate. The suite lives in tests/.
       - name: Test
-        run: dotnet test src/backend/OnCallApi/OnCallApi.csproj --no-build -c Release
+        run: dotnet test tests/BackendTests/BackendTests.csproj -c Release
 
       - name: Publish
         run: dotnet publish src/backend/OnCallApi/OnCallApi.csproj -c Release -o publish
