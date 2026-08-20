@@ -309,12 +309,14 @@ public class CodeCallDispatchService : ICodeCallDispatchService
         using var scope = _scopeFactory.CreateScope();
         var results = new List<ConnectionStatus>();
 
-        var cucm = scope.ServiceProvider.GetRequiredService<ICiscoCucmClient>();
-        var informaCast = scope.ServiceProvider.GetRequiredService<IInformaCastClient>();
-        var vocera = scope.ServiceProvider.GetRequiredService<IVoceraClient>();
-
+        // Each client is resolved only when its channel is enabled. Resolving them all
+        // up front took the whole preflight down with a 500: an unconfigured CUCM host
+        // makes CiscoCucmClient's constructor build the URI "https://:8443/axl/" and
+        // throw, so an operator checking their channels got an opaque error instead of
+        // a status list.
         if (_options.Cucm.Enabled)
         {
+            var cucm = scope.ServiceProvider.GetRequiredService<ICiscoCucmClient>();
             var cucmStatus = await cucm.CheckConnectionAsync();
             cucmStatus.Detail = $"CUCM: {cucmStatus.Detail}";
             results.Add(cucmStatus);
@@ -322,6 +324,7 @@ public class CodeCallDispatchService : ICodeCallDispatchService
 
         if (_options.InformaCast.Enabled)
         {
+            var informaCast = scope.ServiceProvider.GetRequiredService<IInformaCastClient>();
             var icStatus = await informaCast.CheckConnectionAsync();
             icStatus.Detail = $"InformaCast: {icStatus.Detail}";
             results.Add(icStatus);
@@ -329,6 +332,7 @@ public class CodeCallDispatchService : ICodeCallDispatchService
 
         if (_options.Vocera.Enabled)
         {
+            var vocera = scope.ServiceProvider.GetRequiredService<IVoceraClient>();
             var voceraStatus = await vocera.CheckConnectionAsync();
             voceraStatus.Detail = $"Vocera: {voceraStatus.Detail}";
             results.Add(voceraStatus);
