@@ -48,20 +48,61 @@ public class TenantContextService : ITenantContextService
                 return cached;
 
             var azureAdObjectId = GetAzureAdObjectId(user);
-            if (string.IsNullOrEmpty(azureAdObjectId))
+            var email = GetEmail(user);
+            if (string.IsNullOrEmpty(azureAdObjectId) && string.IsNullOrEmpty(email))
                 return [];
 
-            var tenantIds = await _db.TenantAdmins
-                .Where(a => a.AzureAdObjectId == azureAdObjectId)
-                .Where(a => a.Tenant.IsActive)
-                .Select(a => a.TenantId)
-                .Distinct()
+            var tenantIds = new List<int>();
+
+            if (!string.IsNullOrEmpty(azureAdObjectId))
+            {
+                tenantIds.AddRange(await _db.TenantAdmins
+                    .Where(a => a.AzureAdObjectId == azureAdObjectId)
+                    .Where(a => a.Tenant.IsActive)
+                    .Select(a => a.TenantId)
+                    .ToListAsync());
+            }
+
+            // An explicit permission grant is also tenant membership for the purposes of
+            // reading data. Without this, a granted user resolves to no tenants at all —
+            // which under fail-closed scoping means they can see nothing, and previously
+            // (fail-open) meant they could see everything.
+            var grants = await _db.PermissionGrants
+                .Where(g => g.IsActive)
+                .Where(g => (azureAdObjectId != null && g.ExternalPrincipalId == azureAdObjectId)
+                         || (email != null && g.ExternalPrincipalId == email))
+                .Select(g => g.TenantId)
                 .ToListAsync();
 
-            if (httpContext != null)
-                httpContext.Items[TenantIdsCacheKey] = tenantIds;
+            // A system-wide grant (TenantId == null) is exactly what a super admin chose
+            // when they picked "All tenants", so it resolves to every active tenant.
+            if (grants.Any(t => !t.HasValue))
+            {
+                tenantIds.AddRange(await _db.Tenants
+                    .Where(t => t.IsActive)
+                    .Select(t => t.Id)
+                    .ToListAsync());
+            }
+            else
+            {
+                // Only active tenants count, matching the TenantAdmin lookup above:
+                // deactivating a subscription must actually withdraw access to its data.
+                var granted = grants.Where(t => t.HasValue).Select(t => t!.Value).ToList();
+                if (granted.Count > 0)
+                {
+                    tenantIds.AddRange(await _db.Tenants
+                        .Where(t => t.IsActive && granted.Contains(t.Id))
+                        .Select(t => t.Id)
+                        .ToListAsync());
+                }
+            }
 
-            return tenantIds;
+            var distinct = tenantIds.Distinct().ToList();
+
+            if (httpContext != null)
+                httpContext.Items[TenantIdsCacheKey] = distinct;
+
+            return distinct;
         }
         catch
         {
@@ -150,6 +191,17 @@ public class TenantContextService : ITenantContextService
             .FirstOrDefaultAsync();
 
         return employee;
+    }
+
+    /// <summary>
+    /// Mirrors TenantClaimsMiddleware.GetEmail so a grant made against someone's email
+    /// resolves the same way here as it does when their claims are expanded.
+    /// </summary>
+    private static string? GetEmail(ClaimsPrincipal user)
+    {
+        return user.FindFirst(ClaimTypes.Email)?.Value
+            ?? user.FindFirst("email")?.Value
+            ?? user.FindFirst("preferred_username")?.Value;
     }
 
     private static string? GetAzureAdObjectId(ClaimsPrincipal user)

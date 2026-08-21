@@ -40,9 +40,14 @@ export default function AdminPage() {
     { key: 'locations', label: 'Code Call Locations' },
   ]
 
-  // Add user/permission + subscriptions tabs for admins (full or tenant-manage)
-  if (isAdmin || canTenantManage) {
+  // Scoped (department/tenant) admins provision their own users, so they get the
+  // Users & Permissions tab. Everything below it — subscriptions, public shares,
+  // onboarding health, the audit view — stays with full/tenant-manage admins.
+  if (isAdmin || canTenantManage || canAdminScoped) {
     tabs.push({ key: 'permissions', label: 'Users & Permissions' })
+  }
+
+  if (isAdmin || canTenantManage) {
     tabs.push({ key: 'shares', label: 'Public Schedule' })
     tabs.push({ key: 'tenants', label: 'Subscriptions' })
     tabs.push({ key: 'onboarding', label: 'Onboarding' })

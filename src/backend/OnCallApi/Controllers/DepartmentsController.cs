@@ -26,14 +26,13 @@ public class DepartmentsController : ControllerBase
     {
         var query = _db.Departments.Where(d => d.IsActive).AsQueryable();
 
-        // Apply tenant scoping for non-super-admin users
+        // Apply tenant scoping for non-super-admin users. Filtering unconditionally is the
+        // point: skipping it when the user resolves to no tenants used to fail OPEN and
+        // show them every tenant's departments.
         if (!_tenantContext.IsSuperAdmin(User))
         {
             var tenantIds = await _tenantContext.GetAuthorizedTenantIdsAsync(User);
-            if (tenantIds.Count > 0)
-            {
-                query = query.Where(d => d.TenantId.HasValue && tenantIds.Contains(d.TenantId.Value));
-            }
+            query = query.Where(d => d.TenantId.HasValue && tenantIds.Contains(d.TenantId.Value));
         }
 
         return await query.OrderBy(d => d.Name).ToListAsync();

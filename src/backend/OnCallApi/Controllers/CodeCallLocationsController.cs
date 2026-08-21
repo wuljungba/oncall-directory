@@ -26,15 +26,13 @@ public class CodeCallLocationsController : ControllerBase
     {
         var query = _db.CodeCallLocations.AsQueryable();
 
-        // Apply tenant scoping for non-super-admin users
+        // Apply tenant scoping for non-super-admin users. Filtering unconditionally is the
+        // point: skipping it when the user resolves to no tenants used to fail OPEN.
         if (!_tenantContext.IsSuperAdmin(User))
         {
             var tenantIds = await _tenantContext.GetAuthorizedTenantIdsAsync(User);
-            if (tenantIds.Count > 0)
-            {
-                query = query.Where(l => l.Department == null ||
-                    (l.Department.TenantId.HasValue && tenantIds.Contains(l.Department.TenantId.Value)));
-            }
+            query = query.Where(l => l.Department == null ||
+                (l.Department.TenantId.HasValue && tenantIds.Contains(l.Department.TenantId.Value)));
         }
 
         if (!includeInactive)

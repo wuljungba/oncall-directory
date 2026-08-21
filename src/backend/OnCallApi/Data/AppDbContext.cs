@@ -30,6 +30,7 @@ public class AppDbContext : DbContext
     public DbSet<LocalAccount> LocalAccounts => Set<LocalAccount>();
     public DbSet<PermissionGrant> PermissionGrants => Set<PermissionGrant>();
     public DbSet<PublicShare> PublicShares => Set<PublicShare>();
+    public DbSet<SignInIdentity> SignInIdentities => Set<SignInIdentity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -226,6 +227,16 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Tenant>(t =>
         {
             t.HasIndex(x => x.Name).IsUnique();
+        });
+
+        // ── SignInIdentity ──
+        // One row per principal per provider; the upsert in
+        // IdentityDirectoryBackgroundService relies on this uniqueness.
+        modelBuilder.Entity<SignInIdentity>(i =>
+        {
+            i.HasIndex(x => new { x.Provider, x.ExternalObjectId }).IsUnique();
+            i.HasIndex(x => x.Email);
+            i.HasIndex(x => x.LastSeenAt);
         });
 
         // ── TenantAdmin ──

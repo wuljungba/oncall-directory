@@ -17,7 +17,12 @@ namespace OnCallApi.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/admin/permissions")]
-[Authorize(Policy = "RequireAdminFullOrTenantManage")]
+// Scoped (department/tenant) admins are included deliberately: they must be able to
+// provision their own users. Every action below re-checks the caller's tenants via
+// CanManageTenantAsync, system-wide grants still require a super admin, and
+// ParseAssignablePermissionCsv makes Admin.Full/Tenant.Manage impossible to hand out —
+// so a scoped admin cannot widen their own reach or escalate anyone.
+[Authorize(Policy = "RequireAdminFullOrScoped")]
 public class UserPermissionsController : ControllerBase
 {
     private readonly AppDbContext _db;

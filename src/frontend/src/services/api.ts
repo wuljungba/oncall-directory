@@ -25,6 +25,7 @@ import type {
   OnboardingHealth,
   OnCallReportRow,
   ConnectionStatus,
+  SignInIdentity,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -502,6 +503,12 @@ export const permissionsAdminApi = {
     }),
   remove: (id: number) =>
     fetchApi<void>(`/admin/permissions/${id}`, { method: 'DELETE' }),
+}
+
+// ── Admin: who has signed in ──
+export const identitiesApi = {
+  list: (take?: number) =>
+    fetchApi<SignInIdentity[]>(`/admin/identities${take ? `?take=${take}` : ''}`),
 }
 
 // ── On-call audit report ──

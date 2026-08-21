@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using OnCallApi.Authorization;
 using OnCallApi.Configuration;
 using OnCallApi.Data;
+using OnCallApi.Services;
 
 namespace OnCallApi.Middleware;
 
@@ -32,10 +33,21 @@ public class TenantClaimsMiddleware
         _superAdmins = superAdmins.Value;
     }
 
-    public async Task InvokeAsync(HttpContext context, AppDbContext db)
+    /// <param name="identities">
+    /// Optional so the middleware can be exercised standalone in tests. Claim expansion is
+    /// the job here; recording who signed in is a side benefit that must never be able to
+    /// affect a request.
+    /// </param>
+    public async Task InvokeAsync(HttpContext context, AppDbContext db, IIdentityDirectoryService? identities = null)
     {
         if (context.User.Identity?.IsAuthenticated == true)
         {
+            // Record that this principal exists, so administrators can find and provision
+            // them. Entra/Google users otherwise leave no trace until someone grants them
+            // permission — which requires already knowing their address. Enqueue-only and
+            // throttled, so it costs nothing on the request path.
+            if (identities != null) RecordSignIn(context.User, identities);
+
             try
             {
                 var identity = context.User.Identity as ClaimsIdentity;
@@ -336,6 +348,33 @@ public class TenantClaimsMiddleware
                     identity.AddClaim(new Claim(Permissions.ClaimType, perm));
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// Queues a sign-in observation for the identity directory. Best-effort by design: a
+    /// failure here must never affect the request, since this data is for discoverability
+    /// only and confers no access.
+    /// </summary>
+    private static void RecordSignIn(ClaimsPrincipal user, IIdentityDirectoryService identities)
+    {
+        try
+        {
+            var objectId = GetAzureAdObjectId(user);
+            if (string.IsNullOrEmpty(objectId)) return;
+
+            identities.Observe(new SignInObservation(
+                Provider: user.FindFirst("auth_provider")?.Value ?? "microsoft",
+                ExternalObjectId: objectId,
+                Email: GetEmail(user),
+                DisplayName: user.FindFirst(ClaimTypes.Name)?.Value
+                             ?? user.FindFirst("name")?.Value,
+                TenantIdClaim: GetTenantId(user),
+                SeenAt: DateTime.UtcNow));
+        }
+        catch
+        {
+            // Intentionally swallowed — see summary.
         }
     }
 

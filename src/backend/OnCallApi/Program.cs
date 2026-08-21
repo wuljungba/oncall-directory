@@ -439,6 +439,12 @@ builder.Services.AddScoped<TeamsNotificationService>();
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
 builder.Services.AddHostedService<AuditBackgroundService>();
+
+// Sign-in identity directory: same channel + background-flusher shape as the audit log,
+// so recording who signed in costs nothing on the request path.
+builder.Services.AddSingleton<IdentityDirectoryService>();
+builder.Services.AddSingleton<IIdentityDirectoryService>(sp => sp.GetRequiredService<IdentityDirectoryService>());
+builder.Services.AddHostedService<IdentityDirectoryBackgroundService>();
 builder.Services.AddHostedService<AdSyncBackgroundService>();
 builder.Services.AddHostedService<DepartmentSyncService>();
 builder.Services.AddHostedService<PresenceSyncService>();
@@ -735,6 +741,27 @@ using (var scope = app.Services.CreateScope())
             """
             IF COL_LENGTH(N'dbo.DispatchSteps', N'ProviderMessageId') IS NULL
                 ALTER TABLE dbo.DispatchSteps ADD ProviderMessageId nvarchar(64) NULL;
+            """,
+            // SignInIdentities (who has actually signed in, so admins can find and
+            // provision them). Added later than the base schema — create idempotently.
+            """
+            IF OBJECT_ID(N'dbo.SignInIdentities') IS NULL
+            BEGIN
+                CREATE TABLE dbo.SignInIdentities (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    Provider nvarchar(20) NOT NULL,
+                    ExternalObjectId nvarchar(200) NOT NULL,
+                    Email nvarchar(320) NULL,
+                    DisplayName nvarchar(200) NULL,
+                    LastTenantIdClaim nvarchar(100) NULL,
+                    FirstSeenAt datetime2 NOT NULL,
+                    LastSeenAt datetime2 NOT NULL
+                );
+                CREATE UNIQUE INDEX uq_SignInIdentities_Principal
+                    ON dbo.SignInIdentities (Provider, ExternalObjectId);
+                CREATE INDEX IX_SignInIdentities_Email ON dbo.SignInIdentities (Email);
+                CREATE INDEX IX_SignInIdentities_LastSeenAt ON dbo.SignInIdentities (LastSeenAt);
+            END;
             """,
         })
         {

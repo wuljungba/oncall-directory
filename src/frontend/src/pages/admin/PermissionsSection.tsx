@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertTriangle, CheckCircle, Plus, ShieldCheck, Trash2 } from 'lucide-react'
-import { localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
+import { AlertTriangle, CheckCircle, Plus, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
+import { identitiesApi, localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
-import type { LocalAccount, PermissionGrant, Tenant } from '@/types'
+import type { LocalAccount, PermissionGrant, SignInIdentity, Tenant } from '@/types'
 
 const PERMISSION_OPTIONS: { key: string; label: string }[] = [
   { key: 'Schedule.Read', label: 'On-Call Schedule — Read' },
@@ -17,15 +17,20 @@ const PERMISSION_OPTIONS: { key: string; label: string }[] = [
  * specific user — including external principals whose Entra tokens carry no roles.
  */
 export default function PermissionsSection() {
-  const { activeTenantId, tenantIds } = useAuth()
+  const { activeTenantId, tenantIds, canAdminFull } = useAuth()
   const [grants, setGrants] = useState<PermissionGrant[]>([])
   const [tenants, setTenants] = useState<Tenant[]>([])
+  const [identities, setIdentities] = useState<SignInIdentity[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
   const [principal, setPrincipal] = useState('')
-  const [tenantId, setTenantId] = useState<number | ''>(activeTenantId ?? '')
+  // Only a super admin may grant system-wide; for anyone else the server rejects it, so
+  // don't offer it and don't default to it.
+  const [tenantId, setTenantId] = useState<number | ''>(
+    activeTenantId ?? (canAdminFull ? '' : tenantIds[0] ?? ''),
+  )
   const [perms, setPerms] = useState<Set<string>>(new Set(['Schedule.Read', 'Schedule.Write']))
   const tenantTouched = useRef(false)
 
@@ -36,6 +41,13 @@ export default function PermissionsSection() {
       setTenants(await tenantsApi.getAll(true))
     } catch {
       setError('Failed to load permission grants.')
+    }
+    // Separate from the grants load: the identity directory is new, so an older backend
+    // (or a mid-deploy slot) returning 404 must not blank out the whole tab.
+    try {
+      setIdentities(await identitiesApi.list())
+    } catch {
+      setIdentities([])
     }
     setLoading(false)
   }, [])
@@ -101,6 +113,21 @@ export default function PermissionsSection() {
         </div>
       )}
 
+      {/* Signed-in users. Entra/Google tokens carry no roles, so people arrive with no
+          access and used to be invisible here — the grant field below is free text, with
+          no list to pick from. This is that list. */}
+      <SignedInUsers
+        identities={identities}
+        loading={loading}
+        tenantName={tenantName}
+        onSelect={(id) => {
+          // Prefill the existing grant form rather than duplicating it.
+          setPrincipal(id.email || id.externalObjectId)
+          setMessage(null)
+          setError(null)
+        }}
+      />
+
       {/* Grant form */}
       <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
         <h2 className="font-medium flex items-center gap-2">
@@ -122,10 +149,14 @@ export default function PermissionsSection() {
               value={tenantId} onChange={e => { tenantTouched.current = true; setTenantId(e.target.value ? Number(e.target.value) : '') }}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
             >
-              <option value={''}>All tenants (system-wide)</option>
+              {canAdminFull && <option value={''}>All tenants (system-wide)</option>}
               {tenantIds.map(id => <option key={id} value={id}>{tenantName(id)}</option>)}
             </select>
-            <p className="text-xs text-gray-600 mt-1">Scope the grant to one subscription (super admins may also grant system-wide).</p>
+            <p className="text-xs text-gray-600 mt-1">
+              {canAdminFull
+                ? 'Scope the grant to one subscription, or grant system-wide.'
+                : 'Grants are scoped to the subscriptions you administer.'}
+            </p>
           </div>
         </div>
 
@@ -305,6 +336,109 @@ function LocalAccountsSection() {
           </div>
         ))}
       </div>
+    </section>
+  )
+}
+/**
+ * People who have signed in, most recent first.
+ *
+ * Microsoft and Google tokens carry no app roles, so a new user lands with no access and
+ * — before this list existed — left no record anywhere, making them impossible to find in
+ * the admin UI. Selecting someone fills in the grant form below.
+ */
+function SignedInUsers({ identities, loading, tenantName, onSelect }: {
+  identities: SignInIdentity[]
+  loading: boolean
+  tenantName: (id?: number) => string
+  onSelect: (identity: SignInIdentity) => void
+}) {
+  const [copied, setCopied] = useState<string | null>(null)
+
+  const relative = (iso: string) => {
+    const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000)
+    if (mins < 1) return 'just now'
+    if (mins < 60) return `${mins}m ago`
+    if (mins < 1440) return `${Math.round(mins / 60)}h ago`
+    return `${Math.round(mins / 1440)}d ago`
+  }
+
+  async function copyObjectId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id)
+      setCopied(id)
+      setTimeout(() => setCopied(null), 2000)
+    } catch { /* clipboard unavailable */ }
+  }
+
+  const waiting = identities.filter(i => i.hasNoAccess).length
+
+  return (
+    <section className="bg-gray-900 border border-gray-800 rounded-xl">
+      <div className="px-5 py-4 border-b border-gray-800 flex items-center justify-between gap-3">
+        <h2 className="font-medium flex items-center gap-2">
+          <Users className="w-5 h-5 text-amber-500" /> Signed-in users
+        </h2>
+        {waiting > 0 && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-400">
+            {waiting} awaiting access
+          </span>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-10"><div className="animate-spin rounded-full h-6 w-6 border-b-2 border-amber-600" /></div>
+      ) : identities.length === 0 ? (
+        <div className="flex flex-col items-center py-12 text-gray-500">
+          <Users className="w-10 h-10 mb-3 text-gray-700" />
+          <p className="text-sm">Nobody has signed in yet</p>
+          <p className="text-xs text-gray-600 mt-1">Users appear here the first time they sign in.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-800">
+          {identities.map(i => (
+            <div key={i.id} className="px-5 py-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-sm font-medium truncate">{i.displayName || i.email || i.externalObjectId}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 capitalize">{i.provider}</span>
+                  {i.isSuperAdmin ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-purple-600/20 text-purple-400">Super admin</span>
+                  ) : i.tenantAdminOf.length > 0 ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-400">
+                      Sub-admin · {i.tenantAdminOf.map(t => tenantName(t)).join(', ')}
+                    </span>
+                  ) : i.hasNoAccess ? (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-400">No access</span>
+                  ) : (
+                    i.permissions.map(p => (
+                      <span key={p} className="text-xs px-2 py-0.5 rounded-full bg-green-600/20 text-green-500">{p}</span>
+                    ))
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 truncate mt-0.5">
+                  {i.email || 'no email on token'} · last seen {relative(i.lastSeenAt)}
+                </p>
+                {/* The object id is what appointing a sub-admin requires, and it is
+                    otherwise impossible to discover. */}
+                <button
+                  onClick={() => copyObjectId(i.externalObjectId)}
+                  title="Copy object id (needed to appoint a sub-admin)"
+                  className="text-xs font-mono text-gray-600 hover:text-gray-400 truncate max-w-full mt-0.5"
+                >
+                  {copied === i.externalObjectId ? 'copied!' : i.externalObjectId}
+                </button>
+              </div>
+              <button
+                onClick={() => onSelect(i)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs flex-shrink-0 transition-colors"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                {i.hasNoAccess ? 'Grant access' : 'Change access'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </section>
   )
 }

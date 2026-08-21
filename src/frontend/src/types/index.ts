@@ -287,6 +287,26 @@ export interface DispatchStep {
   providerMessageId?: string
 }
 
+/**
+ * Someone who has actually signed in. Entra/Google tokens carry no app roles, so a new
+ * user arrives with no access; this is how an admin finds them to grant it.
+ */
+export interface SignInIdentity {
+  id: number
+  provider: string
+  /** Entra object id, or "google-{sub}" — the value needed to appoint a sub-admin. */
+  externalObjectId: string
+  email?: string
+  displayName?: string
+  firstSeenAt: string
+  lastSeenAt: string
+  isSuperAdmin: boolean
+  tenantAdminOf: number[]
+  permissions: string[]
+  grantTenantIds: (number | null)[]
+  hasNoAccess: boolean
+}
+
 /** Health-check result for an external dispatch channel. */
 export interface ConnectionStatus {
   connected: boolean
