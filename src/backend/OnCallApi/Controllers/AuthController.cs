@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OnCallApi.Authorization;
 using OnCallApi.Services;
 
 namespace OnCallApi.Controllers;
@@ -45,9 +46,12 @@ public class AuthController : ControllerBase
 
         return Ok(new CurrentUserResponse
         {
-            Id = User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "",
+            // Same resolver as claim expansion and tenant resolution. Reading
+            // NameIdentifier directly returned the app-specific "sub" for Entra tokens,
+            // so this reported a different id than the one everything else keys on.
+            Id = PrincipalClaims.GetObjectId(User) ?? "",
             Name = User.FindFirst(ClaimTypes.Name)?.Value ?? "",
-            Email = User.FindFirst(ClaimTypes.Email)?.Value ?? "",
+            Email = PrincipalClaims.GetEmail(User) ?? "",
             Roles = roles,
             Permissions = permissions,
             TenantIds = tenantIds,
