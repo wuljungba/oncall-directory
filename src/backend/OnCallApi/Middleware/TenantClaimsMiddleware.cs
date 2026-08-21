@@ -251,11 +251,7 @@ public class TenantClaimsMiddleware
         }
     }
 
-    private static string? GetTenantId(ClaimsPrincipal user)
-    {
-        return user.FindFirst("tid")?.Value
-            ?? user.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid")?.Value;
-    }
+    private static string? GetTenantId(ClaimsPrincipal user) => PrincipalClaims.GetTenantId(user);
 
     /// <summary>
     /// Whether the authenticated user matches a configured super administrator
@@ -378,16 +374,7 @@ public class TenantClaimsMiddleware
         }
     }
 
-    private static string? GetEmail(ClaimsPrincipal user)
-    {
-        return user.FindFirst(ClaimTypes.Email)?.Value
-            ?? user.FindFirst("email")?.Value
-            ?? user.FindFirst("preferred_username")?.Value;
-    }
+    private static string? GetEmail(ClaimsPrincipal user) => PrincipalClaims.GetEmail(user);
 
-    private static string? GetAzureAdObjectId(ClaimsPrincipal user)
-    {
-        return user.FindFirst("oid")?.Value
-            ?? user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-    }
+    private static string? GetAzureAdObjectId(ClaimsPrincipal user) => PrincipalClaims.GetObjectId(user);
 }

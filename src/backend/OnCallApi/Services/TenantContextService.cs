@@ -193,25 +193,9 @@ public class TenantContextService : ITenantContextService
         return employee;
     }
 
-    /// <summary>
-    /// Mirrors TenantClaimsMiddleware.GetEmail so a grant made against someone's email
-    /// resolves the same way here as it does when their claims are expanded.
-    /// </summary>
-    private static string? GetEmail(ClaimsPrincipal user)
-    {
-        return user.FindFirst(ClaimTypes.Email)?.Value
-            ?? user.FindFirst("email")?.Value
-            ?? user.FindFirst("preferred_username")?.Value;
-    }
+    // Both resolvers delegate to PrincipalClaims so that claim expansion and tenant
+    // resolution can never disagree about who a principal is.
+    private static string? GetEmail(ClaimsPrincipal user) => PrincipalClaims.GetEmail(user);
 
-    private static string? GetAzureAdObjectId(ClaimsPrincipal user)
-    {
-        // Azure AD standard "oid"; Microsoft.Identity.Web can map it to the long-form
-        // namespace claim, and the dev handler uses that long form only. Include both,
-        // then "sub", then NameIdentifier — mirroring JwtValidationMiddleware.GetUserId.
-        return user.FindFirst("oid")?.Value
-            ?? user.FindFirst("http://schemas.microsoft.com/identity/claims/objectidentifier")?.Value
-            ?? user.FindFirst("sub")?.Value
-            ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-    }
+    private static string? GetAzureAdObjectId(ClaimsPrincipal user) => PrincipalClaims.GetObjectId(user);
 }
