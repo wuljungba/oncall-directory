@@ -193,6 +193,21 @@ public class TenantContextService : ITenantContextService
         return employee;
     }
 
+    public async Task<int?> GetDepartmentTenantIdAsync(int departmentId)
+    {
+        try
+        {
+            return await _db.Departments
+                .Where(d => d.Id == departmentId)
+                .Select(d => d.TenantId)
+                .FirstOrDefaultAsync();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     // Both resolvers delegate to PrincipalClaims so that claim expansion and tenant
     // resolution can never disagree about who a principal is.
     private static string? GetEmail(ClaimsPrincipal user) => PrincipalClaims.GetEmail(user);

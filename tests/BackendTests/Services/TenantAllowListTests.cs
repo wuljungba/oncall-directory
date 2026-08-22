@@ -13,17 +13,22 @@ using OnCallApi.Models;
 namespace BackendTests.Services;
 
 /// <summary>
-/// Verifies the approved-tenant allow-list: TenantClaimsMiddleware resolves a
-/// signed-in user's tenant from the token's <c>tid</c> claim against
-/// <c>Tenant.AzureAdTenantId</c>. Users from approved, active tenants are scoped
-/// in (auto-assigned DepartmentAdmin); users from unapproved or inactive tenants
-/// get no tenant claims and are denied by default.
+/// Access is invitation-only.
+///
+/// Matching the token's <c>tid</c> against <c>Tenant.AzureAdTenantId</c> used to
+/// auto-create a DepartmentAdmin row and grant <c>ScopedAdminPermissions</c> — which
+/// includes <c>CodeCall.Write</c>. Every employee in the hospital's Entra tenant therefore
+/// became a department admin able to fire a live code call on their first sign-in, with no
+/// invitation and no approval. These tests pin the replacement behaviour: a matching tenant
+/// alone confers nothing, and access comes only from an explicit grant, a tenant-admin
+/// record, an Entra group an administrator mapped, or super-admin configuration.
 /// </summary>
 public class TenantAllowListTests
 {
     private const string ApprovedTenant1Tid = "11111111-1111-1111-1111-111111111111";
     private const string ApprovedTenant2Tid = "22222222-2222-2222-2222-222222222222";
     private const string RetiredTenantTid = "99999999-9999-9999-9999-999999999999";
+    private const string MappedGroupId = "group-aaaa-bbbb";
 
     private static AppDbContext CreateDbContext()
     {
@@ -34,122 +39,153 @@ public class TenantAllowListTests
         var db = new AppDbContext(options);
         db.Tenants.AddRange(
             new Tenant { Id = 1, Name = "Main Hospital", AzureAdTenantId = ApprovedTenant1Tid, IsActive = true, CreatedAt = DateTime.UtcNow },
-            new Tenant { Id = 2, Name = "North Campus", AzureAdTenantId = ApprovedTenant2Tid, IsActive = true, CreatedAt = DateTime.UtcNow },
+            new Tenant { Id = 2, Name = "North Campus", AzureAdTenantId = ApprovedTenant2Tid, AzureAdGroupId = MappedGroupId, IsActive = true, CreatedAt = DateTime.UtcNow },
             new Tenant { Id = 3, Name = "Retired Site", AzureAdTenantId = RetiredTenantTid, IsActive = false, CreatedAt = DateTime.UtcNow });
         db.SaveChanges();
         return db;
     }
 
-    private static TenantClaimsMiddleware CreateMiddleware()
+    private static TenantClaimsMiddleware CreateMiddleware(params string[] superAdminEmails)
     {
         return new TenantClaimsMiddleware(
             _ => Task.CompletedTask,
-            Options.Create(new SuperAdminOptions()));
+            Options.Create(new SuperAdminOptions { Emails = [.. superAdminEmails] }));
     }
 
-    private static (DefaultHttpContext context, ClaimsIdentity identity) CreateContext(string tid, string? oid = null)
+    private static DefaultHttpContext CreateContext(string? tid, string? oid = null, string? groupId = null, string? email = null)
     {
-        var claims = new List<Claim> { new("tid", tid) };
+        var claims = new List<Claim>();
+        if (tid != null) claims.Add(new Claim("tid", tid));
+        if (email != null) claims.Add(new Claim(ClaimTypes.Email, email));
+        if (groupId != null) claims.Add(new Claim("groups", groupId));
         if (oid != null)
         {
             claims.Add(new Claim("oid", oid));
             claims.Add(new Claim(ClaimTypes.NameIdentifier, oid));
         }
 
-        var identity = new ClaimsIdentity(claims, "test-auth");
-        var httpContext = new DefaultHttpContext
+        return new DefaultHttpContext
         {
-            User = new ClaimsPrincipal(identity),
+            User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test-auth")),
             RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
         };
-        return (httpContext, identity);
     }
 
     [Fact]
-    public async Task UserWithApprovedTid_IsScopedIntoTenant()
+    public async Task MatchingTenantId_ConfersNothing()
     {
         var db = CreateDbContext();
-        var middleware = CreateMiddleware();
-        var (context, identity) = CreateContext(ApprovedTenant1Tid, oid: "user-oid-1");
+        var context = CreateContext(ApprovedTenant1Tid, oid: "user-oid-1");
 
-        await middleware.InvokeAsync(context, db);
+        await CreateMiddleware().InvokeAsync(context, db);
 
-        // Scoped claim + permissions granted for the approved tenant.
-        context.User.HasClaim("TenantId:1", "DepartmentAdmin").Should().BeTrue();
-        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeTrue();
-        context.User.HasClaim(Permissions.ClaimType, Permissions.ScheduleRead).Should().BeTrue();
-
-        // Not scoped into the other tenant.
-        context.User.HasClaim("TenantId:2", "DepartmentAdmin").Should().BeFalse();
-
-        // Auto-assigned TenantAdmin record was persisted.
-        var records = await db.TenantAdmins.Where(a => a.TenantId == 1).ToListAsync();
-        records.Should().ContainSingle();
-        records[0].AzureAdObjectId.Should().Be("user-oid-1");
-        records[0].Role.Should().Be("DepartmentAdmin");
-        records[0].IsAutoAssigned.Should().BeTrue();
-    }
-
-    [Fact]
-    public async Task UserWithUnapprovedTid_GetsNoTenantClaims()
-    {
-        var db = CreateDbContext();
-        var middleware = CreateMiddleware();
-        var (context, _) = CreateContext("aaaaaaaa-0000-0000-0000-000000000000", oid: "user-oid-unknown");
-
-        await middleware.InvokeAsync(context, db);
-
+        // The whole point: belonging to the hospital's Entra tenant is not authorization.
         context.User.Claims.Where(c => c.Type.StartsWith("TenantId:")).Should().BeEmpty();
         context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.CodeCallWrite).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.ScheduleRead).Should().BeFalse();
 
+        // And no admin record is conjured on their behalf.
         (await db.TenantAdmins.CountAsync()).Should().Be(0);
     }
 
     [Fact]
-    public async Task UserWithTidOfInactiveTenant_IsNotScopedIn()
+    public async Task UnapprovedTenantId_ConfersNothing()
     {
         var db = CreateDbContext();
-        var middleware = CreateMiddleware();
-        var (context, _) = CreateContext(RetiredTenantTid, oid: "user-oid-retired");
+        var context = CreateContext("aaaaaaaa-0000-0000-0000-000000000000", oid: "user-oid-unknown");
 
-        await middleware.InvokeAsync(context, db);
+        await CreateMiddleware().InvokeAsync(context, db);
 
-        // Inactive tenants are not part of the allow-list.
+        context.User.Claims.Where(c => c.Type.StartsWith("TenantId:")).Should().BeEmpty();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeFalse();
+        (await db.TenantAdmins.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ExistingTenantAdminRecord_StillGrantsScopedAccess()
+    {
+        // The supported route in: an administrator appointed them.
+        var db = CreateDbContext();
+        db.TenantAdmins.Add(new TenantAdmin
+        {
+            TenantId = 1,
+            AzureAdObjectId = "invited-user",
+            Role = "DepartmentAdmin",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var context = CreateContext(ApprovedTenant1Tid, oid: "invited-user");
+
+        await CreateMiddleware().InvokeAsync(context, db);
+
+        context.User.HasClaim("TenantId:1", "DepartmentAdmin").Should().BeTrue();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeTrue();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.ScheduleRead).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task MappedEntraGroup_StillAutoAssigns()
+    {
+        // Group mapping is retained: an administrator maps a specific group to a tenant and
+        // someone must add the user to it, which is an invitation.
+        var db = CreateDbContext();
+        var context = CreateContext(ApprovedTenant2Tid, oid: "group-member", groupId: MappedGroupId);
+
+        await CreateMiddleware().InvokeAsync(context, db);
+
+        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeTrue();
+
+        var records = await db.TenantAdmins.Where(a => a.TenantId == 2).ToListAsync();
+        records.Should().ContainSingle();
+        records[0].AzureAdObjectId.Should().Be("group-member");
+        records[0].IsAutoAssigned.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UnmappedGroupMembership_ConfersNothing()
+    {
+        var db = CreateDbContext();
+        var context = CreateContext(ApprovedTenant2Tid, oid: "other-group-member", groupId: "some-other-group");
+
+        await CreateMiddleware().InvokeAsync(context, db);
+
+        context.User.Claims.Where(c => c.Type.StartsWith("TenantId:")).Should().BeEmpty();
+        (await db.TenantAdmins.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task InactiveTenant_ConfersNothing()
+    {
+        var db = CreateDbContext();
+        var context = CreateContext(RetiredTenantTid, oid: "user-oid-retired");
+
+        await CreateMiddleware().InvokeAsync(context, db);
+
         context.User.Claims.Where(c => c.Type.StartsWith("TenantId:")).Should().BeEmpty();
     }
 
     [Fact]
-    public async Task TidResolution_IsIdempotent_NoDuplicateAssignments()
+    public async Task GroupAutoAssignment_IsIdempotent()
     {
         var db = CreateDbContext();
-        var middleware = CreateMiddleware();
-        var (context, _) = CreateContext(ApprovedTenant2Tid, oid: "user-oid-2");
+        var context = CreateContext(ApprovedTenant2Tid, oid: "group-member", groupId: MappedGroupId);
 
-        await middleware.InvokeAsync(context, db);
-        await middleware.InvokeAsync(context, db);
+        await CreateMiddleware().InvokeAsync(context, db);
+        await CreateMiddleware().InvokeAsync(context, db);
 
-        (await db.TenantAdmins.Where(a => a.AzureAdObjectId == "user-oid-2").CountAsync()).Should().Be(1);
+        (await db.TenantAdmins.Where(a => a.AzureAdObjectId == "group-member").CountAsync()).Should().Be(1);
     }
 
     [Fact]
-    public async Task SuperAdmin_BypassesAllowList()
+    public async Task SuperAdmin_IsUnaffected()
     {
         var db = CreateDbContext();
-        var middleware = new TenantClaimsMiddleware(
-            _ => Task.CompletedTask,
-            Options.Create(new SuperAdminOptions { Emails = ["root@system.org"] }));
-        var identity = new ClaimsIdentity(
-            new[] { new Claim(ClaimTypes.Email, "root@system.org"), new Claim("tid", "unapproved-tenant-guid") },
-            "test-auth");
-        var context = new DefaultHttpContext
-        {
-            User = new ClaimsPrincipal(identity),
-            RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
-        };
+        var context = CreateContext("unapproved-tenant-guid", email: "root@system.org");
 
-        await middleware.InvokeAsync(context, db);
+        await CreateMiddleware("root@system.org").InvokeAsync(context, db);
 
-        // Super admin gets full access regardless of tenant allow-list.
         context.User.HasClaim(ClaimTypes.Role, "OnCall.Admin").Should().BeTrue();
         context.User.HasClaim(Permissions.ClaimType, Permissions.AdminFull).Should().BeTrue();
     }

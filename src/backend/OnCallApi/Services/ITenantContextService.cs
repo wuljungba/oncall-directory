@@ -25,4 +25,10 @@ public interface ITenantContextService
     /// This is used to auto-assign TenantId when an employee is created by a sub-admin.
     /// </summary>
     Task<Guid?> GetCurrentEmployeeIdAsync(ClaimsPrincipal user);
+
+    /// <summary>
+    /// The tenant a department belongs to, or null if it has none or does not exist.
+    /// Resolved from the database so a caller cannot assert which tenant a department is in.
+    /// </summary>
+    Task<int?> GetDepartmentTenantIdAsync(int departmentId);
 }

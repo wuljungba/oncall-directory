@@ -563,6 +563,14 @@ app.UseStaticFiles();
 app.UseCors("Frontend");
 app.UseAuthentication();
 
+// HIPAA audit logging, first past authentication and ahead of every gate that can reject
+// a request. It previously sat after UseAuthorization, which short-circuits on 401/403, so
+// refused attempts to reach PHI — the events an audit trail exists for — were never
+// written. JwtValidationMiddleware rejects even earlier, so this must precede that too.
+// The middleware records the outcome after the request completes, by which point
+// TenantClaimsMiddleware has expanded claims on the same principal.
+app.UseMiddleware<HipaaAuditMiddleware>();
+
 if (!devAuthEnabled)
 {
     // JWT scope/claim validation for protected API endpoints (runs after auth)
@@ -575,10 +583,6 @@ if (!devAuthEnabled)
 app.UseMiddleware<TenantClaimsMiddleware>();
 
 app.UseAuthorization();
-
-// HIPAA audit logging (runs after auth so User is populated)
-// In dev mode the fake user claims are logged instead of real ones
-app.UseMiddleware<HipaaAuditMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
@@ -626,7 +630,22 @@ app.MapFallbackToFile("index.html");
 // the model on startup. Intended for a one-time reset of a database that has no
 // data yet (e.g. after a model/column change where EnsureCreated cannot alter an
 // existing table). Must be removed/cleared immediately after use.
-var recreateSchema = string.Equals(builder.Configuration["Db:Recreate"], "true", StringComparison.OrdinalIgnoreCase);
+var recreateRequested = string.Equals(builder.Configuration["Db:Recreate"], "true", StringComparison.OrdinalIgnoreCase);
+
+// Db:Recreate drops the database — every patient-adjacent record and the entire audit
+// history with it. It is a local development convenience and must never be reachable from
+// a deployed environment, where a single mistyped App Service setting would destroy
+// production on the next restart. Outside Development the request is refused, loudly,
+// rather than honoured.
+if (recreateRequested && !app.Environment.IsDevelopment())
+{
+    throw new InvalidOperationException(
+        $"SECURITY: Db:Recreate=true is set in the '{app.Environment.EnvironmentName}' environment. "
+        + "This setting drops the entire database, including all audit history, and is only "
+        + "permitted in Development. Clear the Db__Recreate app setting before restarting.");
+}
+
+var recreateSchema = recreateRequested && app.Environment.IsDevelopment();
 
 using (var scope = app.Services.CreateScope())
 {
@@ -741,6 +760,15 @@ using (var scope = app.Services.CreateScope())
             """
             IF COL_LENGTH(N'dbo.DispatchSteps', N'ProviderMessageId') IS NULL
                 ALTER TABLE dbo.DispatchSteps ADD ProviderMessageId nvarchar(64) NULL;
+            """,
+            // AuditLogs.PrincipalId + StatusCode. PrincipalId attributes access by
+            // non-Entra (Google/local) users, whose ids are not GUIDs and were therefore
+            // logged as Guid.Empty. StatusCode records denied attempts.
+            """
+            IF COL_LENGTH(N'dbo.AuditLogs', N'PrincipalId') IS NULL
+                ALTER TABLE dbo.AuditLogs ADD PrincipalId nvarchar(200) NULL;
+            IF COL_LENGTH(N'dbo.AuditLogs', N'StatusCode') IS NULL
+                ALTER TABLE dbo.AuditLogs ADD StatusCode int NULL;
             """,
             // SignInIdentities (who has actually signed in, so admins can find and
             // provision them). Added later than the base schema — create idempotently.
