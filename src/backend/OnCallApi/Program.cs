@@ -666,7 +666,8 @@ using (var scope = app.Services.CreateScope())
         // EnsureCreated creates schema from the model directly, bypassing migration SQL.
         // This works around nvarchar(max) and other SQL Server-specific syntax in migrations
         // that SQLite cannot parse. HasData() seed values from OnModelCreating are applied.
-        await db.Database.EnsureCreatedAsync();
+        // Returns true only when it actually built the schema — i.e. the database was empty.
+        var schemaWasJustCreated = await db.Database.EnsureCreatedAsync();
 
         // Ensure tables added AFTER this schema first existed get created even on an
         // existing database. EnsureCreated is a no-op once any table exists, so tables
@@ -823,6 +824,53 @@ using (var scope = app.Services.CreateScope())
                     .LogWarning(ex, "Could not ensure table exists on startup (may already exist).");
             }
         }
+        }
+        else if (!schemaWasJustCreated)
+        {
+            // The backport above is T-SQL, so it does not run here — and EnsureCreated is a
+            // no-op once any table exists. A local SQLite database created before a model
+            // change therefore stays stale forever, and the symptom is a runtime
+            // "no such column" that reads like a code bug rather than a schema one.
+            //
+            // Report ACTUAL drift rather than the mere possibility of it. A warning that
+            // fires on every start is noise, and noise is what teaches people to ignore the
+            // one message that matters.
+            try
+            {
+                var expected = db.Model.GetEntityTypes()
+                    .Select(t => t.GetTableName())
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Select(n => n!)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                var actual = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var conn = db.Database.GetDbConnection();
+                await conn.OpenAsync();
+                await using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table'";
+                    await using var reader = await cmd.ExecuteReaderAsync();
+                    while (await reader.ReadAsync()) actual.Add(reader.GetString(0));
+                }
+
+                var missing = expected.Where(t => !actual.Contains(t)).ToList();
+                if (missing.Count > 0)
+                {
+                    scope.ServiceProvider.GetRequiredService<ILogger<Program>>().LogWarning(
+                        "This '{Provider}' database is STALE: {Count} table(s) in the model do not exist here "
+                        + "({Missing}). Schema backports are SQL Server only, and EnsureCreated cannot alter an "
+                        + "existing database, so features using them will fail with missing tables or columns. "
+                        + "Delete the database file to have it rebuilt — see docs/local-development.md.",
+                        provider, missing.Count, string.Join(", ", missing));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Diagnostics only — never prevent startup.
+                scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                    .LogDebug(ex, "Could not check the local database for schema drift.");
+            }
         }
 
         // ── Default duty-hour rules (idempotent — only seeds when the table is empty). ──
