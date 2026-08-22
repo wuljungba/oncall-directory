@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Graph.Models;
 using Microsoft.Graph.Models.ODataErrors;
 using OnCallApi.Models;
@@ -29,8 +30,8 @@ public class TeamsNotificationService : ITeamsNotificationService
     {
         try
         {
-            var cardJson = BuildAdaptiveCard(title, message, cardType);
-            var delivered = await _graphApi.SendTeamsMessageAsync(userAzureAdId, cardJson);
+            var content = BuildMessageHtml(title, message, cardType);
+            var delivered = await _graphApi.SendTeamsMessageAsync(userAzureAdId, content);
 
             if (delivered)
             {
@@ -103,31 +104,31 @@ public class TeamsNotificationService : ITeamsNotificationService
             NotificationCardType.Error);
     }
 
-    private static string BuildAdaptiveCard(string title, string message, NotificationCardType cardType)
+    /// <summary>
+    /// Builds the message body Teams renders.
+    ///
+    /// This was a method named BuildAdaptiveCard that produced neither an adaptive card nor
+    /// anything treated as JSON: GraphApiService posted its output as the message content,
+    /// so a recipient received a raw JSON envelope. It also hand-rolled JSON escaping that
+    /// did not cover control characters — a tab in a department name yielded a payload
+    /// Graph rejected, and the rejection was swallowed.
+    /// </summary>
+    private static string BuildMessageHtml(string title, string message, NotificationCardType cardType)
     {
-        var accentColor = cardType switch
+        var accent = cardType switch
         {
-            NotificationCardType.Success => "Good",
-            NotificationCardType.Warning => "Warning",
-            NotificationCardType.Error => "Attention",
-            _ => "Accent"
+            NotificationCardType.Success => "#107C10",
+            NotificationCardType.Warning => "#F7A800",
+            NotificationCardType.Error => "#C4314B",
+            _ => "#0078D4",
         };
 
-        // Simple JSON payload. For production, use the full Adaptive Card schema.
-        return $$"""
-        {
-            "subject": "{{EscapeJson(title)}}",
-            "body": {
-                "contentType": "html",
-                "content": "{{EscapeJson(message)}}"
-            }
-        }
-        """;
-    }
+        // Callers write markdown-style emphasis; render it rather than showing the markers.
+        var body = WebUtility.HtmlEncode(message)
+            .Replace("**", string.Empty)
+            .Replace("\n", "<br/>");
 
-    private static string EscapeJson(string value)
-    {
-        return value.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "<br>").Replace("\r", "");
+        return $"<p><strong style=\"color:{accent}\">{WebUtility.HtmlEncode(title)}</strong></p><p>{body}</p>";
     }
 }
 

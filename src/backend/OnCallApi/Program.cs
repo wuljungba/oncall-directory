@@ -451,7 +451,9 @@ builder.Services.AddHostedService<AdSyncBackgroundService>();
 builder.Services.AddHostedService<DepartmentSyncService>();
 builder.Services.AddHostedService<PresenceSyncService>();
 builder.Services.AddHostedService<CalendarSyncService>();
-builder.Services.AddScoped<AvailabilityService>();
+// AvailabilityService, TeamsBotService and SharePointPublishingService were registered
+// but injected nowhere — dead surface that reads like working functionality. The classes
+// remain; only the DI registrations are removed, so wiring one up is a deliberate act.
 builder.Services.AddScoped<EscalationService>();
 builder.Services.AddScoped<IAdminService, AdminService>();
 builder.Services.AddScoped<ITenantContextService, TenantContextService>();
@@ -475,8 +477,6 @@ builder.Services.AddSingleton<DispatchBackgroundService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DispatchBackgroundService>());
 
 builder.Services.AddScoped<TenantSyncService>();
-builder.Services.AddScoped<TeamsBotService>();
-builder.Services.AddScoped<SharePointPublishingService>();
 builder.Services.AddHostedService<EscalationBackgroundService>();
 
 // ── SignalR (real-time notifications) ──
@@ -763,6 +763,12 @@ using (var scope = app.Services.CreateScope())
             IF COL_LENGTH(N'dbo.DispatchSteps', N'ProviderMessageId') IS NULL
                 ALTER TABLE dbo.DispatchSteps ADD ProviderMessageId nvarchar(64) NULL;
             """,
+            // PublicShares.ExpiresAt — a share link can now have a natural end rather
+            // than living until someone remembers to revoke it.
+            """
+            IF COL_LENGTH(N'dbo.PublicShares', N'ExpiresAt') IS NULL
+                ALTER TABLE dbo.PublicShares ADD ExpiresAt datetime2 NULL;
+            """,
             // Shifts.AcknowledgedAt/By — the confirmation the escalation engine waits
             // for. Added later than the base schema; backport idempotently.
             """
@@ -826,30 +832,34 @@ using (var scope = app.Services.CreateScope())
         {
             if (!await db.DutyHourRules.AnyAsync())
             {
+                // One rule per distinct threshold set.
+                //
+                // There used to be four, three of which carried IDENTICAL limits and
+                // differed only by name ("80-hour weekly limit", "24-hour shift cap",
+                // "10-hour rest between shifts"). Each rule is evaluated independently
+                // against every rule it defines, so a single 26-hour shift produced three
+                // identical breach records — inflating every violation count roughly
+                // threefold on a screen people are meant to act on.
                 db.DutyHourRules.AddRange(
                     new OnCallApi.Models.DutyHourRule
                     {
-                        Name = "80-hour weekly limit", MaxHoursPerPeriod = 80, PeriodDays = 7,
-                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7, Severity = 2,
+                        Name = "ACGME duty-hour limits (80h/week, 24h shift, 10h rest, 7 days)",
+                        MaxHoursPerPeriod = 80, PeriodDays = 7,
+                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7,
+                        Severity = 2,
                     },
                     new OnCallApi.Models.DutyHourRule
                     {
-                        Name = "24-hour shift cap", MaxHoursPerPeriod = 80, PeriodDays = 7,
-                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7, Severity = 2,
-                    },
-                    new OnCallApi.Models.DutyHourRule
-                    {
-                        Name = "10-hour rest between shifts", MaxHoursPerPeriod = 80, PeriodDays = 7,
-                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 24, MaxConsecutiveDays = 7, Severity = 2,
-                    },
-                    new OnCallApi.Models.DutyHourRule
-                    {
-                        Name = "12-hour shift warning", MaxHoursPerPeriod = 80, PeriodDays = 7,
-                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 12, MaxConsecutiveDays = 7, Severity = 1,
+                        // Genuinely distinct: a softer shift-length threshold that warns
+                        // rather than breaching.
+                        Name = "12-hour shift warning",
+                        MaxHoursPerPeriod = 80, PeriodDays = 7,
+                        MinHoursBetweenShifts = 10, MaxShiftLengthHours = 12, MaxConsecutiveDays = 7,
+                        Severity = 1,
                     });
                 await db.SaveChangesAsync();
                 scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
-                    .LogInformation("Seeded 4 default duty-hour rules on startup");
+                    .LogInformation("Seeded 2 default duty-hour rules on startup");
             }
         }
         catch (Exception ex)

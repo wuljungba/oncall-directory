@@ -52,11 +52,17 @@ public class SharedSchedulesController : ControllerBase
         if (_tenants.IsSuperAdmin(User) == false && !(await _tenants.GetAuthorizedTenantIdsAsync(User)).Contains(request.TenantId))
             return Forbid();
 
+        if (request.ExpiresInDays is <= 0)
+            return BadRequest(new { error = "ExpiresInDays must be a positive number of days." });
+
         var share = new PublicShare
         {
             TenantId = request.TenantId,
             Label = request.Label ?? string.Empty,
             IsActive = true,
+            ExpiresAt = request.ExpiresInDays.HasValue
+                ? DateTime.UtcNow.AddDays(request.ExpiresInDays.Value)
+                : null,
             CreatedAt = DateTime.UtcNow,
         };
         _db.PublicShares.Add(share);
@@ -100,12 +106,15 @@ public class SharedSchedulesController : ControllerBase
         Token = s.Token,
         Label = s.Label,
         IsActive = s.IsActive,
+        ExpiresAt = s.ExpiresAt,
+        IsExpired = s.ExpiresAt != null && s.ExpiresAt <= DateTime.UtcNow,
         CreatedAt = s.CreatedAt,
         Permalink = $"/on-call/{s.Token}",
     };
 }
 
-public record CreatePublicShareRequest(int TenantId, string? Label);
+/// <param name="ExpiresInDays">Optional lifetime. Omit for a link that never expires.</param>
+public record CreatePublicShareRequest(int TenantId, string? Label, int? ExpiresInDays = null);
 public record SetActiveRequest(bool IsActive);
 
 public class PublicShareResponse
@@ -116,6 +125,8 @@ public class PublicShareResponse
     public Guid Token { get; set; }
     public string Label { get; set; } = string.Empty;
     public bool IsActive { get; set; }
+    public DateTime? ExpiresAt { get; set; }
+    public bool IsExpired { get; set; }
     public DateTime CreatedAt { get; set; }
     public string Permalink { get; set; } = string.Empty;
 }

@@ -32,14 +32,18 @@ public class PublicScheduleController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<PublicCoverageResponse>> GetCoverage(Guid token)
     {
+        var now = DateTime.UtcNow;
+
         var share = await _db.PublicShares
             .Include(s => s.Tenant)
-            .FirstOrDefaultAsync(s => s.Token == token && s.IsActive);
+            .FirstOrDefaultAsync(s => s.Token == token
+                && s.IsActive
+                && (s.ExpiresAt == null || s.ExpiresAt > now));
 
+        // Deliberately the same response for unknown, disabled and expired: an anonymous
+        // caller learns only that the link does not work, not whether it ever existed.
         if (share == null)
-            return NotFound(new { error = "Sharing link not found or disabled." });
-
-        var now = DateTime.UtcNow;
+            return NotFound(new { error = "Sharing link not found, disabled, or expired." });
         var tenantId = share.TenantId;
 
         // On-call shifts active right now for this tenant's schedules, excluding gaps.

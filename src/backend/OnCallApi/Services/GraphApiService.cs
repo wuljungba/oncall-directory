@@ -202,7 +202,7 @@ public class GraphApiService : IGraphApiService
         }
     }
 
-    public async Task<bool> SendTeamsMessageAsync(string userId, string messageJson, CancellationToken ct = default)
+    public async Task<bool> SendTeamsMessageAsync(string userId, string htmlContent, CancellationToken ct = default)
     {
         try
         {
@@ -210,8 +210,10 @@ public class GraphApiService : IGraphApiService
             {
                 Body = new ItemBody
                 {
-                    ContentType = BodyType.Text,
-                    Content = messageJson
+                    // Html, not Text: the caller builds rendered markup. Sending it as
+                    // text delivered the raw payload into the chat.
+                    ContentType = BodyType.Html,
+                    Content = htmlContent
                 }
             };
 

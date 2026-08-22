@@ -21,5 +21,17 @@ public class PublicShare
 
     public bool IsActive { get; set; } = true;
 
+    /// <summary>
+    /// When the link stops resolving. Null means it never expires.
+    ///
+    /// Revocation was previously manual and permanent-until-noticed: a permalink shared
+    /// with a rotating group outlives the reason it was created, and nothing prompts anyone
+    /// to withdraw it. An expiry gives it a natural end.
+    /// </summary>
+    public DateTime? ExpiresAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Whether this link should resolve at <paramref name="utcNow"/>.</summary>
+    public bool IsUsable(DateTime utcNow) => IsActive && (ExpiresAt == null || ExpiresAt > utcNow);
 }

@@ -13,7 +13,7 @@ public interface IGraphApiService
     /// common case of no 1:1 chat existing for an app-only credential, which previously
     /// returned silently and left callers believing the notification had gone out.
     /// </summary>
-    Task<bool> SendTeamsMessageAsync(string userId, string messageJson, CancellationToken ct = default);
+    Task<bool> SendTeamsMessageAsync(string userId, string htmlContent, CancellationToken ct = default);
     Task CreateOutlookCalendarEventAsync(string userId, string subject, DateTime start, DateTime end, CancellationToken ct = default);
     Task<List<Employee>> GetDepartmentMembersAsync(string groupId, CancellationToken ct = default);
     Task<List<GroupInfo>> GetAllGroupsAsync(CancellationToken ct = default);
