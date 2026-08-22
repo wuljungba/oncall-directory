@@ -91,7 +91,7 @@ Not bugs — missing credentials or deliberately disabled:
 |---------|-----|
 | AD sync, calendar push, presence | Need the Graph client secret, which lives only in Key Vault |
 | Teams notifications | Same credential |
-| Twilio dispatch | Ships disabled and unconfigured — see `docs/twilio-setup.md` |
+| Twilio delivery callbacks | Twilio cannot reach `localhost`, so a send reports `queued` and never settles. Sending itself *does* work locally — see `docs/twilio-setup.md` §6 |
 | Production data | Local uses its own SQLite file and never touches Azure SQL |
 
 The sync services are switched off in the script rather than left to fail, so they do not bury

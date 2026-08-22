@@ -13,7 +13,11 @@ namespace OnCallApi.Services.Dispatch;
 /// </summary>
 public class TwilioClient : ITwilioClient
 {
-    private const string ApiBase = "https://api.twilio.com/2010-04-01";
+    // The trailing slash is load-bearing. HttpClient resolves a relative request URI against
+    // BaseAddress with normal URI semantics, which REPLACE the last path segment when the base
+    // does not end in "/". Without it every call went to https://api.twilio.com/Accounts/...,
+    // dropping the API version, and Twilio answered 400 before ever checking credentials.
+    private const string ApiBase = "https://api.twilio.com/2010-04-01/";
     private readonly HttpClient _httpClient;
     private readonly TwilioOptions _options;
     private readonly ILogger<TwilioClient> _logger;

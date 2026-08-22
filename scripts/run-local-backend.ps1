@@ -33,6 +33,30 @@ $env:Sync__AdSyncIntervalMinutes       = '0'
 $env:Sync__CalendarSyncIntervalMinutes = '0'
 $env:Sync__PresenceSyncIntervalMinutes = '0'
 
+# ── Twilio SMS: opt-in, credentials from YOUR environment ─────────────────────
+# Deliberately NOT hardcoded — the Auth Token is a secret and must never be committed.
+#   $env:TWILIO_ACCOUNT_SID  = 'AC...'
+#   $env:TWILIO_AUTH_TOKEN   = '...'
+#   $env:TWILIO_FROM_NUMBER  = '+1...'
+# Without TWILIO_AUTH_TOKEN the channel stays disabled, matching production today.
+if ($env:TWILIO_AUTH_TOKEN) {
+    $env:Dispatch__Twilio__Enabled    = 'true'
+    $env:Dispatch__Twilio__AccountSid = $env:TWILIO_ACCOUNT_SID
+    $env:Dispatch__Twilio__AuthToken  = $env:TWILIO_AUTH_TOKEN
+    $env:Dispatch__Twilio__FromNumber = $env:TWILIO_FROM_NUMBER
+    $env:Dispatch__Twilio__MessagingServiceSid = $env:TWILIO_MESSAGING_SERVICE_SID
+
+    # Twilio cannot reach localhost, so leave unset unless you are running a tunnel.
+    $env:Dispatch__Twilio__StatusCallbackUrl = $env:TWILIO_STATUS_CALLBACK_URL
+
+    Write-Host "Twilio SMS: ENABLED"
+    if (-not $env:TWILIO_STATUS_CALLBACK_URL) {
+        Write-Host "  note: no status callback URL - sends report 'queued', delivery is not confirmed."
+    }
+} else {
+    Write-Host 'Twilio SMS: disabled (set TWILIO_AUTH_TOKEN to enable - see docs/twilio-setup.md).'
+}
+
 Write-Host 'Starting OnCall API on http://localhost:5000 with real Entra sign-in (DevAuth off).'
 Write-Host "Frontend: run 'npm run dev' in src/frontend (it proxies /api and /hubs here)."
 Write-Host ''

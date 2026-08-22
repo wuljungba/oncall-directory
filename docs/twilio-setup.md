@@ -104,7 +104,33 @@ Toll-free numbers require verification instead; short codes do not require 10DLC
 
 ---
 
-## 6. Verify
+## 6. Testing locally
+
+`scripts/run-local-backend.sh` enables the channel only when you export the credentials
+yourself, so nothing secret is committed:
+
+```bash
+export TWILIO_ACCOUNT_SID='AC...'
+read -rs TWILIO_AUTH_TOKEN && export TWILIO_AUTH_TOKEN
+export TWILIO_FROM_NUMBER='+1...'
+./scripts/run-local-backend.sh
+```
+
+`read -rs` keeps the token out of shell history. The script prints `Twilio SMS: ENABLED` at
+startup; without `TWILIO_AUTH_TOKEN` it prints `disabled` and behaves as before.
+
+Then Admin → *Test connection* and *Send test SMS*, as in §7.
+
+**The delivery callback cannot be tested locally.** Twilio has to reach
+`StatusCallbackUrl` from the public internet and `localhost` is unreachable, so the outbound
+send is all that is verifiable here — a send reports `queued` and never settles. To exercise
+the callback, run a tunnel and set `TWILIO_STATUS_CALLBACK_URL` to
+`<tunnel-url>/api/public/twilio/status`; the signature is computed over that exact URL, so it
+must match what Twilio actually posts to.
+
+---
+
+## 7. Verify
 
 1. **Credentials** — Admin → Settings → Code Call Dispatch Integration → *Test connection*.
    Expect "Twilio account reachable".
@@ -121,12 +147,13 @@ Production only after staging passes all four.
 
 ---
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
 | Symptom | Cause |
 |---------|-------|
 | App fails to start after enabling | Placeholder credentials, or `FromNumber` not in E.164 — the startup guard is deliberate |
 | Test connection returns 401 | Account SID / Auth Token mismatch, or the Key Vault reference did not resolve (check the app's Key Vault Secrets User role) |
+| Test connection returns 400 "Missing required header Twilio-Api-Version" | The request lost the `/2010-04-01` path segment — `TwilioClient.ApiBase` must keep its trailing slash, or URI resolution drops it |
 | Send returns Twilio code 21608 | Trial account sending to an unverified number |
 | Send returns Twilio code 21606 | `FromNumber` is not a number you own, or is not SMS-capable |
 | Step stays "sent", never settles | `StatusCallbackUrl` unset or does not match the public URL |

@@ -137,6 +137,35 @@ public class TwilioClientTests
         result.Detail.Should().Contain("unverified").And.Contain("21608");
     }
 
+    /// <summary>
+    /// Regression: BaseAddress was "https://api.twilio.com/2010-04-01" with no trailing slash,
+    /// so URI resolution replaced the version segment and every send went to
+    /// https://api.twilio.com/Accounts/... — which Twilio rejects with 400 before it looks at
+    /// the credentials. The channel appeared configured and failed on every code call.
+    /// </summary>
+    [Fact]
+    public async Task SendSms_PostsToVersionedMessagesEndpoint()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.Created, """{"sid":"SM5","status":"queued"}""");
+
+        await Build(BaseOptions(), handler).SendSmsAsync("+12025550111", "code blue");
+
+        handler.CapturedUri!.ToString()
+            .Should().Be("https://api.twilio.com/2010-04-01/Accounts/ACtest/Messages.json");
+    }
+
+    [Fact]
+    public async Task CheckConnection_GetsVersionedAccountEndpoint()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, """{"sid":"ACtest","status":"active"}""");
+
+        var status = await Build(BaseOptions(), handler).CheckConnectionAsync();
+
+        status.Connected.Should().BeTrue();
+        handler.CapturedUri!.ToString()
+            .Should().Be("https://api.twilio.com/2010-04-01/Accounts/ACtest.json");
+    }
+
     [Fact]
     public async Task SendSms_OnTransportFailure_ReportsFailureRatherThanThrowing()
     {
