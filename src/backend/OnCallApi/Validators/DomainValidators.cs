@@ -42,6 +42,29 @@ public static partial class PhoneValidation
         return E164Regex.IsMatch(candidate) ? candidate : null;
     }
 
+    /// <summary>
+    /// Minimum digits, country code included, for a number anyone could actually dial.
+    /// The shortest real mobile numbers (Denmark, Iceland) reach ten this way, while an
+    /// internal extension does not.
+    /// </summary>
+    private const int MinimumDialableDigits = 10;
+
+    /// <summary>
+    /// Normalizes to E.164 and rejects anything too short to be a real destination.
+    ///
+    /// <see cref="NormalizeToE164"/> alone is deliberately best-effort for directory
+    /// display, so it happily promotes the extension "4412" to "+14412" and the local
+    /// fragment "555-1234" to "+15551234". Sending a code-call alert to either goes
+    /// nowhere silently, so anywhere a number must be dialable uses this instead.
+    /// </summary>
+    public static string? NormalizeToDialable(string? phone, string defaultCountryCode = "1")
+    {
+        var normalized = NormalizeToE164(phone, defaultCountryCode);
+        if (normalized == null) return null;
+
+        return normalized.Count(char.IsDigit) >= MinimumDialableDigits ? normalized : null;
+    }
+
     public static IRuleBuilderOptions<T, string?> E164Phone<T>(this IRuleBuilder<T, string?> ruleBuilder, string fieldName)
     {
         return ruleBuilder.Must(IsValidE164)

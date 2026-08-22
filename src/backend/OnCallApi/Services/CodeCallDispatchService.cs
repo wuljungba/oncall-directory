@@ -370,16 +370,8 @@ public class CodeCallDispatchService : ICodeCallDispatchService
     /// into the void. Anything shorter than a plausible subscriber number is therefore
     /// rejected here so the dispatch step fails loudly instead.
     /// </summary>
-    private static string? ResolveSmsDestination(string? storedNumber)
-    {
-        var normalized = PhoneValidation.NormalizeToE164(storedNumber);
-        if (normalized == null) return null;
-
-        // Digits after the '+', country code included. NANP mobiles are 11; the shortest
-        // SMS-capable international mobile numbers are around 8.
-        var digitCount = normalized.Count(char.IsDigit);
-        return digitCount >= 8 ? normalized : null;
-    }
+    private static string? ResolveSmsDestination(string? storedNumber) =>
+        PhoneValidation.NormalizeToDialable(storedNumber);
 
     /// <summary>
     /// Resolves the on-call provider's mobile number for an event: the current active

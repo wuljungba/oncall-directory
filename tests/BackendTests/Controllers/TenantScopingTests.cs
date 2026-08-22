@@ -58,6 +58,38 @@ public class TenantScopingTests
             new Department { Id = 10, Name = "Cardiology", TenantId = TenantA, IsActive = true },
             new Department { Id = 20, Name = "Neurology", TenantId = TenantB, IsActive = true });
 
+        // Staff, schedules and shifts in each tenant, so scoping can be checked on the
+        // directory and schedule surfaces rather than departments alone.
+        db.Employees.AddRange(
+            new Employee
+            {
+                Id = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+                FirstName = "Ann", LastName = "Alpha", Email = "ann@a.test",
+                AzureAdObjectId = "emp-a", TenantId = TenantA, DepartmentId = 10, IsActive = true,
+            },
+            new Employee
+            {
+                Id = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"),
+                FirstName = "Ben", LastName = "Beta", Email = "ben@b.test",
+                AzureAdObjectId = "emp-b", TenantId = TenantB, DepartmentId = 20, IsActive = true,
+            });
+        db.Schedules.AddRange(
+            new Schedule { Id = 100, Name = "Cardiology call", DepartmentId = 10 },
+            new Schedule { Id = 200, Name = "Neurology call", DepartmentId = 20 });
+
+        var now = DateTime.UtcNow;
+        db.Shifts.AddRange(
+            new Shift
+            {
+                Id = 1000, ScheduleId = 100, EmployeeId = Guid.Parse("aaaaaaaa-0000-0000-0000-000000000001"),
+                Tier = "primary", Status = "scheduled", StartTime = now.AddHours(-1), EndTime = now.AddHours(1),
+            },
+            new Shift
+            {
+                Id = 2000, ScheduleId = 200, EmployeeId = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"),
+                Tier = "primary", Status = "scheduled", StartTime = now.AddHours(-1), EndTime = now.AddHours(1),
+            });
+
         if (!noGrant)
         {
             db.PermissionGrants.Add(new PermissionGrant
@@ -158,6 +190,76 @@ public class TenantScopingTests
         var departments = await GetDepartments(client, UserToken(factory));
 
         departments.Should().BeEmpty();
+    }
+
+    // ── Beyond /api/departments ────────────────────────────────────────────────
+    // Only the departments path went through AdminService, the one service that scoped.
+    // The directory and schedule surfaces had no tenant filtering at all, so these
+    // endpoints returned every tenant's data to any holder of the matching permission —
+    // and a suite that only exercised departments reported all green.
+
+    private static async Task<List<T>?> GetAs<T>(HttpClient client, string token, string path)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        return await response.Content.ReadFromJsonAsync<List<T>>();
+    }
+
+    [Fact]
+    public async Task DirectorySearch_IsScopedToTheCallersTenant()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        var employees = await GetAs<Employee>(client, UserToken(factory), "/api/directory/search?q=");
+
+        employees!.Select(e => e.LastName).Should().BeEquivalentTo("Alpha");
+    }
+
+    [Fact]
+    public async Task OnCallDirectory_IsScopedToTheCallersTenant()
+    {
+        using var factory = Seed(grantTenantId: TenantB);
+        using var client = factory.CreateClient();
+
+        var employees = await GetAs<Employee>(client, UserToken(factory), "/api/directory/search?q=");
+
+        employees!.Select(e => e.LastName).Should().BeEquivalentTo("Beta");
+    }
+
+    [Fact]
+    public async Task Schedules_AreScopedToTheCallersTenant()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        var schedules = await GetAs<Schedule>(client, UserToken(factory), "/api/schedule");
+
+        schedules!.Select(s => s.Name).Should().BeEquivalentTo("Cardiology call");
+    }
+
+    [Fact]
+    public async Task CurrentOnCallRoster_IsScopedToTheCallersTenant()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        var shifts = await GetAs<Shift>(client, UserToken(factory), "/api/schedule/on-call");
+
+        shifts!.Select(s => s.ScheduleId).Should().BeEquivalentTo([100]);
+    }
+
+    [Fact]
+    public async Task SystemWideGrant_StillSeesEveryTenantsDirectory()
+    {
+        using var factory = Seed(grantTenantId: null, grantSystemWide: true);
+        using var client = factory.CreateClient();
+
+        var employees = await GetAs<Employee>(client, UserToken(factory), "/api/directory/search?q=");
+
+        employees!.Select(e => e.LastName).Should().BeEquivalentTo("Alpha", "Beta");
     }
 
     [Fact]

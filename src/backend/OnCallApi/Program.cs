@@ -435,6 +435,7 @@ builder.Services.AddScoped<IScheduleService, ScheduleService>();
 builder.Services.AddScoped<IDirectoryService, DirectoryService>();
 builder.Services.AddScoped<IDutyHourService, DutyHourService>();
 builder.Services.AddScoped<BulkImportService>();
+builder.Services.AddScoped<ITenantScope, TenantScope>();
 builder.Services.AddScoped<TeamsNotificationService>();
 builder.Services.AddScoped<ITeamsNotificationService>(sp => sp.GetRequiredService<TeamsNotificationService>());
 builder.Services.AddSingleton<AuditService>();

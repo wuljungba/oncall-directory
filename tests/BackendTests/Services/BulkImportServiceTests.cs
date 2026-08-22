@@ -121,6 +121,63 @@ public class BulkImportServiceTests
         result.Errors.Should().Contain(e => e.Contains("officePhone"));
     }
 
+    [Theory]
+    [InlineData("(202) 555-0134")]
+    [InlineData("202-555-0134")]
+    [InlineData("202.555.0134")]
+    [InlineData("+1 202 555 0134")]
+    [InlineData("2025550134")]
+    public async Task ValidateEmployees_AcceptsRealWorldPhoneFormatting(string phone)
+    {
+        // A hospital's HR export does not emit E.164. Rejecting these made every row of a
+        // genuine export fail, on the path the onboarding standard recommends for staff
+        // who are not in Entra.
+        var db = CreateDbContext();
+        var service = CreateService(db);
+
+        var csv = "azureAdObjectId,firstName,lastName,email,officePhone\n" +
+                   $"obj-1,Jane,Smith,jane@test.com,{phone}";
+        var result = await service.ValidateEmployeesAsync(CsvToStream(csv));
+
+        result.IsValid.Should().BeTrue($"'{phone}' is a phone number a hospital would actually export");
+    }
+
+    [Fact]
+    public async Task ImportEmployees_StoresPhoneNumbersInE164()
+    {
+        var db = CreateDbContext();
+        var service = CreateService(db);
+
+        var csv = "azureAdObjectId,firstName,lastName,email,officePhone,mobilePhone\n" +
+                   "obj-1,Jane,Smith,jane@test.com,(202) 555-0134,202-555-9876";
+        var result = await service.ImportEmployeesAsync(CsvToStream(csv));
+
+        result.IsValid.Should().BeTrue();
+        var employee = await db.Employees.SingleAsync();
+        employee.OfficePhone.Should().Be("+12025550134");
+        employee.MobilePhone.Should().Be("+12025559876");
+    }
+
+    [Theory]
+    [InlineData("ext. 4412")]
+    [InlineData("4412")]
+    [InlineData("555-1234")]
+    [InlineData("not a phone")]
+    public async Task ValidateEmployees_StillRejectsUndialableNumbers(string phone)
+    {
+        // Normalizing must not become "accept anything": an extension or a 7-digit local
+        // fragment would be promoted to a well-formed number that reaches nobody.
+        var db = CreateDbContext();
+        var service = CreateService(db);
+
+        var csv = "azureAdObjectId,firstName,lastName,email,officePhone\n" +
+                   $"obj-1,Jane,Smith,jane@test.com,{phone}";
+        var result = await service.ValidateEmployeesAsync(CsvToStream(csv));
+
+        result.IsValid.Should().BeFalse($"'{phone}' cannot be dialled");
+        result.Errors.Should().Contain(e => e.Contains("officePhone"));
+    }
+
     [Fact]
     public async Task ValidateEmployees_InvalidDepartmentIdFormat_ReturnsError()
     {

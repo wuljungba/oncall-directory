@@ -47,7 +47,7 @@ public class DirectoryServiceTests
     public async Task SearchEmployeesAsync_ByFirstName_ReturnsMatches()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.SearchEmployeesAsync("Jane");
 
@@ -59,7 +59,7 @@ public class DirectoryServiceTests
     public async Task SearchEmployeesAsync_ByLastName_ReturnsMatches()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.SearchEmployeesAsync("Doe");
 
@@ -71,7 +71,7 @@ public class DirectoryServiceTests
     public async Task SearchEmployeesAsync_ByEmail_ReturnsMatches()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.SearchEmployeesAsync("jane@test.com");
 
@@ -83,7 +83,7 @@ public class DirectoryServiceTests
     public async Task SearchEmployeesAsync_EmptyQuery_ReturnsAllActive()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.SearchEmployeesAsync("");
 
@@ -94,7 +94,7 @@ public class DirectoryServiceTests
     public async Task GetEmployeeByEmailAsync_ExistingEmail_ReturnsEmployee()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.GetEmployeeByEmailAsync("jane@test.com");
 
@@ -106,7 +106,7 @@ public class DirectoryServiceTests
     public async Task GetEmployeeByEmailAsync_MissingEmail_ReturnsNull()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.GetEmployeeByEmailAsync("nobody@test.com");
 
@@ -117,7 +117,7 @@ public class DirectoryServiceTests
     public async Task GetDepartmentEmployeesAsync_ReturnsCorrectDepartment()
     {
         var db = CreateDbContext();
-        var service = new DirectoryService(db);
+        var service = new DirectoryService(db, TestTenantScopes.Unrestricted);
 
         var result = await service.GetDepartmentEmployeesAsync(1);
 

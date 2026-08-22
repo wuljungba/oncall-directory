@@ -9,12 +9,43 @@ public class ScheduleService : IScheduleService
     private readonly AppDbContext _db;
     private readonly ILogger<ScheduleService> _logger;
     private readonly ITeamsNotificationService? _teams;
+    private readonly ITenantScope _scope;
 
-    public ScheduleService(AppDbContext db, ILogger<ScheduleService> logger, ITeamsNotificationService? teams = null)
+    public ScheduleService(
+        AppDbContext db,
+        ILogger<ScheduleService> logger,
+        ITenantScope scope,
+        ITeamsNotificationService? teams = null)
     {
         _db = db;
         _logger = logger;
         _teams = teams;
+        _scope = scope;
+    }
+
+    /// <summary>The caller's tenants, or null when the query should not be restricted.</summary>
+    private Task<List<int>?> AllowedTenantsAsync() => _scope.AllowedTenantIdsAsync();
+
+    /// <summary>
+    /// Schedules belong to a tenant through their department. A caller with no tenants
+    /// sees nothing; the filter is never skipped.
+    /// </summary>
+    private async Task<IQueryable<Schedule>> ScopeSchedulesAsync(IQueryable<Schedule> query)
+    {
+        var tenantIds = await AllowedTenantsAsync();
+        if (tenantIds == null) return query;
+        return query.Where(s => s.Department != null
+            && s.Department.TenantId.HasValue
+            && tenantIds.Contains(s.Department.TenantId.Value));
+    }
+
+    private async Task<IQueryable<Shift>> ScopeShiftsAsync(IQueryable<Shift> query)
+    {
+        var tenantIds = await AllowedTenantsAsync();
+        if (tenantIds == null) return query;
+        return query.Where(sh => sh.Schedule.Department != null
+            && sh.Schedule.Department.TenantId.HasValue
+            && tenantIds.Contains(sh.Schedule.Department.TenantId.Value));
     }
 
     public async Task<List<Schedule>> GetSchedulesAsync(int? departmentId = null)
@@ -26,15 +57,18 @@ public class ScheduleService : IScheduleService
         if (departmentId.HasValue)
             query = query.Where(s => s.DepartmentId == departmentId.Value);
 
+        query = await ScopeSchedulesAsync(query);
         return await query.OrderByDescending(s => s.CreatedAt).ToListAsync();
     }
 
     public async Task<Schedule?> GetScheduleByIdAsync(int id)
     {
-        return await _db.Schedules
+        var query = await ScopeSchedulesAsync(_db.Schedules
             .Include(s => s.Department)
             .Include(s => s.Shifts).ThenInclude(sh => sh.Employee)
-            .FirstOrDefaultAsync(s => s.Id == id);
+            .Where(s => s.Id == id));
+
+        return await query.FirstOrDefaultAsync();
     }
 
     public async Task<Schedule> CreateScheduleAsync(Schedule schedule)
@@ -62,6 +96,7 @@ public class ScheduleService : IScheduleService
         if (to.HasValue)
             query = query.Where(s => s.EndTime <= to.Value);
 
+        query = await ScopeShiftsAsync(query);
         return await query.OrderBy(s => s.StartTime).ToListAsync();
     }
 
@@ -197,6 +232,7 @@ public class ScheduleService : IScheduleService
         if (departmentId.HasValue)
             query = query.Where(s => s.Schedule.DepartmentId == departmentId.Value);
 
+        query = await ScopeShiftsAsync(query);
         return await query.OrderBy(s => s.Tier).ToListAsync();
     }
 

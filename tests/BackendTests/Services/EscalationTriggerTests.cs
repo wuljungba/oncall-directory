@@ -156,7 +156,7 @@ public class EscalationTriggerTests
         await CreateService(db, teams).CheckAndEscalateAsync();
         (await db.EscalationEvents.CountAsync(e => e.Status == "pending")).Should().Be(1);
 
-        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, null);
+        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
         await schedule.AcknowledgeShiftAsync(1, PrimaryId, isAdmin: false);
 
         var escalation = await db.EscalationEvents.SingleAsync();
@@ -168,7 +168,7 @@ public class EscalationTriggerTests
     public async Task AcknowledgingSomeoneElsesShift_IsRejected()
     {
         var db = CreateDb(acknowledged: false);
-        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, null);
+        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
         var act = () => schedule.AcknowledgeShiftAsync(1, BackupId, isAdmin: false);
 
@@ -180,7 +180,7 @@ public class EscalationTriggerTests
     public async Task AdminMayAcknowledgeOnSomeonesBehalf()
     {
         var db = CreateDb(acknowledged: false);
-        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, null);
+        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
         await schedule.AcknowledgeShiftAsync(1, BackupId, isAdmin: true);
 
@@ -191,7 +191,7 @@ public class EscalationTriggerTests
     public async Task AcknowledgingTwice_KeepsTheOriginalTime()
     {
         var db = CreateDb(acknowledged: false);
-        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, null);
+        var schedule = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
         var first = await schedule.AcknowledgeShiftAsync(1, PrimaryId, isAdmin: false);
         await Task.Delay(20);

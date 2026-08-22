@@ -7,10 +7,33 @@ namespace OnCallApi.Services;
 public class DirectoryService : IDirectoryService
 {
     private readonly AppDbContext _db;
+    private readonly ITenantScope _scope;
 
-    public DirectoryService(AppDbContext db)
+    public DirectoryService(AppDbContext db, ITenantScope scope)
     {
         _db = db;
+        _scope = scope;
+    }
+
+    /// <summary>
+    /// Restricts an employee query to the caller's tenants. A caller with no tenants sees
+    /// nothing — the filter is never skipped, which is what made this fail open before.
+    /// </summary>
+    private async Task<IQueryable<Employee>> ScopeEmployeesAsync(IQueryable<Employee> query)
+    {
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds == null) return query;
+        return query.Where(e => e.TenantId.HasValue && tenantIds.Contains(e.TenantId.Value));
+    }
+
+    /// <summary>Phone trees belong to a tenant through their department.</summary>
+    private async Task<IQueryable<PhoneTree>> ScopePhoneTreesAsync(IQueryable<PhoneTree> query)
+    {
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds == null) return query;
+        return query.Where(t => t.Department != null
+            && t.Department.TenantId.HasValue
+            && tenantIds.Contains(t.Department.TenantId.Value));
     }
 
     public async Task<List<Employee>> SearchEmployeesAsync(string query, int? departmentId = null)
@@ -36,31 +59,36 @@ public class DirectoryService : IDirectoryService
         if (departmentId.HasValue)
             q = q.Where(e => e.DepartmentId == departmentId.Value);
 
+        q = await ScopeEmployeesAsync(q);
         return await q.OrderBy(e => e.LastName).ThenBy(e => e.FirstName).ToListAsync();
     }
 
     public async Task<List<Employee>> GetDepartmentEmployeesAsync(int departmentId)
     {
-        return await _db.Employees
+        var q = await ScopeEmployeesAsync(_db.Employees
             .Include(e => e.Department)
-            .Where(e => e.DepartmentId == departmentId && e.IsActive)
-            .OrderBy(e => e.LastName)
-            .ToListAsync();
+            .Where(e => e.DepartmentId == departmentId && e.IsActive));
+
+        return await q.OrderBy(e => e.LastName).ToListAsync();
     }
 
     public async Task<Employee?> GetEmployeeByIdAsync(Guid id)
     {
-        return await _db.Employees
+        var q = await ScopeEmployeesAsync(_db.Employees
             .Include(e => e.Department)
             .Include(e => e.Manager)
-            .FirstOrDefaultAsync(e => e.Id == id);
+            .Where(e => e.Id == id));
+
+        return await q.FirstOrDefaultAsync();
     }
 
     public async Task<Employee?> GetEmployeeByEmailAsync(string email)
     {
-        return await _db.Employees
+        var q = await ScopeEmployeesAsync(_db.Employees
             .Include(e => e.Department)
-            .FirstOrDefaultAsync(e => e.Email.ToLower() == email.ToLower());
+            .Where(e => e.Email.ToLower() == email.ToLower()));
+
+        return await q.FirstOrDefaultAsync();
     }
 
     public async Task<List<PhoneTree>> GetPhoneTreesAsync(int? departmentId = null)
@@ -73,15 +101,18 @@ public class DirectoryService : IDirectoryService
         if (departmentId.HasValue)
             query = query.Where(t => t.DepartmentId == departmentId.Value);
 
+        query = await ScopePhoneTreesAsync(query);
         return await query.Where(t => t.IsActive).ToListAsync();
     }
 
     public async Task<PhoneTree?> GetPhoneTreeByIdAsync(int id)
     {
-        return await _db.PhoneTrees
+        var query = await ScopePhoneTreesAsync(_db.PhoneTrees
             .Include(t => t.Nodes.OrderBy(n => n.Order))
             .ThenInclude(n => n.Employee)
-            .FirstOrDefaultAsync(t => t.Id == id);
+            .Where(t => t.Id == id));
+
+        return await query.FirstOrDefaultAsync();
     }
 
     public async Task<List<Employee>> GetOnCallEmployeesAsync(int? departmentId = null)
@@ -94,6 +125,7 @@ public class DirectoryService : IDirectoryService
         if (departmentId.HasValue)
             query = query.Where(e => e.DepartmentId == departmentId.Value);
 
+        query = await ScopeEmployeesAsync(query);
         return await query.ToListAsync();
     }
 

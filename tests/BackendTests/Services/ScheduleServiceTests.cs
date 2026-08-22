@@ -25,7 +25,7 @@ public class ScheduleServiceTests
     public async Task GetSchedulesAsync_WhenNoSchedules_ReturnsEmpty()
     {
         var db = CreateDbContext();
-        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance);
+        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
         var result = await service.GetSchedulesAsync();
 
@@ -46,7 +46,7 @@ public class ScheduleServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance);
+        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
         var result = await service.GetSchedulesAsync();
 
         result.Should().HaveCount(1);
@@ -57,7 +57,7 @@ public class ScheduleServiceTests
     public async Task CreateScheduleAsync_PersistsSchedule()
     {
         var db = CreateDbContext();
-        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance);
+        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
         var schedule = new Schedule
         {
@@ -81,7 +81,7 @@ public class ScheduleServiceTests
     public async Task GetCurrentOnCallAsync_WhenNoActiveShifts_ReturnsEmpty()
     {
         var db = CreateDbContext();
-        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance);
+        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
         var result = await service.GetCurrentOnCallAsync();
 
@@ -113,7 +113,7 @@ public class ScheduleServiceTests
 
         await db.SaveChangesAsync();
 
-        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance);
+        var service = new ScheduleService(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
         var from = DateTime.UtcNow.AddDays(-1);
         var to = DateTime.UtcNow.AddDays(1);
 

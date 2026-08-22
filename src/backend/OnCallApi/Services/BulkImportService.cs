@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using OnCallApi.Data;
 using OnCallApi.Models;
+using OnCallApi.Validators;
 
 namespace OnCallApi.Services;
 
@@ -354,6 +355,32 @@ public class BulkImportService
 
     private static readonly Regex E164Regex = new(@"^\+[1-9]\d{1,14}$", RegexOptions.Compiled);
 
+    /// <summary>
+    /// Normalizes a phone number from a CSV cell to E.164, or explains why it cannot be.
+    /// Blank stays blank. Anything genuinely unusable — letters, an extension, a truncated
+    /// number — is still rejected, because a number that cannot be dialled is worse in the
+    /// directory than an empty field.
+    /// </summary>
+    private static (string? Value, string? Error) NormalizeImportedPhone(string? raw, string fieldName)
+    {
+        var trimmed = raw?.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed)) return (null, null);
+
+        // NormalizeToDialable applies the shared plausibility floor, so an extension or a
+        // 7-digit local fragment is still rejected rather than promoted to a number that
+        // looks valid and reaches nobody.
+        var normalized = PhoneValidation.NormalizeToDialable(trimmed);
+
+        if (normalized == null)
+        {
+            return (null,
+                $"{fieldName} '{trimmed}' could not be read as a phone number. "
+                + "Use a full number such as (202) 555-0134 or +12025550134.");
+        }
+
+        return (normalized, null);
+    }
+
     private static (EmployeeRow? Record, string? Error) ParseEmployeeRow(Dictionary<string, string> row)
     {
         var azureAdId = row.GetValueOrDefault("azureAdObjectId", "")?.Trim() ?? "";
@@ -365,15 +392,16 @@ public class BulkImportService
         if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
             return (null, "firstName and lastName are required.");
 
-        var officePhone = row.GetValueOrDefault("officePhone")?.Trim();
-        var mobilePhone = row.GetValueOrDefault("mobilePhone")?.Trim();
+        // Normalize rather than reject. A hospital's HR export contains "(202) 555-0134"
+        // and "202-555-0134", not E.164 — insisting on canonical form made every row of a
+        // real export fail, on the very path the onboarding standard recommends for staff
+        // who are not in Entra. The same helper already normalizes numbers arriving from
+        // Graph, so both ingestion paths now agree.
+        var (officePhone, officeError) = NormalizeImportedPhone(row.GetValueOrDefault("officePhone"), "officePhone");
+        if (officeError != null) return (null, officeError);
 
-        // Validate phone numbers
-        if (!string.IsNullOrWhiteSpace(officePhone) && !E164Regex.IsMatch(officePhone))
-            return (null, $"officePhone '{officePhone}' is not valid E.164 format (+ followed by 2-15 digits, e.g. +1234567890).");
-
-        if (!string.IsNullOrWhiteSpace(mobilePhone) && !E164Regex.IsMatch(mobilePhone))
-            return (null, $"mobilePhone '{mobilePhone}' is not valid E.164 format (+ followed by 2-15 digits, e.g. +1234567890).");
+        var (mobilePhone, mobileError) = NormalizeImportedPhone(row.GetValueOrDefault("mobilePhone"), "mobilePhone");
+        if (mobileError != null) return (null, mobileError);
 
         var email = row.GetValueOrDefault("email", "")?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(email))
