@@ -17,6 +17,45 @@ param twilioAccountSid string = ''
 param twilioFromNumber string = ''
 param twilioMessagingServiceSid string = ''
 
+// ── Microsoft Graph (AD sync, calendar push, presence, Teams) ──
+// Client secret comes from the Key Vault secret 'GraphApiClientSecret'; only the
+// non-sensitive identifiers are parameters.
+param graphTenantId string = ''
+param graphClientId string = ''
+
+// ── Identity ──
+// The Google client id is a public identifier (it ships inside the frontend bundle), so
+// it is a plain parameter. The local JWT signing key is a secret and is read from the
+// Key Vault secret 'LocalJwtSigningKey'.
+param googleClientId string = ''
+
+// Super administrators, by email and/or Entra object id. Without at least one entry
+// nobody can hold Admin.Full, so an environment deployed with empty lists has no
+// administrator at all.
+param superAdminEmails array = []
+param superAdminObjectIds array = []
+
+// ── Background sync intervals (minutes; 0 disables the service) ──
+param adSyncIntervalMinutes int = 15
+param calendarSyncIntervalMinutes int = 5
+param presenceSyncIntervalMinutes int = 2
+
+// ── Scheduling ──
+// Which wall clock generated rotations follow. IANA or Windows id.
+param schedulingTimeZone string = 'America/New_York'
+
+// ── HIPAA ──
+param hipaaSessionTimeoutMinutes int = 15
+param hipaaAuditLogRetentionDays int = 2190
+
+// The API's audience, which token validation checks. Defaults to the app ID URI derived
+// from the SPA client id. Omitting this from the template would delete it on redeploy and
+// break every sign-in.
+param entraAudience string = ''
+
+// Days of HTTP logs the platform retains.
+param httpLoggingRetentionDays int = 3
+
 var resourceGroupName = 'rg-oncall-${environmentName}'
 var appName = 'app-oncall-${environmentName}'
 var sqlServerName = 'sql-oncall-${environmentName}'
@@ -40,6 +79,48 @@ var twilioSettings = [
   { name: 'Dispatch__Twilio__FromNumber', value: twilioFromNumber }
   { name: 'Dispatch__Twilio__MessagingServiceSid', value: twilioMessagingServiceSid }
 ]
+
+// ── Every remaining app setting the application reads ──
+//
+// These were previously set by hand on the running slots and existed nowhere in this
+// template. Because ARM replaces the appSettings collection wholesale, re-running this
+// file silently DELETED all of them — the Graph credentials, the JWT signing key and the
+// super-admin list — leaving an app that could not sync, could not validate a local token,
+// and had no administrator. Declaring them here is what makes the template safe to re-run.
+//
+// Secrets are Key Vault references, so no credential appears in the template, a parameter
+// file, or the deployment history. Create these secrets before deploying:
+//   GraphApiClientSecret, LocalJwtSigningKey, SqlConnectionString, TwilioAuthToken
+var kvRef = 'https://${kvName}.vault.azure.net/secrets'
+
+var superAdminEmailSettings = [for (email, i) in superAdminEmails: {
+  name: 'Authentication__SuperAdmins__Emails__${i}'
+  value: email
+}]
+
+var superAdminObjectIdSettings = [for (objectId, i) in superAdminObjectIds: {
+  name: 'Authentication__SuperAdmins__ObjectIds__${i}'
+  value: objectId
+}]
+
+var applicationSettings = concat([
+  { name: 'GraphApi__TenantId', value: empty(graphTenantId) ? entraTenantId : graphTenantId }
+  { name: 'GraphApi__ClientId', value: graphClientId }
+  { name: 'GraphApi__ClientSecret', value: '@Microsoft.KeyVault(SecretUri=${kvRef}/GraphApiClientSecret)' }
+  { name: 'Authentication__Google__ClientId', value: googleClientId }
+  { name: 'Authentication__Local__SigningKey', value: '@Microsoft.KeyVault(SecretUri=${kvRef}/LocalJwtSigningKey)' }
+  { name: 'Sync__AdSyncIntervalMinutes', value: string(adSyncIntervalMinutes) }
+  { name: 'Sync__CalendarSyncIntervalMinutes', value: string(calendarSyncIntervalMinutes) }
+  { name: 'Sync__PresenceSyncIntervalMinutes', value: string(presenceSyncIntervalMinutes) }
+  { name: 'Scheduling__TimeZone', value: schedulingTimeZone }
+  { name: 'Hipaa__SessionTimeoutMinutes', value: string(hipaaSessionTimeoutMinutes) }
+  { name: 'Hipaa__AuditLogRetentionDays', value: string(hipaaAuditLogRetentionDays) }
+  { name: 'AzureAd__Audience', value: empty(entraAudience) ? 'api://${entraClientId}' : entraAudience }
+  { name: 'WEBSITE_HTTPLOGGING_RETENTION_DAYS', value: string(httpLoggingRetentionDays) }
+  // Db:Recreate drops the database. The application refuses it outside Development, and
+  // it is pinned false here so the setting can never be left over from a manual change.
+  { name: 'Db__Recreate', value: 'false' }
+], concat(superAdminEmailSettings, superAdminObjectIdSettings))
 
 // ── Application Insights + Log Analytics ──
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
@@ -209,9 +290,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
-      ], concat(twilioSettings, [
+      ], concat(applicationSettings, concat(twilioSettings, [
         { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackProd }
-      ]))
+      ])))
     }
   }
 }
@@ -243,9 +324,9 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
-      ], concat(twilioSettings, [
+      ], concat(applicationSettings, concat(twilioSettings, [
         { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackStaging }
-      ]))
+      ])))
     }
   }
 }

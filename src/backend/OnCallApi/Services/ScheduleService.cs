@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using OnCallApi.Configuration;
 using OnCallApi.Data;
 using OnCallApi.Models;
 
@@ -10,17 +12,20 @@ public class ScheduleService : IScheduleService
     private readonly ILogger<ScheduleService> _logger;
     private readonly ITeamsNotificationService? _teams;
     private readonly ITenantScope _scope;
+    private readonly SchedulingOptions _scheduling;
 
     public ScheduleService(
         AppDbContext db,
         ILogger<ScheduleService> logger,
         ITenantScope scope,
-        ITeamsNotificationService? teams = null)
+        ITeamsNotificationService? teams = null,
+        IOptions<SchedulingOptions>? scheduling = null)
     {
         _db = db;
         _logger = logger;
         _teams = teams;
         _scope = scope;
+        _scheduling = scheduling?.Value ?? new SchedulingOptions();
     }
 
     /// <summary>The caller's tenants, or null when the query should not be restricted.</summary>
@@ -186,6 +191,41 @@ public class ScheduleService : IScheduleService
         return swap;
     }
 
+    /// <summary>
+    /// The hospital's time zone, falling back to UTC if the configured id is unknown.
+    /// A bad value must not stop a schedule being generated, but it must be visible.
+    /// </summary>
+    private TimeZoneInfo ResolveScheduleTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(_scheduling.TimeZone);
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            _logger.LogError(ex,
+                "Scheduling:TimeZone '{TimeZone}' is not a recognised time zone — generating shifts in UTC, "
+                + "which will put them at the wrong time of day. Set a valid IANA or Windows id.",
+                _scheduling.TimeZone);
+            return TimeZoneInfo.Utc;
+        }
+    }
+
+    /// <summary>
+    /// Converts a local wall-clock time to UTC for storage, handling daylight saving.
+    /// On the spring-forward gap the nominal time does not exist, so the equivalent
+    /// instant after the jump is used rather than throwing mid-generation.
+    /// </summary>
+    private static DateTime ToUtc(DateTime localTime, TimeZoneInfo zone)
+    {
+        var unspecified = DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified);
+
+        if (zone.IsInvalidTime(unspecified))
+            unspecified = unspecified.AddHours(1);
+
+        return TimeZoneInfo.ConvertTimeToUtc(unspecified, zone);
+    }
+
     public async Task<Shift?> AcknowledgeShiftAsync(int shiftId, Guid acknowledgedById, bool isAdmin)
     {
         var shift = await _db.Shifts.FirstOrDefaultAsync(s => s.Id == shiftId);
@@ -321,36 +361,54 @@ public class ScheduleService : IScheduleService
         }
 
         var generatedShifts = new List<Shift>();
-        var startDate = DateTime.UtcNow.Date;
-        var endDate = startDate.AddDays(weeks * 7);
-        var tiers = new[] { "primary", "secondary", "tertiary" };
+        var zone = ResolveScheduleTimeZone();
 
-        // Generate 24-hour shifts for each day, rotating through employees
-        for (var day = startDate; day < endDate; day = day.AddDays(1))
+        // Work in the hospital's local calendar, then store UTC. Building from
+        // DateTime.UtcNow.Date meant "7am" was 07:00 UTC — 2am Eastern.
+        var localToday = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, zone).Date;
+        var dayCount = weeks * 7;
+
+        // Which local dates already have shifts, compared in the same calendar the shifts
+        // are generated in.
+        var existingLocalDates = schedule.Shifts
+            .Select(s => TimeZoneInfo.ConvertTimeFromUtc(
+                DateTime.SpecifyKind(s.StartTime, DateTimeKind.Utc), zone).Date)
+            .ToHashSet();
+
+        for (var dayIndex = 0; dayIndex < dayCount; dayIndex++)
         {
-            // Skip existing shifts for this date
-            if (schedule.Shifts.Any(s => s.StartTime.Date == day.Date))
+            var localDay = localToday.AddDays(dayIndex);
+            if (existingLocalDates.Contains(localDay))
                 continue;
 
-            // 7a-7p day shift, 7p-7a night shift
-            var shiftsForDay = new[]
+            // Both windows are PRIMARY cover. The night shift used to be created as
+            // "secondary", which left no primary on call between 19:00 and 07:00 — and
+            // code-call SMS resolution looks specifically for the primary, so every
+            // overnight dispatch failed to find anyone.
+            var dayStart = localDay.AddHours(_scheduling.DayShiftStartHour);
+            var nightStart = localDay.AddHours(_scheduling.NightShiftStartHour);
+            var nextDayStart = localDay.AddDays(1).AddHours(_scheduling.DayShiftStartHour);
+
+            var windows = new[]
             {
-                new { Start = day.AddHours(7), End = day.AddHours(19), Tier = 0 },
-                new { Start = day.AddHours(19), End = day.AddDays(1).AddHours(7), Tier = 1 },
+                (Start: dayStart, End: nightStart),
+                (Start: nightStart, End: nextDayStart),
             };
 
-            foreach (var shiftDef in shiftsForDay)
+            for (var slot = 0; slot < windows.Length; slot++)
             {
-                var empIndex = (generatedShifts.Count + day.DayOfYear) % employees.Count;
-                var employee = employees[empIndex];
+                // Straight round-robin across the whole run. The previous index mixed
+                // generatedShifts.Count with DayOfYear, and since the count advances twice
+                // per day it skipped every other person.
+                var employee = employees[(dayIndex * windows.Length + slot) % employees.Count];
 
                 generatedShifts.Add(new Shift
                 {
                     ScheduleId = scheduleId,
                     EmployeeId = employee.Id,
-                    StartTime = shiftDef.Start,
-                    EndTime = shiftDef.End,
-                    Tier = tiers[shiftDef.Tier],
+                    StartTime = ToUtc(windows[slot].Start, zone),
+                    EndTime = ToUtc(windows[slot].End, zone),
+                    Tier = "primary",
                     Status = "scheduled"
                 });
             }
