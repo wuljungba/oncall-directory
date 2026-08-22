@@ -81,10 +81,14 @@ public class CodeCallDispatchService : ICodeCallDispatchService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var cucm = scope.ServiceProvider.GetRequiredService<ICiscoCucmClient>();
-            var informaCast = scope.ServiceProvider.GetRequiredService<IInformaCastClient>();
-            var vocera = scope.ServiceProvider.GetRequiredService<IVoceraClient>();
-            var twilio = scope.ServiceProvider.GetRequiredService<ITwilioClient>();
+
+            // Each client is resolved only inside its own enabled-branch, for the same
+            // reason as PreflightCheckAllAsync below: CiscoCucmClient's constructor builds
+            // "https://:8443/axl/" from an unconfigured host and throws UriFormatException.
+            // Resolving all four up front took the ENTIRE dispatch down before a single
+            // channel was attempted — on the default configuration, where CUCM is off. The
+            // code call recorded one opaque "Invalid URI" step, notified nobody, and left
+            // the event unacknowledged. Do not hoist these back out of their branches.
 
             int successCount = 0;
             int totalChannels = 0;
@@ -95,6 +99,8 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 totalChannels++;
                 await RecordStepAndNotify(evt.Id, "cucm_axl_check", "in_progress",
                     "Checking CUCM device registration...");
+
+                var cucm = scope.ServiceProvider.GetRequiredService<ICiscoCucmClient>();
 
                 var cucmOk = await cucm.CheckDeviceRegistrationAsync(evt.Location ?? "location");
                 if (cucmOk)
@@ -144,6 +150,8 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 await RecordStepAndNotify(evt.Id, "informacast", "in_progress",
                     $"Triggering InformaCast broadcast for {codeType}...");
 
+                var informaCast = scope.ServiceProvider.GetRequiredService<IInformaCastClient>();
+
                 var icResult = await informaCast.TriggerScenarioAsync(
                     _options.InformaCast.ScenarioId,
                     evt.Location ?? "unknown",
@@ -174,6 +182,8 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 totalChannels++;
                 await RecordStepAndNotify(evt.Id, "vocera", "in_progress",
                     $"Sending Vocera alert to responder group {_options.Vocera.ResponderGroupId}...");
+
+                var vocera = scope.ServiceProvider.GetRequiredService<IVoceraClient>();
 
                 // NOTE: ResponderGroupId is passed in VMP's recipient field. Verify the
                 // VMP service treats this as a group/id before live firing (the review
@@ -208,6 +218,8 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                 totalChannels++;
                 await RecordStepAndNotify(evt.Id, "twilio_sms", "in_progress",
                     "Sending SMS to on-call provider...");
+
+                var twilio = scope.ServiceProvider.GetRequiredService<ITwilioClient>();
 
                 // Directory numbers are not reliably canonical (AD/Graph and CSV imports
                 // both yield "(202) 555-0134" style values), and Twilio only accepts E.164.
