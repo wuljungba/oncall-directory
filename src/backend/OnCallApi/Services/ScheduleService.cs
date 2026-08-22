@@ -8,9 +8,9 @@ public class ScheduleService : IScheduleService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<ScheduleService> _logger;
-    private readonly TeamsNotificationService? _teams;
+    private readonly ITeamsNotificationService? _teams;
 
-    public ScheduleService(AppDbContext db, ILogger<ScheduleService> logger, TeamsNotificationService? teams = null)
+    public ScheduleService(AppDbContext db, ILogger<ScheduleService> logger, ITeamsNotificationService? teams = null)
     {
         _db = db;
         _logger = logger;
@@ -149,6 +149,41 @@ public class ScheduleService : IScheduleService
         }
 
         return swap;
+    }
+
+    public async Task<Shift?> AcknowledgeShiftAsync(int shiftId, Guid acknowledgedById, bool isAdmin)
+    {
+        var shift = await _db.Shifts.FirstOrDefaultAsync(s => s.Id == shiftId);
+        if (shift == null) return null;
+
+        // Only the person actually on call can confirm coverage — otherwise the signal the
+        // escalation engine relies on could be silenced by anyone. Admins may acknowledge
+        // on someone's behalf (a phone call to the unit answers the same question).
+        if (!isAdmin && shift.EmployeeId != acknowledgedById)
+            throw new UnauthorizedAccessException("Only the shift holder or an administrator may acknowledge this shift.");
+
+        // Idempotent: re-acknowledging keeps the original confirmation time.
+        if (shift.AcknowledgedAt == null)
+        {
+            shift.AcknowledgedAt = DateTime.UtcNow;
+            shift.AcknowledgedById = acknowledgedById;
+            shift.UpdatedAt = DateTime.UtcNow;
+
+            // Any escalation already chasing this shift is now answered.
+            var open = await _db.EscalationEvents
+                .Where(e => e.ShiftId == shiftId && e.Status == "pending")
+                .ToListAsync();
+            foreach (var e in open)
+            {
+                e.Status = "acknowledged";
+                e.ResolvedAt = DateTime.UtcNow;
+            }
+
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("Shift {ShiftId} acknowledged by {EmployeeId}", shiftId, acknowledgedById);
+        }
+
+        return shift;
     }
 
     public async Task<List<Shift>> GetCurrentOnCallAsync(int? departmentId = null)

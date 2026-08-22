@@ -142,6 +142,39 @@ public class ScheduleController : ControllerBase
         return CreatedAtAction(nameof(GetShifts), new { scheduleId }, shift);
     }
 
+    /// <summary>
+    /// Confirm you are covering a shift. This is the signal the escalation engine waits
+    /// for — without it, an active shift is treated as unanswered and escalated.
+    /// </summary>
+    [HttpPost("shifts/{shiftId}/acknowledge")]
+    [Authorize(Policy = "RequireScheduleRead")]
+    public async Task<ActionResult<Shift>> AcknowledgeShift(int shiftId)
+    {
+        var employeeId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
+        if (employeeId == null)
+            return BadRequest(new { error = "No employee profile is linked to your account." });
+
+        var isAdmin = _tenantContext.IsSuperAdmin(User)
+            || User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped);
+
+        try
+        {
+            var shift = await _scheduleService.AcknowledgeShiftAsync(shiftId, employeeId.Value, isAdmin);
+            if (shift == null) return NotFound();
+
+            var tenantId = await _db.Schedules
+                .Where(s => s.Id == shift.ScheduleId)
+                .Select(s => s.Department!.TenantId)
+                .FirstOrDefaultAsync();
+            await BroadcastToTenantGroupAsync(tenantId, "ShiftAcknowledged", shift);
+            return Ok(shift);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Forbid(ex.Message);
+        }
+    }
+
     /// <summary>Get who's currently on call.</summary>
     [HttpGet("on-call")]
     public async Task<ActionResult<List<Shift>>> GetCurrentOnCall([FromQuery] int? departmentId)

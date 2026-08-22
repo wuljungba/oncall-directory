@@ -8,7 +8,7 @@ namespace OnCallApi.Services;
 /// Service for sending Microsoft Teams notifications via Graph API.
 /// Builds adaptive card payloads for different on-call event types.
 /// </summary>
-public class TeamsNotificationService
+public class TeamsNotificationService : ITeamsNotificationService
 {
     private readonly IGraphApiService _graphApi;
     private readonly ILogger<TeamsNotificationService> _logger;
@@ -20,28 +20,43 @@ public class TeamsNotificationService
     }
 
     /// <summary>
-    /// Send an adaptive card notification to a user's Teams chat.
+    /// Send a notification to a user's Teams chat. Returns false if it was not delivered.
+    ///
+    /// This used to return void and swallow every failure, so callers — including the
+    /// escalation path — could not tell a delivered alert from one that vanished.
     /// </summary>
-    public async Task SendNotificationAsync(string userAzureAdId, string title, string message, NotificationCardType cardType = NotificationCardType.Info)
+    public async Task<bool> SendNotificationAsync(string userAzureAdId, string title, string message, NotificationCardType cardType = NotificationCardType.Info)
     {
         try
         {
             var cardJson = BuildAdaptiveCard(title, message, cardType);
-            await _graphApi.SendTeamsMessageAsync(userAzureAdId, cardJson);
-            _logger.LogInformation("Teams notification sent to {UserId}: {Title}", userAzureAdId, title);
+            var delivered = await _graphApi.SendTeamsMessageAsync(userAzureAdId, cardJson);
+
+            if (delivered)
+            {
+                _logger.LogInformation("Teams notification sent to {UserId}: {Title}", userAzureAdId, title);
+            }
+            else
+            {
+                _logger.LogWarning("Teams notification NOT delivered to {UserId}: {Title}", userAzureAdId, title);
+            }
+
+            return delivered;
         }
         catch (ODataError ex)
         {
             _logger.LogWarning(ex, "Failed to send Teams notification to {UserId} (may need app installed in Teams)", userAzureAdId);
+            return false;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error sending Teams notification to {UserId}", userAzureAdId);
+            return false;
         }
     }
 
     /// <summary>Notify a user their shift is starting soon.</summary>
-    public Task SendShiftStartingAsync(string userId, string userName, string tier, DateTime startTime, string department)
+    public Task<bool> SendShiftStartingAsync(string userId, string userName, string tier, DateTime startTime, string department)
     {
         var startLocal = startTime.ToLocalTime().ToString("h:mm tt");
         var dateLocal = startTime.ToLocalTime().ToString("dddd, MMM d");
@@ -52,7 +67,7 @@ public class TeamsNotificationService
     }
 
     /// <summary>Notify relevant parties about a swap request.</summary>
-    public Task SendSwapRequestedAsync(string requesterId, string requesterName, string targetId, string targetName, string shiftInfo)
+    public Task<bool> SendSwapRequestedAsync(string requesterId, string requesterName, string targetId, string targetName, string shiftInfo)
     {
         return SendNotificationAsync(targetId,
             "🔄 Swap Request",
@@ -61,7 +76,7 @@ public class TeamsNotificationService
     }
 
     /// <summary>Notify about an approved swap.</summary>
-    public Task SendSwapApprovedAsync(string approverId, string requesterName, string shiftInfo)
+    public Task<bool> SendSwapApprovedAsync(string approverId, string requesterName, string shiftInfo)
     {
         return SendNotificationAsync(approverId,
             "✅ Swap Approved",
@@ -70,7 +85,7 @@ public class TeamsNotificationService
     }
 
     /// <summary>Alert about a coverage gap.</summary>
-    public Task SendGapAlertAsync(string userId, string department, DateTime gapDate)
+    public Task<bool> SendGapAlertAsync(string userId, string department, DateTime gapDate)
     {
         var dateStr = gapDate.ToLocalTime().ToString("MMM d, yyyy");
         return SendNotificationAsync(userId,
@@ -80,7 +95,7 @@ public class TeamsNotificationService
     }
 
     /// <summary>Escalation notice.</summary>
-    public Task SendEscalationAsync(string userId, string department, string tier, string details)
+    public Task<bool> SendEscalationAsync(string userId, string department, string tier, string details)
     {
         return SendNotificationAsync(userId,
             "🚨 Escalation Alert",

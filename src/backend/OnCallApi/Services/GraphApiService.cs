@@ -202,7 +202,7 @@ public class GraphApiService : IGraphApiService
         }
     }
 
-    public async Task SendTeamsMessageAsync(string userId, string messageJson, CancellationToken ct = default)
+    public async Task<bool> SendTeamsMessageAsync(string userId, string messageJson, CancellationToken ct = default)
     {
         try
         {
@@ -223,18 +223,27 @@ public class GraphApiService : IGraphApiService
                 {
                     await GetClient().Chats[oneOnOne.Id].Messages.PostAsync(chatMessage, cancellationToken: ct);
                     _logger.LogInformation("Teams message sent to {UserId}", userId);
-                    return;
+                    return true;
                 }
+
+                // An app-only credential typically has no 1:1 chats and cannot list them
+                // without protected-API approval, so this is the common outcome rather than
+                // an edge case. It used to fall through silently and report nothing at all.
+                _logger.LogWarning(
+                    "No 1:1 Teams chat available for {UserId} — message NOT delivered", userId);
             }
-            catch (ODataError)
+            catch (ODataError ex)
             {
-                _logger.LogWarning("No Teams chat available for {UserId}; notification logged", userId);
+                _logger.LogWarning(ex,
+                    "Graph rejected the Teams chat lookup for {UserId} — message NOT delivered", userId);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send Teams message to {UserId}", userId);
         }
+
+        return false;
     }
 
     public async Task CreateOutlookCalendarEventAsync(string userId, string subject, DateTime start, DateTime end, CancellationToken ct = default)

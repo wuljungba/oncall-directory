@@ -12,6 +12,14 @@ public interface IScheduleService
     Task<ShiftSwap> RequestSwapAsync(int shiftId, Guid requestedById, Guid? replacementUserId, string reason);
     Task<ShiftSwap> ApproveSwapAsync(int swapId, Guid approvedById);
     Task<List<Shift>> GetCurrentOnCallAsync(int? departmentId = null);
+
+    /// <summary>
+    /// Records that the on-call holder has confirmed they are covering a shift, which is
+    /// what stops the escalation engine chasing it. Returns null if the shift does not
+    /// exist. Throws <see cref="UnauthorizedAccessException"/> if the caller is neither the
+    /// shift holder nor an administrator.
+    /// </summary>
+    Task<Shift?> AcknowledgeShiftAsync(int shiftId, Guid acknowledgedById, bool isAdmin);
     Task<List<TimeOff>> GetTimeOffAsync(Guid employeeId);
     Task<List<TimeOff>> GetTimeOffForCurrentUserAsync(string azureAdObjectId);
     Task<TimeOff> RequestTimeOffAsync(TimeOff timeOff);

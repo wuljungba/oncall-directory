@@ -436,6 +436,7 @@ builder.Services.AddScoped<IDirectoryService, DirectoryService>();
 builder.Services.AddScoped<IDutyHourService, DutyHourService>();
 builder.Services.AddScoped<BulkImportService>();
 builder.Services.AddScoped<TeamsNotificationService>();
+builder.Services.AddScoped<ITeamsNotificationService>(sp => sp.GetRequiredService<TeamsNotificationService>());
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
 builder.Services.AddHostedService<AuditBackgroundService>();
@@ -760,6 +761,14 @@ using (var scope = app.Services.CreateScope())
             """
             IF COL_LENGTH(N'dbo.DispatchSteps', N'ProviderMessageId') IS NULL
                 ALTER TABLE dbo.DispatchSteps ADD ProviderMessageId nvarchar(64) NULL;
+            """,
+            // Shifts.AcknowledgedAt/By — the confirmation the escalation engine waits
+            // for. Added later than the base schema; backport idempotently.
+            """
+            IF COL_LENGTH(N'dbo.Shifts', N'AcknowledgedAt') IS NULL
+                ALTER TABLE dbo.Shifts ADD AcknowledgedAt datetime2 NULL;
+            IF COL_LENGTH(N'dbo.Shifts', N'AcknowledgedById') IS NULL
+                ALTER TABLE dbo.Shifts ADD AcknowledgedById uniqueidentifier NULL;
             """,
             // AuditLogs.PrincipalId + StatusCode. PrincipalId attributes access by
             // non-Entra (Google/local) users, whose ids are not GUIDs and were therefore

@@ -12,9 +12,9 @@ public class EscalationService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<EscalationService> _logger;
-    private readonly TeamsNotificationService? _teams;
+    private readonly ITeamsNotificationService? _teams;
 
-    public EscalationService(AppDbContext db, ILogger<EscalationService> logger, TeamsNotificationService? teams = null)
+    public EscalationService(AppDbContext db, ILogger<EscalationService> logger, ITeamsNotificationService? teams = null)
     {
         _db = db;
         _logger = logger;
@@ -105,6 +105,10 @@ public class EscalationService
                 .Include(s => s.Schedule)
                 .Where(s => s.StartTime <= now && s.EndTime >= now
                     && s.Status != "gap"
+                    // An acknowledged shift has a confirmed holder — there is nothing to
+                    // escalate. Before this existed the engine escalated EVERY active
+                    // shift, tier after tier, purely because time had passed.
+                    && s.AcknowledgedAt == null
                     && (departmentId == null || s.Schedule!.DepartmentId == departmentId)
                     && s.Employee != null)
                 .ToListAsync();
@@ -159,18 +163,53 @@ public class EscalationService
         _db.EscalationEvents.Add(escEvent);
 
         // Notify the target via Teams (and any configured channel later).
-        if (target != null && _teams != null && !string.IsNullOrEmpty(target.AzureAdObjectId))
+        //
+        // Whether this reached anyone is recorded, not assumed. Delivery previously failed
+        // silently in three places — a target with no AzureAdObjectId was skipped without
+        // a word, the notification service swallowed every exception, and Graph returned
+        // without sending when no 1:1 chat existed. The escalation was still written as
+        // "pending", indistinguishable from one that had genuinely gone out.
+        var deliveryFailure = await NotifyTargetAsync(policy, shift, target, tier);
+
+        if (deliveryFailure != null)
         {
-            var deptName = shift.Schedule?.Department?.Name ?? "Unknown";
-            await _teams.SendEscalationAsync(
-                target.AzureAdObjectId,
-                deptName,
-                $"Tier {tier}",
-                $"Escalation: the primary did not respond within the policy window. Policy: {policy.Name}");
+            escEvent.Status = "notify_failed";
+            escEvent.Details += $" — NOT DELIVERED: {deliveryFailure}";
+
+            // Safety-critical: nobody was told. This must be loud enough to alert on.
+            _logger.LogError(
+                "ESCALATION NOT DELIVERED for shift {ShiftId} tier {Tier} (policy {Policy}): {Reason}",
+                shift.Id, tier, policy.Name, deliveryFailure);
         }
 
         await _db.SaveChangesAsync();
         _logger.LogWarning("Escalation fired: {Details}", escEvent.Details);
+    }
+
+    /// <summary>
+    /// Attempts to notify the escalation target. Returns null on success, or a reason
+    /// describing why nobody was reached.
+    /// </summary>
+    private async Task<string?> NotifyTargetAsync(
+        EscalationPolicy policy, Shift shift, Employee? target, int tier)
+    {
+        if (target == null)
+            return "no escalation target could be resolved";
+
+        if (_teams == null)
+            return "no notification channel is configured";
+
+        if (string.IsNullOrEmpty(target.AzureAdObjectId))
+            return $"{target.FirstName} {target.LastName} has no Microsoft identity to notify";
+
+        var deptName = shift.Schedule?.Department?.Name ?? "Unknown";
+        var delivered = await _teams.SendEscalationAsync(
+            target.AzureAdObjectId,
+            deptName,
+            $"Tier {tier}",
+            $"Escalation: the primary did not respond within the policy window. Policy: {policy.Name}");
+
+        return delivered ? null : "Teams delivery failed";
     }
 
     /// <summary>
