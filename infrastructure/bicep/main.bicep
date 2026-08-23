@@ -64,7 +64,6 @@ var kvName = 'kv-${take(environmentName, 4)}-${uniqueString(subscription().subsc
 var aiName = 'ai-oncall-${environmentName}'
 var logName = 'log-oncall-${environmentName}'
 var stName = 'stoncall${environmentName}'
-var redisName = 'redis-oncall-${environmentName}'
 var connectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};TrustServerCertificate=False;Encrypt=True;'
 var defaultCorsOrigin = !empty(corsOrigin) ? corsOrigin : 'https://${appName}.azurewebsites.net'
 
@@ -239,21 +238,6 @@ resource complianceReportsContainer 'Microsoft.Storage/storageAccounts/blobServi
   name: 'compliance-reports'
 }
 
-// ── Redis Cache (for session/query caching) ──
-resource redisCache 'Microsoft.Cache/redis@2023-08-01' = {
-  name: redisName
-  location: location
-  properties: {
-    sku: { name: 'Standard', family: 'C', capacity: environmentName == 'production' ? 1 : 0 }
-    enableNonSslPort: false
-    minimumTlsVersion: '1.2'
-    redisConfiguration: {
-      'maxmemory-reserved': '100'
-      'maxfragmentationmemory-reserved': '50'
-    }
-  }
-}
-
 // ── App Service Plan + Web App (serves both API and frontend static files) ──
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'plan-oncall-${environmentName}'
@@ -286,7 +270,6 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AzureAd__ClientId', value: entraClientId }
         { name: 'Cors__Origin', value: defaultCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
-        { name: 'Redis__ConnectionString', value: redisCache.properties.hostName }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
@@ -320,7 +303,6 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'AzureAd__ClientId', value: entraClientId }
         { name: 'Cors__Origin', value: defaultCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
-        { name: 'Redis__ConnectionString', value: redisCache.properties.hostName }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
@@ -371,5 +353,4 @@ output appUrl string = 'https://${appName}.azurewebsites.net'
 output sqlServerFqdn string = sqlServer.properties.fullyQualifiedDomainName
 output keyVaultName string = kvName
 output storageAccountName string = stName
-output redisHostName string = redisCache.properties.hostName
 output appInsightsConnectionString string = appInsights.properties.ConnectionString

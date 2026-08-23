@@ -1,8 +1,8 @@
 // Incremental deployment: App Service Plan + Web App + staging slot ONLY.
 //
 // Used when main.bicep's Microsoft.Web resources are missing (e.g. the RG was
-// deployed from an earlier/partial run). References the existing SQL/Redis/
-// Storage/App Insights/Key Vault resources WITHOUT modifying them, so it does
+// deployed from an earlier/partial run). References the existing SQL/Storage/
+// App Insights/Key Vault resources WITHOUT modifying them, so it does
 // not need the SQL admin password.
 //
 // Deploy with:
@@ -22,7 +22,6 @@ param kvName string = 'kv-prod-lfwnuoyu5blao'
 var appName = 'app-oncall-${environmentName}'
 var aiName = 'ai-oncall-${environmentName}'
 var stName = 'stoncall${environmentName}'
-var redisName = 'redis-oncall-${environmentName}'
 var defaultCorsOrigin = !empty(corsOrigin) ? corsOrigin : 'https://${appName}.azurewebsites.net'
 
 // ── References to existing resources (read-only, not modified) ──
@@ -31,9 +30,6 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
 }
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
   name: stName
-}
-resource redisCache 'Microsoft.Cache/redis@2023-08-01' existing = {
-  name: redisName
 }
 
 // ── App Service Plan + Web App (serves both API and frontend static files) ──
@@ -68,7 +64,6 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'AzureAd__ClientId', value: entraClientId }
         { name: 'Cors__Origin', value: defaultCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
-        { name: 'Redis__ConnectionString', value: redisCache.properties.hostName }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
@@ -100,7 +95,6 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'AzureAd__ClientId', value: entraClientId }
         { name: 'Cors__Origin', value: defaultCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
-        { name: 'Redis__ConnectionString', value: redisCache.properties.hostName }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
         { name: 'DevAuth__Enabled', value: 'false' }
