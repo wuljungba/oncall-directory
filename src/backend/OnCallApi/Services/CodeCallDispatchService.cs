@@ -266,13 +266,30 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             }
 
             // ── Step 4: Overall result ──
-            if (successCount > 0 || totalChannels == 0)
+            if (totalChannels == 0)
             {
-                // At least one channel succeeded, or no channels configured (use stub mode)
+                // No channel is configured, so this code call reached NOBODY. It used to be
+                // reported as "acknowledged / completed — operating in stub mode" and then
+                // machine-acknowledged, which told the operator their code blue had been
+                // dispatched when not one person had been contacted. Silence is the one
+                // outcome a code call must never render as success.
+                const string nobodyReached =
+                    "DISPATCH FAILED — no dispatch channel is configured, so nobody was "
+                    + "contacted. Escalate by phone now.";
+
+                _logger.LogError(
+                    "Code call {EventId} ({CodeType}) dispatched with no channels configured; "
+                    + "nobody was contacted", evt.Id, codeType);
+
+                await RecordStepAndNotify(evt.Id, "acknowledged", "failed", nobodyReached);
+
+                // Deliberately NOT acknowledged: the event stays active and unacknowledged so
+                // it keeps demanding attention in the Command Center.
+            }
+            else if (successCount > 0)
+            {
                 await RecordStepAndNotify(evt.Id, "acknowledged", "completed",
-                    successCount > 0
-                        ? $"Dispatch complete: {successCount}/{totalChannels} channel(s) succeeded"
-                        : "No dispatch channels configured — operating in stub mode");
+                    $"Dispatch complete: {successCount}/{totalChannels} channel(s) succeeded");
 
                 // Auto-resolve after acknowledgment
                 using (var autoScope = _scopeFactory.CreateScope())

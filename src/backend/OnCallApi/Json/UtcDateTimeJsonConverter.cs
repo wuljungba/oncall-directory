@@ -29,5 +29,22 @@ public sealed class UtcDateTimeJsonConverter : JsonConverter<DateTime>
     }
 
     public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options)
-        => writer.WriteStringValue(value.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
+    {
+        // Unspecified must be LABELLED as UTC, never CONVERTED to it — exactly as Read does.
+        //
+        // Every stored datetime is UTC by construction, and EF Core rehydrates both SQL Server
+        // and SQLite columns with Kind=Unspecified. ToUniversalTime() interprets Unspecified as
+        // LOCAL, so it added the server's UTC offset to every value that came back from the
+        // database: a code call written at 03:39:04Z was served as 07:39:04Z on a UTC-4 host.
+        // Production hid this because Azure App Service runs in UTC, where the offset is zero.
+        var utc = value.Kind switch
+        {
+            DateTimeKind.Utc => value,
+            DateTimeKind.Unspecified => DateTime.SpecifyKind(value, DateTimeKind.Utc),
+            // Kind=Local is a genuinely local value, so converting it is correct.
+            _ => value.ToUniversalTime(),
+        };
+
+        writer.WriteStringValue(utc.ToString("O", CultureInfo.InvariantCulture));
+    }
 }

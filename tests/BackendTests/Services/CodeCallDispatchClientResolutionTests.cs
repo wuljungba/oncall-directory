@@ -109,6 +109,37 @@ public class CodeCallDispatchClientResolutionTests
     }
 
     /// <summary>
+    /// A code call that reached nobody must not report success.
+    ///
+    /// With no channel configured the pipeline used to record
+    /// "acknowledged / completed — operating in stub mode" and machine-acknowledge the
+    /// event, so an operator saw a dispatched code blue when not one person had been
+    /// contacted. That is production's exact configuration.
+    /// </summary>
+    [Fact]
+    public async Task NoChannelsConfigured_FailsTheDispatch_AndDoesNotAcknowledge()
+    {
+        var provider = BuildProvider(Guid.NewGuid().ToString());
+        var eventId = SeedEvent(provider);
+
+        await BuildService(provider, new DispatchOptions()).ProcessDispatchJobAsync(eventId, "code-blue");
+
+        var steps = await StepsAsync(provider, eventId);
+        var outcome = steps.Single(s => s.StepKey == "acknowledged");
+
+        outcome.Status.Should().Be("failed",
+            "nobody was contacted, so the dispatch did not succeed");
+        outcome.Detail.Should().Contain("nobody was contacted");
+
+        using var scope = provider.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var evt = await db.PhoneTreeEvents.FindAsync(eventId);
+
+        evt!.AcknowledgedAt.Should().BeNull(
+            "an unacknowledged event keeps demanding attention in the Command Center");
+    }
+
+    /// <summary>
     /// The realistic hospital configuration for this deployment: SMS only. CUCM,
     /// InformaCast and Vocera stay unconfigured and must not prevent the SMS attempt.
     /// </summary>
