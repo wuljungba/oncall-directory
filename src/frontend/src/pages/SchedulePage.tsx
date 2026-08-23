@@ -15,6 +15,7 @@ export default function SchedulePage() {
   const [selectedSchedule, setSelectedSchedule] = useState<number | null>(null)
   const [shifts, setShifts] = useState<Shift[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [swapTargetShift, setSwapTargetShift] = useState<Shift | null>(null)
@@ -48,9 +49,11 @@ export default function SchedulePage() {
     ]).then(([scheds, depts]) => {
       setSchedules(scheds)
       setDepartments(depts)
+      setError(null)
       setLoading(false)
     }).catch(err => {
       console.error(err)
+      setError('Failed to load schedules and departments.')
       setLoading(false)
     })
   }, [])
@@ -61,16 +64,28 @@ export default function SchedulePage() {
       const to = new Date(currentWeekStart.getTime() + DAYS_COUNT * 24 * 60 * 60 * 1000).toISOString()
       scheduleApi
         .getShifts(selectedSchedule, from, to)
-        .then(setShifts)
-        .catch(console.error)
+        .then(data => {
+          setShifts(data)
+          setError(null)
+        })
+        .catch(err => {
+          console.error(err)
+          setError('Failed to load shifts for this schedule.')
+        })
     }
   }, [selectedSchedule, currentWeekStart, DAYS_COUNT])
 
   useEffect(() => {
     const currentSchedule = schedules.find(s => s.id === selectedSchedule)
     scheduleApi.getOnCall(currentSchedule?.departmentId)
-      .then(setCurrentOnCall)
-      .catch(console.error)
+      .then(data => {
+        setCurrentOnCall(data)
+        setError(null)
+      })
+      .catch(err => {
+        console.error(err)
+        setError('Failed to load on-call data.')
+      })
   }, [selectedSchedule, schedules])
 
   // ── SignalR real-time subscriptions ──
@@ -91,21 +106,43 @@ export default function SchedulePage() {
     // Refresh shifts for current view
     const from = currentWeekStart.toISOString()
     const to = new Date(currentWeekStart.getTime() + DAYS_COUNT * 24 * 60 * 60 * 1000).toISOString()
-    scheduleApi.getShifts(selectedSchedule, from, to).then(setShifts).catch(console.error)
+    scheduleApi.getShifts(selectedSchedule, from, to)
+      .then(data => {
+        setShifts(data)
+        setError(null)
+      })
+      .catch(err => {
+        console.error('Failed to refresh shifts:', err)
+        setError('Failed to refresh shifts after update.')
+      })
 
     // Also refresh on-call data
     const currentSchedule = schedules.find(s => s.id === selectedSchedule)
     if (currentSchedule) {
-      scheduleApi.getOnCall(currentSchedule.departmentId).then(setCurrentOnCall).catch(console.error)
+      scheduleApi.getOnCall(currentSchedule.departmentId)
+        .then(data => {
+          setCurrentOnCall(data)
+          setError(null)
+        })
+        .catch(err => {
+          console.error('Failed to refresh on-call:', err)
+          setError('Failed to refresh on-call data.')
+        })
     }
 
     // If a new schedule was created, refresh the schedule list
     if (lastEvent.type === 'ScheduleCreated') {
-      scheduleApi.getAll().then(data => {
-        setSchedules(data)
-        // Auto-select if only one schedule
-        if (data.length === 1) setSelectedSchedule(data[0].id)
-      }).catch(console.error)
+      scheduleApi.getAll()
+        .then(data => {
+          setSchedules(data)
+          setError(null)
+          // Auto-select if only one schedule
+          if (data.length === 1) setSelectedSchedule(data[0].id)
+        })
+        .catch(err => {
+          console.error('Failed to refresh schedules:', err)
+          setError('Failed to refresh schedule list.')
+        })
     }
   }, [lastEvent, selectedSchedule, currentWeekStart, DAYS_COUNT, schedules])
 
@@ -165,6 +202,7 @@ export default function SchedulePage() {
   async function handleGenerateShifts() {
     if (!selectedSchedule) return
     setGenerating(true)
+    setError(null)
     try {
       await scheduleApi.generateShifts(selectedSchedule, 4)
       // Refresh shifts for current view
@@ -174,12 +212,14 @@ export default function SchedulePage() {
       setShifts(updated)
     } catch (err) {
       console.error('Failed to generate shifts:', err)
+      setError('Failed to generate shifts. Please try again.')
     } finally {
       setGenerating(false)
     }
   }
 
   async function handleRequestSwap(shiftId: number, replacementUserId: string, reason: string) {
+    setError(null)
     try {
       await scheduleApi.requestSwap({
         shiftId,
@@ -190,6 +230,7 @@ export default function SchedulePage() {
       setSwapTargetShift(null)
     } catch (err) {
       console.error('Failed to request swap:', err)
+      setError('Failed to request shift swap. Please try again.')
     }
   }
 
@@ -287,6 +328,18 @@ export default function SchedulePage() {
 
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="flex items-center gap-3 bg-red-600/10 border border-red-600/30 rounded-xl px-5 py-3 text-sm text-red-400">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+          <span>{error}</span>
+          <button
+            onClick={() => setError(null)}
+            className="ml-auto text-red-400 hover:text-red-300"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">On-Call Schedule</h1>
         <div className="flex items-center gap-2">

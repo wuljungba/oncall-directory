@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Users, Building2, RefreshCw, Shield, Plus, Search, X, Save, Trash2,
   CheckCircle, AlertTriangle, Calendar, Phone, Building,
@@ -1231,11 +1231,7 @@ function TimeOffApprovalSection() {
   const [filter, setFilter] = useState<string>('pending')
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadRequests()
-  }, [filter])
-
-  async function loadRequests() {
+  const loadRequests = useCallback(async () => {
     try {
       setLoading(true)
       const data = await scheduleApi.getAllTimeOff(filter || undefined)
@@ -1245,7 +1241,11 @@ function TimeOffApprovalSection() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [filter])
+
+  useEffect(() => {
+    loadRequests()
+  }, [loadRequests])
 
   async function handleApprove(req: TimeOff) {
     const who = req.employee ? `${req.employee.firstName} ${req.employee.lastName}` : 'this request'
