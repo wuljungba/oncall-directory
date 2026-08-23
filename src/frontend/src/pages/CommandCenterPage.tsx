@@ -154,7 +154,15 @@ export default function CommandCenterPage() {
     try {
       await commandCenterApi.resolveEvent(eventId, { notifiedByName: notified || undefined })
       addLogEntry('info', `Incident #${eventId} marked resolved${notified.trim() ? ` — notified: ${notified.trim()}` : ''}`)
-    } catch { /* ignore */ }
+      // Reload rather than relying on the IncidentResolved SignalR broadcast: if the hub
+      // is not connected the incident stays in the Active column and the resolve looks
+      // like it silently did nothing, even though the server completed it.
+      await loadData()
+    } catch (err) {
+      // Never swallow this. An operator who cannot tell whether a code call was closed
+      // out will either leave it open or resolve it twice.
+      addLogEntry('info', `Failed to resolve incident #${eventId}: ${err}`)
+    }
     setCompleting(null)
   }
 
