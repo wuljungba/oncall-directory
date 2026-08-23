@@ -10,11 +10,14 @@ public class EscalationBackgroundService : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<EscalationBackgroundService> _logger;
+    private int _consecutiveFailures;
+    private const int FailureThresholdForAlert = 3;
 
     public EscalationBackgroundService(IServiceProvider services, ILogger<EscalationBackgroundService> logger)
     {
         _services = services;
         _logger = logger;
+        _consecutiveFailures = 0;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -29,10 +32,16 @@ public class EscalationBackgroundService : BackgroundService
                 using var scope = _services.CreateScope();
                 var svc = scope.ServiceProvider.GetRequiredService<EscalationService>();
                 await svc.CheckAndEscalateAsync();
+                _consecutiveFailures = 0;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Escalation check cycle failed");
+                _consecutiveFailures++;
+                var level = _consecutiveFailures >= FailureThresholdForAlert ? LogLevel.Critical : LogLevel.Error;
+                _logger.Log(level, ex,
+                    "Escalation check cycle failed (consecutive failures: {FailureCount}). " +
+                    "If this persists, the escalation engine may not be paging responders.",
+                    _consecutiveFailures);
             }
         }
     }
