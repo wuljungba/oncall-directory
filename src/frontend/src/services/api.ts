@@ -287,6 +287,43 @@ export const integrationsApi = {
     }),
 }
 
+// ── Direct SMS to a provider ──
+export interface SendSmsResult {
+  sent: boolean
+  detail: string
+  messageSid?: string
+}
+
+export const messagingApi = {
+  /**
+   * Texts one provider's mobile. Resolves with `sent: false` and a readable reason for
+   * every handled failure (SMS switched off, no mobile on file, Twilio rejection) rather
+   * than throwing, so the caller can always tell the operator what happened.
+   */
+  sendProviderSms: async (employeeId: string, message: string): Promise<SendSmsResult> => {
+    try {
+      return await fetchApi<SendSmsResult>(`/messaging/sms/${employeeId}`, {
+        method: 'POST',
+        body: JSON.stringify({ message }),
+      })
+    } catch (err) {
+      // fetchApi throws ApiError on non-2xx, carrying the raw response body as its message.
+      // Every handled failure here returns a SendSmsResponse, so recover the server's own
+      // wording instead of showing the operator a bare status code.
+      const raw = err instanceof Error ? err.message : ''
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed && typeof parsed.detail === 'string') {
+          return { sent: false, detail: parsed.detail }
+        }
+      } catch {
+        // Not JSON (a proxy error page, or the API being down) — fall through.
+      }
+      return { sent: false, detail: raw || 'The message could not be sent.' }
+    }
+  },
+}
+
 // ── Directory ──
 export const directoryApi = {
   search: (q: string, departmentId?: number) => {

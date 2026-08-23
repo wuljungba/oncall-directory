@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail } from 'lucide-react'
+import { Clock, Phone, Users, AlertTriangle, MessageSquare, Mail, Send } from 'lucide-react'
+import { SendSmsModal } from '@/components/SendSmsModal'
 import { scheduleApi, directoryApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import { useSignalR } from '@/hooks/useSignalR'
@@ -12,6 +13,7 @@ import { formatTimeRange, formatCountdown } from '@/utils/date'
 import type { Employee, Shift, TimeOff } from '@/types'
 
 interface OnCallSummary {
+  employeeId?: string
   employeeName: string
   role: string
   department: string
@@ -21,6 +23,8 @@ interface OnCallSummary {
   presence: string
   email?: string
   phone?: string
+  /** Separate from `phone`, which prefers the desk line — SMS needs the mobile. */
+  mobilePhone?: string
 }
 
 export default function Dashboard() {
@@ -29,6 +33,7 @@ export default function Dashboard() {
   const [rawShifts, setRawShifts] = useState<Shift[]>([])
   const [stats, setStats] = useState({ onCall: 0, departments: 0, employees: 0 })
   const [now, setNow] = useState(new Date())
+  const [smsTarget, setSmsTarget] = useState<OnCallSummary | null>(null)
   const [myProfile, setMyProfile] = useState<Employee | null>(null)
   const [myTimeOff, setMyTimeOff] = useState<TimeOff[]>([])
   const { lastEvent } = useSignalR()
@@ -48,6 +53,7 @@ export default function Dashboard() {
       ])
 
       const summaries = shifts.map((s: Shift) => ({
+        employeeId: s.employee?.id,
         employeeName: `${s.employee?.firstName} ${s.employee?.lastName}`,
         role: s.employee?.title || 'Unknown',
         department: s.employee?.department?.name || '',
@@ -57,6 +63,7 @@ export default function Dashboard() {
         presence: s.employee?.presence || 'unknown',
         email: s.employee?.email,
         phone: s.employee?.officePhone || s.employee?.mobilePhone,
+        mobilePhone: s.employee?.mobilePhone,
       }))
 
       setRawShifts(shifts)
@@ -184,6 +191,18 @@ export default function Dashboard() {
                               <MessageSquare className="w-4 h-4 text-gray-400 hover:text-blue-400" />
                             </a>
                           )}
+                          {/* Teams only reaches someone at a desk. A text reaches the
+                              handset they carry, which is the point of an on-call rota. */}
+                          {person.employeeId && person.mobilePhone && (
+                            <button
+                              onClick={() => setSmsTarget(person)}
+                              title={`Text ${person.employeeName}`}
+                              aria-label={`Send a text message to ${person.employeeName}`}
+                              className="p-1.5 hover:bg-gray-700 rounded-lg transition-colors"
+                            >
+                              <Send className="w-4 h-4 text-gray-400 hover:text-amber-400" />
+                            </button>
+                          )}
                         </div>
                         <div className="text-right">
                           <Badge tone={person.tier === 'primary' ? 'amber' : person.tier === 'secondary' ? 'blue' : 'gray'}>
@@ -282,6 +301,15 @@ export default function Dashboard() {
           </p>
         </Link>
       </div>
+
+      {smsTarget?.employeeId && (
+        <SendSmsModal
+          employeeId={smsTarget.employeeId}
+          employeeName={smsTarget.employeeName}
+          context={`${smsTarget.tier} — ${smsTarget.department || smsTarget.role}`}
+          onClose={() => setSmsTarget(null)}
+        />
+      )}
     </div>
   )
 }
