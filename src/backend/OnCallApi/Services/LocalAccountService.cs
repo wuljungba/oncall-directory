@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using OnCallApi.Authentication;
 using OnCallApi.Authorization;
+using OnCallApi.Configuration;
 using OnCallApi.Data;
 using OnCallApi.Models;
 
@@ -14,22 +16,45 @@ public class LocalAccountService : ILocalAccountService
 {
     private readonly AppDbContext _db;
     private readonly LocalJwtService _jwtService;
+    private readonly SuperAdminOptions _superAdmins;
     private readonly ILogger<LocalAccountService> _logger;
 
     public LocalAccountService(
         AppDbContext db,
         LocalJwtService jwtService,
+        IOptions<SuperAdminOptions> superAdmins,
         ILogger<LocalAccountService> logger)
     {
         _db = db;
         _jwtService = jwtService;
+        _superAdmins = superAdmins.Value;
         _logger = logger;
     }
 
     public async Task<LocalAccount> RegisterAsync(string email, string password, string displayName, string[]? roles = null, Guid? employeeId = null)
     {
+        // Normalize ONCE. The duplicate check used to compare the raw argument while the row
+        // was stored lowercased and trimmed, so "Admin@X.com " sailed past a check against an
+        // existing "admin@x.com" and then wrote a colliding row.
+        var normalized = email.ToLowerInvariant().Trim();
+
+        // A configured super administrator is identified by EMAIL, and the email on a local
+        // account is chosen by whoever creates it and never verified against anything. Without
+        // this guard, any Admin.Full holder could register a local account bearing the super
+        // admin's address and sign in with Tenant.Manage and SuperAdmin on every tenant —
+        // strictly more than they held, with no record of the escalation.
+        if (_superAdmins.Emails.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+        {
+            _logger.LogWarning(
+                "Refused to register a local account for {Email}: reserved for a configured super administrator",
+                normalized);
+            throw new InvalidOperationException(
+                "That address is reserved for a configured super administrator and cannot be "
+                + "used for a local account.");
+        }
+
         // Check for existing account
-        var existing = await _db.LocalAccounts.AnyAsync(a => a.Email == email);
+        var existing = await _db.LocalAccounts.AnyAsync(a => a.Email == normalized);
         if (existing)
             throw new InvalidOperationException("An account with this email already exists.");
 
@@ -39,13 +64,13 @@ public class LocalAccountService : ILocalAccountService
         if (employeeId == null)
         {
             var matched = await _db.Employees
-                .FirstOrDefaultAsync(e => e.Email.ToLower() == email.ToLowerInvariant().Trim());
+                .FirstOrDefaultAsync(e => e.Email.ToLower() == normalized);
             if (matched != null) employeeId = matched.Id;
         }
 
         var account = new LocalAccount
         {
-            Email = email.ToLowerInvariant().Trim(),
+            Email = normalized,
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12),
             DisplayName = displayName,
             Roles = roles ?? ["OnCall.Viewer"],

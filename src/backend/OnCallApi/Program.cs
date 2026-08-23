@@ -339,14 +339,11 @@ else
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("RequireAdmin", policy =>
-        policy.RequireRole("OnCall.Admin"));
-
-    options.AddPolicy("RequireScheduler", policy =>
-        policy.RequireRole("OnCall.Scheduler", "OnCall.Admin"));
-
-    options.AddPolicy("RequireViewer", policy =>
-        policy.RequireRole("OnCall.Viewer", "OnCall.Scheduler", "OnCall.Admin"));
+    // NOTE: the role-based policies that used to live here (RequireAdmin / RequireScheduler /
+    // RequireViewer) have been removed. They were unused by every endpoint, and they were a
+    // weaker parallel authorization path: they accepted a raw role claim, and a local account's
+    // roles are set by whoever creates it, whereas the permission claims below are expanded
+    // from the database on each request. Authorize on permissions, not roles.
 
     // ── Granular permission-based policies ──
     options.AddPolicy("RequireScheduleRead", policy =>

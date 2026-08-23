@@ -79,7 +79,9 @@ public class TenantClaimsMiddleware
                             // Auto-assignment via Azure AD group membership. This stays
                             // because it IS an invitation: an administrator maps a specific
                             // Entra group to a tenant, and someone must add the user to it.
-                            await TryAutoAssignFromGroupsAsync(context.User, identity, azureAdObjectId, db);
+                            await TryAutoAssignFromGroupsAsync(
+                                context.User, identity, azureAdObjectId, db,
+                                context.RequestServices.GetRequiredService<ILogger<TenantClaimsMiddleware>>());
                         }
 
                         // NOTE: matching the token's `tid` alone used to auto-create a
@@ -155,7 +157,8 @@ public class TenantClaimsMiddleware
         ClaimsPrincipal user,
         ClaimsIdentity identity,
         string azureAdObjectId,
-        AppDbContext db)
+        AppDbContext db,
+        ILogger logger)
     {
         // Get user's Azure AD group membership claims
         var userGroupIds = user.FindAll("groups")
@@ -168,11 +171,18 @@ public class TenantClaimsMiddleware
         if (userGroupIds.Count == 0)
             return;
 
-        // Find tenants whose AzureAdGroupId matches one of the user's groups
-        var matchingTenants = await db.Tenants
-            .Where(t => t.IsActive && t.AzureAdGroupId != null)
-            .Where(t => userGroupIds.Contains(t.AzureAdGroupId!))
-            .ToListAsync();
+        // Find tenants whose AzureAdGroupId matches one of the user's groups.
+        //
+        // Blank is not a mapping. Testing only for null let a tenant carrying an empty
+        // AzureAdGroupId be matched by any equally empty group claim, which would hand out
+        // CodeCall.Write — the right to fire a live code call — on an accident of data entry.
+        var matchingTenants = (await db.Tenants
+                .Where(t => t.IsActive && t.AzureAdGroupId != null && t.AzureAdGroupId != "")
+                .Where(t => userGroupIds.Contains(t.AzureAdGroupId!))
+                .ToListAsync())
+            // Whitespace-only cannot be excluded in SQL portably, so it is filtered here.
+            .Where(t => !string.IsNullOrWhiteSpace(t.AzureAdGroupId))
+            .ToList();
 
         foreach (var tenant in matchingTenants)
         {
@@ -192,6 +202,14 @@ public class TenantClaimsMiddleware
                     LastSyncedAt = DateTime.UtcNow,
                 });
                 await db.SaveChangesAsync();
+
+                // This confers CodeCall.Write — the right to fire a live code call — without
+                // anyone approving this individual. The group mapping is the approval, so the
+                // grant must at least be visible after the fact.
+                logger.LogInformation(
+                    "Auto-assigned principal {ObjectId} as DepartmentAdmin of tenant {TenantId} "
+                    + "via Entra group {GroupId}; this grants CodeCall.Write",
+                    azureAdObjectId, tenant.Id, tenant.AzureAdGroupId);
             }
 
             // Apply the claims now rather than on the next request. AddTenantClaimsAsync
@@ -222,6 +240,15 @@ public class TenantClaimsMiddleware
     /// </summary>
     private bool IsConfiguredSuperAdmin(ClaimsPrincipal user)
     {
+        // Matching on email is intentional and applies to every provider, including local
+        // accounts — an operator may deliberately configure a local break-glass super admin.
+        //
+        // The escalation risk this invites (someone creating a local account bearing a
+        // configured super admin's address) is closed at the source instead:
+        // LocalAccountService.RegisterAsync refuses to register a reserved address, and
+        // UpdateAsync exposes no way to change an existing account's email. Restricting the
+        // match here as well was tried and rejected — it forbids the legitimate break-glass
+        // configuration without closing anything the registration guard leaves open.
         var email = GetEmail(user);
         if (!string.IsNullOrEmpty(email) &&
             _superAdmins.Emails.Contains(email, StringComparer.OrdinalIgnoreCase))
@@ -287,9 +314,20 @@ public class TenantClaimsMiddleware
         if (string.IsNullOrEmpty(oid) && string.IsNullOrEmpty(email))
             return;
 
+        // Object ids and emails are matched against separate shapes of grant, so a grant of
+        // one kind can never be satisfied by a claim of the other. Without the "@" rule a
+        // grant keyed to an object id could be met by an email claim carrying that same text,
+        // and vice versa.
+        //
+        // Email matching is deliberate and stays: it is what lets an administrator provision
+        // someone before their first sign-in, which is the documented onboarding flow. The
+        // consequence to be aware of is that it is provider-agnostic — a grant issued for an
+        // address is honoured whether the holder later arrives via Entra, Google or a local
+        // account, because all three present the same verified address.
         var grants = await db.PermissionGrants
             .Where(g => g.IsActive &&
-                ((oid != null && g.ExternalPrincipalId == oid) || (email != null && g.ExternalPrincipalId == email)))
+                ((oid != null && !g.ExternalPrincipalId.Contains("@") && g.ExternalPrincipalId == oid) ||
+                 (email != null && g.ExternalPrincipalId.Contains("@") && g.ExternalPrincipalId == email)))
             .ToListAsync();
 
         foreach (var grant in grants)
