@@ -75,7 +75,12 @@ if [ -n "${TWILIO_AUTH_TOKEN:-}" ]; then
     echo "  note: no status callback URL — sends will report 'queued', delivery is not confirmed."
   fi
 else
-  echo "Twilio SMS: disabled (set TWILIO_AUTH_TOKEN to enable — see docs/twilio-setup.md)."
+  # Deliberately not "disabled": this branch only knows that no credentials came from the
+  # environment. appsettings.Development.json can still enable the channel, and claiming
+  # otherwise here sends you hunting for a problem that does not exist. The API's own
+  # startup output is the authority.
+  echo "Twilio SMS: no credentials in the environment."
+  echo "  (appsettings.Development.json may still enable it — see docs/twilio-setup.md.)"
 fi
 
 echo "Starting OnCall API on http://localhost:5000 with real Entra sign-in (DevAuth off)."

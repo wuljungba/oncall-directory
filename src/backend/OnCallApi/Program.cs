@@ -83,6 +83,15 @@ if (Enabled(builder.Configuration, "Dispatch:Twilio:Enabled"))
         }
     }
 
+    // Say plainly that the channel is on, and which sender it will use. Whether a code call
+    // can text anyone is not something an operator should have to infer from the absence of
+    // a warning, or from a launch script that only inspects environment variables.
+    LoggerFactory.Create(c => c.AddConsole()).CreateLogger("StartupValidation").LogInformation(
+        "Twilio SMS dispatch is ENABLED (sender: {Sender}).",
+        string.IsNullOrWhiteSpace(twilioMessagingService)
+            ? twilioFrom
+            : $"messaging service {twilioMessagingService}");
+
     // No status callback means Twilio's "queued" acknowledgement is the only signal we
     // ever get — an undelivered code-call SMS would look like a success. Warn loudly.
     if (string.IsNullOrWhiteSpace(builder.Configuration["Dispatch:Twilio:StatusCallbackUrl"]))
