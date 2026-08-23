@@ -154,6 +154,7 @@ Production only after staging passes all four.
 | App fails to start after enabling | Placeholder credentials, or `FromNumber` not in E.164 — the startup guard is deliberate |
 | Test connection returns 401 | Account SID / Auth Token mismatch, or the Key Vault reference did not resolve (check the app's Key Vault Secrets User role) |
 | Test connection returns 400 "Missing required header Twilio-Api-Version" | The request lost the `/2010-04-01` path segment — `TwilioClient.ApiBase` must keep its trailing slash, or URI resolution drops it |
+| Send returns Twilio code 572006 | **Trial account.** Trial accounts may only send Twilio's predefined SMS templates, so a code-call alert body is rejected outright. No code change fixes this — the account must be upgraded to a paid account before this channel can carry real alerts. |
 | Send returns Twilio code 21608 | Trial account sending to an unverified number |
 | Send returns Twilio code 21606 | `FromNumber` is not a number you own, or is not SMS-capable |
 | Step stays "sent", never settles | `StatusCallbackUrl` unset or does not match the public URL |
