@@ -923,6 +923,65 @@ using (var scope = app.Services.CreateScope())
             scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
                 .LogWarning(ex, "Could not seed default duty-hour rules (stale schema?). Continuing.");
         }
+
+        // ── Dev user admin seeding (dev mode only) ──
+        // When DevAuth is enabled, automatically grant the dev user SuperAdmin access to the
+        // Test tenant. This allows developers to use the admin features without manual SQL.
+        // Idempotent — only inserts if the record doesn't exist.
+        // When ready to use real Azure AD groups in production, this can be removed.
+        if (app.Environment.IsDevelopment() &&
+            string.Equals(builder.Configuration["DevAuth:Enabled"], "true", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                const string DevUserOid = "00000000-0000-0000-0000-000000000001";
+                const string TestTenantName = "Test";
+
+                // Find or create the Test tenant
+                var testTenant = await db.Tenants.FirstOrDefaultAsync(t => t.Name == TestTenantName);
+                if (testTenant == null)
+                {
+                    testTenant = new OnCallApi.Models.Tenant
+                    {
+                        Name = TestTenantName,
+                        Description = "Development testing tenant",
+                        IsActive = true,
+                        CreatedAt = DateTime.UtcNow,
+                    };
+                    db.Tenants.Add(testTenant);
+                    await db.SaveChangesAsync();
+                    scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                        .LogInformation("Created Test tenant for dev seeding");
+                }
+
+                // Grant dev user SuperAdmin access to Test tenant (idempotent)
+                var existingAdmin = await db.TenantAdmins
+                    .FirstOrDefaultAsync(a => a.TenantId == testTenant.Id && a.AzureAdObjectId == DevUserOid);
+
+                if (existingAdmin == null)
+                {
+                    db.TenantAdmins.Add(new OnCallApi.Models.TenantAdmin
+                    {
+                        TenantId = testTenant.Id,
+                        AzureAdObjectId = DevUserOid,
+                        Role = "SuperAdmin",
+                        IsAutoAssigned = false,
+                        CreatedAt = DateTime.UtcNow,
+                        LastSyncedAt = DateTime.UtcNow,
+                    });
+                    await db.SaveChangesAsync();
+                    scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                        .LogInformation(
+                            "Seeded dev user admin access: SuperAdmin of '{TenantName}' tenant (OID: {Oid})",
+                            TestTenantName, DevUserOid);
+                }
+            }
+            catch (Exception ex)
+            {
+                scope.ServiceProvider.GetRequiredService<ILogger<Program>>()
+                    .LogWarning(ex, "Could not seed dev user admin access (stale schema?). Continuing.");
+            }
+        }
     }
 }
 
