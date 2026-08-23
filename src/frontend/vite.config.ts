@@ -9,6 +9,31 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Separate vendor libraries
+          vendor: [
+            'react',
+            'react-dom',
+            'react-router-dom',
+            '@azure/msal-browser',
+            '@microsoft/signalr',
+          ],
+          // Separate auth providers into their own chunk
+          auth: [
+            '@react-oauth/google',
+          ],
+          // UI library
+          ui: [
+            'lucide-react',
+          ],
+        },
+      },
+    },
+    chunkSizeWarningLimit: 1000,
+  },
   server: {
     port: 5173,
     proxy: {
