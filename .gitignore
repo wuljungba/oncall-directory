@@ -20,3 +20,16 @@ launchSettings.json
 
 publish/
 build_output/
+
+# Screenshots and temporary files
+Screenshot*.png
+*.zip
+.env.*.bak
+
+# Installers and temporary scripts
+*.msi
+*_check.cjs
+cc_check.cjs
+
+# Extracted archives
+oncall-agent-team*/
