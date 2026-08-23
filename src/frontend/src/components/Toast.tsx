@@ -72,11 +72,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     [removeToast]
   )
 
-  // Clean up all timers on unmount
+  // Clean up all timers on unmount. Capture the ref's current Map now so the
+  // cleanup closes over the same instance, not whatever `timersRef.current`
+  // happens to be by the time unmount fires.
   useEffect(() => {
+    const timers = timersRef.current
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer))
-      timersRef.current.clear()
+      timers.forEach((timer) => clearTimeout(timer))
+      timers.clear()
     }
   }, [])
 

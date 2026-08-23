@@ -104,7 +104,7 @@ export class GoogleAuthProvider implements IAuthProvider {
         })
 
         // Trigger the sign-in prompt
-        google.accounts.id.prompt((notification: any) => {
+        google.accounts.id.prompt((notification: PromptMomentNotification) => {
           // If One Tap is suppressed (e.g., 3rd-party cookies blocked or iOS),
           // fall back to a visible standard "Sign in with Google" button. The
           // earlier code rendered into a detached div, so nothing appeared — the

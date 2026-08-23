@@ -149,7 +149,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
         if (departments.length > 0) {
           departmentId = departments[0].id
         } else {
-          const dept = await adminApi.createDepartment({ name: 'Default' } as any)
+          const dept = await adminApi.createDepartment({ name: 'Default' })
           departmentId = dept.id
         }
       } catch {
@@ -162,7 +162,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
         departmentId,
         startDate: new Date().toISOString(),
         endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
-      } as any)
+      })
       setStep3Status('done')
       // Mark onboarding as complete for this tenant
       await settingsApi.upsert(

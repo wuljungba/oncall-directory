@@ -76,7 +76,8 @@ export default function CommandCenterPage() {
     if (['IncidentCreated', 'IncidentUpdated', 'IncidentResolved', 'DispatchStepCompleted'].includes(lastEvent.type)) {
       loadData()
       if (lastEvent.type === 'DispatchStepCompleted') {
-        const p = lastEvent.payload as any
+        // Mirrors the anonymous broadcast shape from CodeCallDispatchService.BroadcastStepUpdate.
+        const p = lastEvent.payload as { stepKey: string; status: string; detail?: string }
         addLogEntry('dispatch', `Step "${p.stepKey}" ${p.status} — ${p.detail || ''}`)
       }
     }
@@ -114,7 +115,7 @@ export default function CommandCenterPage() {
       try {
         tree = await phoneTreesApi.create({
           name: codeDef?.label || codeType,
-          treeType: codeType as any,
+          treeType: codeType as PhoneTree['treeType'],
           procedure: `Standard response procedure for ${codeType}. Customize in Code Call Configuration.`,
         })
         setPhoneTrees(prev => [...prev, tree!])
@@ -140,7 +141,7 @@ export default function CommandCenterPage() {
         notes: notes || undefined,
         requestedByName: requestedByName.trim() || undefined,
         confirm: true,
-      } as any)
+      })
       addLogEntry('dispatch', `Incident #${evt.id} created — ${codeType} @ ${location}${requestedByName.trim() ? ` — reported by ${requestedByName.trim()}` : ''}`)
       setShowActivateModal(false)
     } catch (err) {

@@ -372,7 +372,7 @@ function TreeFormModal({
     try {
       await onSave({
         name: name.trim(),
-        treeType: treeType as any,
+        treeType: treeType as PhoneTree['treeType'],
         procedure: procedure.trim() || undefined,
         fallbackProcedure: fallback.trim() || undefined,
       })

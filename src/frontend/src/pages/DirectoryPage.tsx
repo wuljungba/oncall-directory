@@ -40,7 +40,7 @@ export default function DirectoryPage() {
         setLoading(false)
       })
       .catch(() => setLoading(false))
-  }, [])
+  }, [canPickTenant])
 
   const handleSearch = async (q: string) => {
     setQuery(q)

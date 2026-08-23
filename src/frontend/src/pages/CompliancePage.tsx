@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { AlertTriangle, CheckCircle, Clock, ShieldAlert, Download, ShieldCheck } from 'lucide-react'
 import { complianceApi } from '@/services/api'
 import type { DutyHourRule, DutyHourViolation } from '@/types'
@@ -18,11 +18,7 @@ export default function CompliancePage() {
   const [loading, setLoading] = useState(true)
   const [weeksBack, setWeeksBack] = useState(4)
 
-  useEffect(() => {
-    loadViolations()
-  }, [weeksBack])
-
-  async function loadViolations() {
+  const loadViolations = useCallback(async () => {
     try {
       setLoading(true)
       const from = new Date(Date.now() - weeksBack * 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -35,7 +31,11 @@ export default function CompliancePage() {
       setRules(ruleData)
     } catch { /* ignore */ }
     finally { setLoading(false) }
-  }
+  }, [weeksBack])
+
+  useEffect(() => {
+    loadViolations()
+  }, [loadViolations])
 
   const stats = useMemo(() => ({
     total: violations.length,
