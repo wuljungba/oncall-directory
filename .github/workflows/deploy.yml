@@ -61,8 +61,8 @@ jobs:
         run: npm run build
         working-directory: src/frontend
         env:
-          VITE_AZURE_CLIENT_ID: '96955ba3-c70c-4205-8637-a4b34301480a'
-          VITE_GOOGLE_CLIENT_ID: '445006464104-pcq13k9lkmcol1k5hqktu8arcrv49c5n.apps.googleusercontent.com'
+          VITE_AZURE_CLIENT_ID: ${{ secrets.VITE_AZURE_CLIENT_ID }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_DEV_AUTH: 'false'
 
       - name: Copy frontend to publish
