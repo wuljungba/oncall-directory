@@ -33,6 +33,9 @@ public class DevelopmentAuthenticationHandler : AuthenticationHandler<Authentica
         // Read role cookie — default to admin (all permissions)
         var roleCookie = Request.Cookies["X-Dev-Role"]?.ToLowerInvariant() ?? "admin";
 
+        // Read OID cookie — default to the seeded dev user OID
+        var oidCookie = Request.Cookies["X-Dev-Oid"] ?? "00000000-0000-0000-0000-000000000001";
+
         var roleClaims = roleCookie switch
         {
             "viewer" => new[] { "OnCall.Viewer" },
@@ -46,15 +49,20 @@ public class DevelopmentAuthenticationHandler : AuthenticationHandler<Authentica
             .Distinct()
             .Select(p => new Claim(Permissions.ClaimType, p));
 
+        // Derive name/email from OID: if it's the default seeded user, use dev@local; otherwise
+        // use a deterministic suffix based on the OID to support multiple fresh identities.
+        var isSeededUser = oidCookie == "00000000-0000-0000-0000-000000000001";
+        var name = isSeededUser ? "dev@local" : $"dev-{oidCookie[..8]}@local";
+        var email = name;
+
         var claims = new List<Claim>
         {
-            new(ClaimTypes.Name, "dev@local"),
-            new(ClaimTypes.NameIdentifier, "dev-user-id"),
-            new(ClaimTypes.Email, "dev@local"),
+            new(ClaimTypes.Name, name),
+            new(ClaimTypes.NameIdentifier, isSeededUser ? "dev-user-id" : oidCookie),
+            new(ClaimTypes.Email, email),
             // Claims the JwtValidationMiddleware and HipaaAuditMiddleware expect
             new("scp", "access_as_user"),
-            new("http://schemas.microsoft.com/identity/claims/objectidentifier",
-                "00000000-0000-0000-0000-000000000001"),
+            new("http://schemas.microsoft.com/identity/claims/objectidentifier", oidCookie),
             new("http://schemas.microsoft.com/identity/claims/tenantid",
                 "00000000-0000-0000-0000-000000000002"),
         };

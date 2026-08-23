@@ -456,6 +456,16 @@ export const authApi = {
       '/auth/dev/clear-role',
       { method: 'POST' }
     ),
+  devSetOid: (oid: string) =>
+    fetchApi<{ oid: string; message: string }>(
+      `/auth/dev/set-oid?oid=${oid}`,
+      { method: 'POST' }
+    ),
+  devClearOid: () =>
+    fetchApi<{ oid: string; message: string }>(
+      '/auth/dev/clear-oid',
+      { method: 'POST' }
+    ),
 }
 
 export interface CurrentUserResponse {

@@ -57,4 +57,39 @@ public class DevAuthController : ControllerBase
             message = "Role reset to admin (full permissions). Refresh the page to apply."
         });
     }
+
+    /// <summary>Set the simulated OID (Azure AD object ID) for development testing.</summary>
+    [HttpPost("set-oid")]
+    public IActionResult SetOid([FromQuery] string oid)
+    {
+        if (!Guid.TryParse(oid, out _))
+            return BadRequest(new { error = $"Invalid OID '{oid}'. Must be a valid GUID (e.g., 00000000-0000-0000-0000-000000000099)." });
+
+        var cookieOptions = new CookieOptions
+        {
+            HttpOnly = true,
+            SameSite = SameSiteMode.Lax,
+            Expires = DateTimeOffset.UtcNow.AddHours(1),
+            Secure = false,
+        };
+        Response.Cookies.Append("X-Dev-Oid", oid, cookieOptions);
+
+        return Ok(new
+        {
+            oid = oid,
+            message = $"OID set to '{oid}'. Refresh the page to apply."
+        });
+    }
+
+    /// <summary>Clear the simulated OID and reset to the seeded dev user.</summary>
+    [HttpPost("clear-oid")]
+    public IActionResult ClearOid()
+    {
+        Response.Cookies.Delete("X-Dev-Oid");
+        return Ok(new
+        {
+            oid = "00000000-0000-0000-0000-000000000001",
+            message = "OID reset to seeded dev user. Refresh the page to apply."
+        });
+    }
 }
