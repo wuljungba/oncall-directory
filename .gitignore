@@ -33,3 +33,7 @@ cc_check.cjs
 
 # Extracted archives
 oncall-agent-team*/
+
+# Playwright test results
+src/frontend/test-results/
+src/frontend/playwright-report/
