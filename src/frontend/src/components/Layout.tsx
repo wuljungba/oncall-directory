@@ -8,6 +8,7 @@ import {
   Settings,
   Clock,
   ShieldCheck,
+  AlertTriangle,
   LogOut,
   Menu,
   X,
@@ -29,7 +30,7 @@ const navItems = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions } = useAuth()
+  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions, permissionsUnavailable } = useAuth()
   const { isConnected } = useSignalR()
   const { showOnboarding, checking, dismiss } = useOnboarding()
   const visibleNavItems = (isAdmin || canAdminScoped)
@@ -40,7 +41,12 @@ export default function Layout() {
   // tokens carry no app roles, so a first-time sign-in has access to nothing until an
   // admin grants it. Every page would fill with failed requests, which reads as "the app
   // is broken" rather than "you need to be granted access".
-  const awaitingProvisioning = !isLoading && permissions.length === 0
+  //
+  // A FAILED /api/auth/me is a different thing entirely and must not be reported as a
+  // provisioning gap: it sends the user to chase an administrator over what is actually
+  // a stopped server or a dropped network.
+  const awaitingProvisioning = !isLoading && permissions.length === 0 && !permissionsUnavailable
+  const serverUnreachable = !isLoading && permissionsUnavailable
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
@@ -136,7 +142,11 @@ export default function Layout() {
         </header>
 
         <main role="main" className="flex-1 p-6 overflow-auto" aria-label="Main content">
-          {awaitingProvisioning ? <AwaitingProvisioning email={user?.email} /> : <Outlet />}
+          {serverUnreachable
+            ? <ServerUnreachable />
+            : awaitingProvisioning
+              ? <AwaitingProvisioning email={user?.email} />
+              : <Outlet />}
         </main>
       </div>
     </div>
@@ -150,6 +160,38 @@ export default function Layout() {
  * until an administrator grants it (see docs/onboarding-standard.md §2). Saying so beats
  * rendering a dashboard of 403s.
  */
+/**
+ * Shown when /api/auth/me could not be reached.
+ *
+ * This used to render as "access pending", which blamed the administrator for what is
+ * usually a stopped App Service, an expired deployment slot, or a dropped connection —
+ * sending the user to ask for permissions they may already hold.
+ */
+function ServerUnreachable() {
+  return (
+    <div className="max-w-xl mx-auto mt-16 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center">
+      <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-600/10 mb-4">
+        <AlertTriangle className="w-6 h-6 text-red-500" />
+      </div>
+      <h2 className="text-lg font-medium">Can&apos;t reach the server</h2>
+      <p className="text-sm text-gray-400 mt-3">
+        You are signed in, but the app could not load your access. This is a connection
+        problem, not a permissions one — your account may be perfectly fine.
+      </p>
+      <p className="text-xs text-gray-600 mt-4">
+        If this persists, the API may be stopped or still starting up. Ask whoever runs the
+        deployment to check it before requesting any permission changes.
+      </p>
+      <button
+        onClick={() => window.location.reload()}
+        className="mt-5 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
+      >
+        Try again
+      </button>
+    </div>
+  )
+}
+
 function AwaitingProvisioning({ email }: { email?: string }) {
   return (
     <div className="max-w-xl mx-auto mt-16 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center">

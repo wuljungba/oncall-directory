@@ -15,6 +15,13 @@ interface AuthState {
   refreshToken: () => Promise<string | null>
   userRoles: string[]
 
+  /**
+   * True when /api/auth/me could not be reached at all (server stopped, network down,
+   * proxy error). Distinct from "reached it and was granted nothing": an unreachable
+   * backend is not a provisioning problem and must not be reported as one.
+   */
+  permissionsUnavailable: boolean
+
   // Granular permissions (from backend /api/auth/me)
   isAdmin: boolean
   canSchedule: boolean
@@ -60,6 +67,7 @@ function useAuthState(): AuthState {
     DEV_AUTH ? 'microsoft' : null,
   )
   const [permissions, setPermissions] = useState<string[]>(DEV_AUTH ? ALL_PERMISSIONS : [])
+  const [permissionsUnavailable, setPermissionsUnavailable] = useState(false)
   const [tenantIds, setTenantIds] = useState<number[]>([])
   const [tenantRoles, setTenantRoles] = useState<Record<string, string>>({})
   const [employeeId, setEmployeeId] = useState<string | null>(null)
@@ -86,6 +94,7 @@ function useAuthState(): AuthState {
   // Shared handler for processing auth/me response
   const handleAuthResponse = useCallback((res: { permissions: string[]; tenantIds?: number[]; tenantRoles?: Record<string, string>; employeeId?: string | null }) => {
     setPermissions(res.permissions)
+    setPermissionsUnavailable(false)
     if (res.tenantIds) setTenantIds(res.tenantIds)
     if (res.tenantRoles) setTenantRoles(res.tenantRoles)
     setEmployeeId(res.employeeId ?? null)
@@ -141,7 +150,11 @@ function useAuthState(): AuthState {
             handleAuthResponse(res)
           }
         } catch {
+          // The call failed, so we do not know what this account may do. Recording that
+          // separately stops Layout telling the user their administrator has not granted
+          // them access when in fact the API never answered.
           setPermissions([])
+          setPermissionsUnavailable(true)
         } finally {
           setIsLoading(false)
         }
@@ -179,7 +192,7 @@ function useAuthState(): AuthState {
         // Fetch permissions from backend
         authApi.me()
           .then(res => handleAuthResponse(res))
-          .catch(() => setPermissions([]))
+          .catch(() => { setPermissions([]); setPermissionsUnavailable(true) })
       }
     } catch (error) {
       console.error('[useAuth] Sign in failed:', error)
@@ -226,6 +239,7 @@ function useAuthState(): AuthState {
     isAdmin: perms.includes('Admin.Full'),
     canSchedule: perms.includes('Schedule.Write'),
     permissions: perms,
+    permissionsUnavailable,
     canScheduleRead: perms.includes('Schedule.Read'),
     canScheduleWrite: perms.includes('Schedule.Write'),
     canDirectoryRead: perms.includes('Directory.Read'),
