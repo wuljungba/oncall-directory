@@ -64,17 +64,14 @@ public class DevelopmentAuthenticationHandler : AuthenticationHandler<Authentica
         // Add permission claims
         claims.AddRange(permissionClaims);
 
-        // Dev tenant claims — simulate being admin of tenant ID 1 ("Main Hospital")
-        // When the role is "admin", also grant Tenant.Manage for super admin testing
-        if (roleCookie == "admin")
-        {
-            claims.Add(new Claim("TenantId:1", "SuperAdmin"));
-        }
-        else
-        {
-            // Sub-admin roles get scoped to tenant 1 as DepartmentAdmin
-            claims.Add(new Claim("TenantId:1", "DepartmentAdmin"));
-        }
+        // Dev tenant claims — by default, grant no tenant-scoped admin to dev auth.
+        // The TenantClaimsMiddleware will look up TenantAdmin database records matching this user's
+        // Azure AD object ID (00000000-0000-0000-0000-000000000001) and add the appropriate scoped claims.
+        //
+        // To grant dev super admin to a specific tenant, create a TenantAdmin row in the database:
+        //   TenantId: <your-tenant-id>, AzureAdObjectId: "00000000-0000-0000-0000-000000000001", Role: "SuperAdmin"
+        //
+        // For one-off testing of different roles, use the X-Dev-Role cookie (set via POST /api/auth/dev/set-role).
 
         var identity = new ClaimsIdentity(claims, SchemeName);
         var principal = new ClaimsPrincipal(identity);
