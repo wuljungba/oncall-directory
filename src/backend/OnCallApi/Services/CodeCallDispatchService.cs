@@ -318,11 +318,39 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                     await RecordStepAndNotify(evt.Id, "sip_fallback", "failed",
                         "SIP fallback not configured — manual dispatch required");
                 }
+
+                if (successCount == 0)
+                {
+                    // Every configured channel failed AND the fallback did not carry it, so
+                    // this code call reached NOBODY — operationally identical to the
+                    // no-channels-configured case above, which is loud about it. This branch
+                    // used to end with only per-channel "failed" steps and an Information-level
+                    // "Dispatch pipeline complete", wording that reads like success for a
+                    // dispatch that contacted no one. Give it the same aggregate alarm and the
+                    // same explicit operator instruction.
+                    const string nobodyReached =
+                        "DISPATCH FAILED — every dispatch channel failed, so nobody was "
+                        + "contacted. Escalate by phone now.";
+
+                    await RecordStepAndNotify(evt.Id, "acknowledged", "failed", nobodyReached);
+
+                    // Deliberately NOT acknowledged: the event stays active and unacknowledged
+                    // so it keeps demanding attention in the Command Center.
+                }
             }
 
-            _logger.LogInformation(
-                "Dispatch pipeline complete for event {EventId}: {Success}/{Total} channels succeeded",
-                evt.Id, successCount, totalChannels);
+            if (totalChannels > 0 && successCount == 0)
+            {
+                _logger.LogError(
+                    "Dispatch pipeline finished for event {EventId}: 0/{Total} channels succeeded — nobody contacted",
+                    evt.Id, totalChannels);
+            }
+            else
+            {
+                _logger.LogInformation(
+                    "Dispatch pipeline complete for event {EventId}: {Success}/{Total} channels succeeded",
+                    evt.Id, successCount, totalChannels);
+            }
         }
         catch (Exception ex)
         {

@@ -30,6 +30,11 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         return await _db.PhoneTreeEvents
             .Include(e => e.InitiatedBy)
             .Include(e => e.Participants).ThenInclude(p => p.Employee)
+            // DispatchSteps are what say whether anyone was actually reached. Without this
+            // include the single-event endpoint returned an empty dispatch timeline while
+            // the active/resolved list endpoints returned a populated one, so drilling into
+            // a specific incident hid the very failures the operator opened it to see.
+            .Include(e => e.DispatchSteps)
             .FirstOrDefaultAsync(e => e.Id == eventId);
     }
 

@@ -126,7 +126,7 @@ public class DutyHourService : IDutyHourService
             .ToListAsync();
         _db.DutyHourViolations.RemoveRange(existing);
         _db.DutyHourViolations.AddRange(violations);
-        await _db.SaveChangesAsync();
+        await SaveReplacingViolationsAsync(employeeId);
 
         return await _db.DutyHourViolations
             .Include(v => v.Employee).ThenInclude(e => e!.Department)
@@ -134,6 +134,50 @@ public class DutyHourService : IDutyHourService
             .Where(v => v.EmployeeId == employeeId)
             .OrderByDescending(v => v.ViolatedAt)
             .ToListAsync();
+    }
+
+    /// <summary>
+    /// Commits the "delete the un-resolved set, insert the freshly computed one" write.
+    ///
+    /// Compliance checking is triggered by a plain GET (/api/compliance/check), so two
+    /// overlapping reads race each other: both load the same un-resolved rows, the first
+    /// commits its deletes, and the second then issues DELETEs for rows that are already
+    /// gone. EF reports that as DbUpdateConcurrencyException ("expected to affect 1 row(s),
+    /// but actually affected 0") and the request 500s — opening the Compliance page in two
+    /// tabs, or reloading while the first request was still in flight, was enough.
+    ///
+    /// A row the other writer already deleted is not a conflict worth failing on: the
+    /// desired end state (that row gone) has been reached. Detach those entries and commit
+    /// the inserts. ExecuteDeleteAsync would be the tidier fix but it is relational-only,
+    /// and the test suite runs on the InMemory provider.
+    /// </summary>
+    private async Task SaveReplacingViolationsAsync(Guid employeeId)
+    {
+        const int maxAttempts = 3;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await _db.SaveChangesAsync();
+                return;
+            }
+            catch (DbUpdateConcurrencyException ex) when (attempt < maxAttempts)
+            {
+                var vanished = ex.Entries.Where(e => e.State == EntityState.Deleted).ToList();
+
+                // Only deleted-row conflicts are benign. Anything else is a real conflict
+                // and must not be silently retried into a different outcome.
+                if (vanished.Count == 0 || vanished.Count != ex.Entries.Count) throw;
+
+                foreach (var entry in vanished) entry.State = EntityState.Detached;
+
+                _logger.LogDebug(
+                    "Concurrent compliance check already removed {Count} un-resolved violation(s) "
+                    + "for employee {EmployeeId}; continuing (attempt {Attempt})",
+                    vanished.Count, employeeId, attempt);
+            }
+        }
     }
 
     public async Task<List<DutyHourViolation>> CheckAllComplianceAsync(DateTime? from = null, DateTime? to = null, int? departmentId = null)

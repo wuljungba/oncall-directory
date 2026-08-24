@@ -164,9 +164,22 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
         endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
       })
       setStep3Status('done')
-      // Mark onboarding as complete for this tenant
-      await settingsApi.upsert(
-        onboardingCompletedKey(activeTenantId), 'true', 'Onboarding wizard completed')
+
+      // Mark onboarding as complete for this tenant. Isolated from the schedule
+      // creation above on purpose: PUT /api/settings/{key} requires Admin.Full, which a
+      // tenant's FIRST admin does not have (they hold Admin.Scoped). Leaving this inside
+      // the outer try meant a 403 here was reported as "Could not create schedule" —
+      // after the schedule had in fact been created — and skipped onComplete(), so the
+      // wizard reopened and every retry created another duplicate schedule.
+      // Same tolerance handleSkip() already applies; onComplete() records the dismissal
+      // locally so the wizard does not come back.
+      try {
+        await settingsApi.upsert(
+          onboardingCompletedKey(activeTenantId), 'true', 'Onboarding wizard completed')
+      } catch {
+        // Setup succeeded; only the server-side "already onboarded" flag did not stick.
+      }
+
       addToast({ type: 'success', title: 'All Set!', description: 'Your first schedule is ready. Welcome to OnCall!' })
       onComplete()
     } catch {
