@@ -62,6 +62,11 @@ jobs:
         working-directory: src/frontend
         env:
           VITE_AZURE_CLIENT_ID: ${{ secrets.VITE_AZURE_CLIENT_ID }}
+          # Without this the build falls back to the tenant hardcoded in
+          # microsoftAuthProvider.ts, so a deployed frontend can point at a different
+          # tenant than the backend validates against -- silently, and only for Entra
+          # sign-in. Unset is safe: an empty value falls through to that same fallback.
+          VITE_AZURE_AUTHORITY: ${{ secrets.VITE_AZURE_AUTHORITY }}
           VITE_GOOGLE_CLIENT_ID: ${{ secrets.VITE_GOOGLE_CLIENT_ID }}
           VITE_DEV_AUTH: 'false'
 
