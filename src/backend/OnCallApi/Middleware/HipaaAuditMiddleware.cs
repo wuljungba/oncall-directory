@@ -38,6 +38,10 @@ public class HipaaAuditMiddleware
         "/api/audit",
         "/api/integrations",
         "/api/public/ehr",
+        // Sending an SMS to a clinician and editing where a code call is dispatched to are
+        // both part of the code-call record an auditor would ask about.
+        "/api/messaging",
+        "/api/code-call-locations",
     ];
 
     public HipaaAuditMiddleware(RequestDelegate next, ILogger<HipaaAuditMiddleware> logger)

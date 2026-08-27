@@ -11,6 +11,8 @@ namespace OnCallApi.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/auth/dev")]
+[DevAuthOnly]
+[ApiExplorerSettings(IgnoreApi = true)]
 public class DevAuthController : ControllerBase
 {
     /// <summary>Set the simulated role for development testing.</summary>

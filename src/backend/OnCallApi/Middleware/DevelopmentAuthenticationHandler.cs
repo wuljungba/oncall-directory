@@ -28,8 +28,25 @@ public class DevelopmentAuthenticationHandler : AuthenticationHandler<Authentica
         UrlEncoder encoder)
         : base(options, logger, encoder) { }
 
+    // Logged once per process, not per request: the point is to be noticed at the start of
+    // a session, not to drown the log.
+    private static int _bearerIgnoredLogged;
+
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        // A real sign-in sends a bearer token that this handler throws away and replaces
+        // with a fake admin identity. Nothing used to say so, which is exactly how a
+        // brand-new Google account appeared to be granted "All Tenants" super admin.
+        if (Request.Headers.ContainsKey("Authorization")
+            && Interlocked.Exchange(ref _bearerIgnoredLogged, 1) == 0)
+        {
+            Logger.LogWarning(
+                "DEV AUTH: an Authorization header was presented and IGNORED. Every request is "
+                + "being authenticated from the X-Dev-Role/X-Dev-Oid cookies instead, defaulting "
+                + "to full admin. Real sign-in is NOT being exercised — set DevAuth:Enabled=false "
+                + "to test it.");
+        }
+
         // Read role cookie — default to admin (all permissions)
         var roleCookie = Request.Cookies["X-Dev-Role"]?.ToLowerInvariant() ?? "admin";
 
@@ -45,7 +62,7 @@ public class DevelopmentAuthenticationHandler : AuthenticationHandler<Authentica
 
         // Build permission claims from the active roles
         var permissionClaims = roleClaims
-            .SelectMany(role => Permissions.RoleToPermissions.TryGetValue(role, out var perms) ? perms : [])
+            .SelectMany(role => Permissions.DevRoleToPermissions.TryGetValue(role, out var perms) ? perms : [])
             .Distinct()
             .Select(p => new Claim(Permissions.ClaimType, p));
 

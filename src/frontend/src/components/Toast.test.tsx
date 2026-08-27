@@ -1,77 +1,73 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import Toast from './Toast'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { render, screen, act } from '@testing-library/react'
+import { ToastProvider, useToast } from './Toast'
+
+/** Renders a button that raises the given toast when clicked. */
+function harness(toast: Parameters<ReturnType<typeof useToast>['addToast']>[0]) {
+  function Raise() {
+    const { addToast } = useToast()
+    return <button onClick={() => addToast(toast)}>raise</button>
+  }
+  return render(
+    <ToastProvider>
+      <Raise />
+    </ToastProvider>
+  )
+}
+
+function raise() {
+  act(() => {
+    screen.getByRole('button', { name: 'raise' }).click()
+  })
+}
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('Toast', () => {
-  it('should render toast message', () => {
-    render(
-      <Toast
-        message="Test message"
-        type="success"
-        onClose={() => {}}
-      />
-    )
+  it('renders the title and description', () => {
+    harness({ type: 'success', title: 'Saved', description: 'Schedule updated' })
+    raise()
 
-    expect(screen.getByText('Test message')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText('Saved')).toBeInTheDocument()
+    expect(screen.getByText('Schedule updated')).toBeInTheDocument()
   })
 
-  it('should apply success styling', () => {
-    const { container } = render(
-      <Toast
-        message="Success"
-        type="success"
-        onClose={() => {}}
-      />
-    )
-
-    const toast = container.firstChild
-    expect(toast).toHaveClass('bg-green-600/10')
+  it('styles a success toast differently from an error toast', () => {
+    harness({ type: 'success', title: 'Saved' })
+    raise()
+    expect(screen.getByRole('alert').className).toContain('bg-green-600/10')
   })
 
-  it('should apply error styling', () => {
-    const { container } = render(
-      <Toast
-        message="Error"
-        type="error"
-        onClose={() => {}}
-      />
-    )
-
-    const toast = container.firstChild
-    expect(toast).toHaveClass('bg-red-600/10')
+  it('applies error styling', () => {
+    harness({ type: 'error', title: 'Failed' })
+    raise()
+    expect(screen.getByRole('alert').className).toContain('bg-red-600/10')
   })
 
-  it('should auto-dismiss after 5 seconds', async () => {
-    const onClose = vi.fn()
-    const { unmount } = render(
-      <Toast
-        message="Test"
-        type="info"
-        onClose={onClose}
-      />
-    )
+  it('auto-dismisses after the default duration', () => {
+    vi.useFakeTimers()
+    harness({ type: 'info', title: 'Heads up' })
+    raise()
+    expect(screen.getByRole('alert')).toBeInTheDocument()
 
-    await waitFor(
-      () => expect(onClose).toHaveBeenCalled(),
-      { timeout: 6000 }
-    )
+    act(() => {
+      vi.advanceTimersByTime(5000)
+    })
 
-    unmount()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('should dismiss on close button click', async () => {
-    const onClose = vi.fn()
-    render(
-      <Toast
-        message="Test"
-        type="info"
-        onClose={onClose}
-      />
-    )
+  it('dismisses when the close button is clicked', () => {
+    harness({ type: 'info', title: 'Heads up' })
+    raise()
 
-    const closeButton = screen.getByRole('button')
-    closeButton.click()
+    act(() => {
+      screen.getByRole('button', { name: 'Dismiss' }).click()
+    })
 
-    expect(onClose).toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

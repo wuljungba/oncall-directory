@@ -4,7 +4,10 @@ import { Upload, X, AlertTriangle, Check, FileText } from 'lucide-react'
 interface ImportResult {
   totalRows: number
   imported: number
+  /** The errors shown to the user. Capped by the server; see totalErrors. */
   errors: string[]
+  /** How many errors there were in total, including any the list omits. */
+  totalErrors?: number
   isValid: boolean
 }
 
@@ -25,7 +28,7 @@ export default function ImportModal({
   onClose,
   title,
   description,
-  accept = '.csv',
+  accept = '.csv,.xlsx',
   onImport,
   onValidate,
   extra,
@@ -75,15 +78,45 @@ export default function ImportModal({
     }
   }
 
+  /**
+   * Accepts a file, or says why not.
+   *
+   * A dropped file that was not a .csv used to be discarded in silence — the drop zone
+   * simply stayed empty and nothing explained it. Anything the server can read is accepted
+   * here; the server decides the rest by content, since an extension proves nothing.
+   */
+  function acceptFile(candidate: File) {
+    const name = candidate.name.toLowerCase()
+    if (!name.endsWith('.csv') && !name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+      setFile(null)
+      setResult(null)
+      setError(`"${candidate.name}" is not a spreadsheet. Upload a .csv or .xlsx file.`)
+      return
+    }
+
+    if (name.endsWith('.xls')) {
+      setFile(null)
+      setResult(null)
+      setError(
+        'Legacy .xls workbooks are not supported. Open it in Excel and choose ' +
+        'File > Save As > Excel Workbook (.xlsx), then upload that.',
+      )
+      return
+    }
+
+    setFile(candidate)
+    setResult(null)
+    setError(null)
+  }
+
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     const droppedFile = e.dataTransfer.files[0]
-    if (droppedFile && droppedFile.name.endsWith('.csv')) {
-      setFile(droppedFile)
-      setResult(null)
-      setError(null)
-    }
+    if (droppedFile) acceptFile(droppedFile)
   }
+
+  // The real total, not the length of a list the server may have capped.
+  const errorCount = result ? result.totalErrors ?? result.errors.length : 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -124,11 +157,7 @@ export default function ImportModal({
                 className="hidden"
                 onChange={(e) => {
                   const f = e.target.files?.[0]
-                  if (f) {
-                    setFile(f)
-                    setResult(null)
-                    setError(null)
-                  }
+                  if (f) acceptFile(f)
                 }}
               />
               {file ? (
@@ -142,7 +171,7 @@ export default function ImportModal({
               ) : (
                 <>
                   <Upload className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                  <p className="text-sm text-gray-500">Drop a CSV file here, or click to browse</p>
+                  <p className="text-sm text-gray-500">Drop a CSV or Excel (.xlsx) file here, or click to browse</p>
                 </>
               )}
             </div>
@@ -171,7 +200,7 @@ export default function ImportModal({
                 )}
                 <span>
                   {result.totalRows} rows processed, {result.imported} imported
-                  {result.errors.length > 0 && `, ${result.errors.length} errors`}
+                  {errorCount > 0 && `, ${errorCount} ${errorCount === 1 ? 'error' : 'errors'}`}
                 </span>
               </div>
               {result.errors.length > 0 && (

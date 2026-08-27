@@ -45,6 +45,17 @@ public class LocalJwtService
         var signingKey = GetSigningKey();
         var expiryMinutes = _configuration.GetValue<int>("Authentication:Local:TokenExpiryMinutes", 1440);
 
+        // HIPAA requires automatic logoff after inactivity, and Hipaa:SessionTimeoutMinutes
+        // was configured but read by nothing at all — the setting was decorative, and a
+        // session lived for the token's full 24 hours regardless. A client-side idle timer
+        // alone would not fix that, since a captured token can be replayed from a script;
+        // the token lifetime is the part a hostile client cannot skip, so it is capped here.
+        var sessionTimeout = _configuration.GetValue<int>("Hipaa:SessionTimeoutMinutes", 0);
+        if (sessionTimeout > 0 && sessionTimeout < expiryMinutes)
+        {
+            expiryMinutes = sessionTimeout;
+        }
+
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, $"local-{userId}"),

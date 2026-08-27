@@ -48,7 +48,7 @@ public class DutyHourServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new DutyHourService(db, NullLogger<DutyHourService>.Instance);
+        var service = new DutyHourService(db, TestTenantScopes.Unrestricted, NullLogger<DutyHourService>.Instance);
         var result = await service.CheckComplianceAsync(employeeId);
 
         result.Should().BeEmpty();
@@ -59,7 +59,7 @@ public class DutyHourServiceTests
     {
         var db = CreateDbContext();
 
-        var service = new DutyHourService(db, NullLogger<DutyHourService>.Instance);
+        var service = new DutyHourService(db, TestTenantScopes.Unrestricted, NullLogger<DutyHourService>.Instance);
         var result = await service.CheckAllComplianceAsync();
 
         result.Should().BeEmpty();
@@ -70,7 +70,7 @@ public class DutyHourServiceTests
     {
         var db = CreateDbContext();
 
-        var service = new DutyHourService(db, NullLogger<DutyHourService>.Instance);
+        var service = new DutyHourService(db, TestTenantScopes.Unrestricted, NullLogger<DutyHourService>.Instance);
         var result = await service.GetRulesAsync();
 
         result.Should().HaveCount(1);
@@ -92,7 +92,7 @@ public class DutyHourServiceTests
         });
         await db.SaveChangesAsync();
 
-        var service = new DutyHourService(db, NullLogger<DutyHourService>.Instance);
+        var service = new DutyHourService(db, TestTenantScopes.Unrestricted, NullLogger<DutyHourService>.Instance);
         var result = await service.GetHoursWorkedAsync(employeeId, DateTime.UtcNow.AddDays(-7), DateTime.UtcNow);
 
         result.Should().Be(0);
@@ -128,7 +128,7 @@ public class DutyHourServiceTests
         }
         await db.SaveChangesAsync();
 
-        var service = new DutyHourService(db, NullLogger<DutyHourService>.Instance);
+        var service = new DutyHourService(db, TestTenantScopes.Unrestricted, NullLogger<DutyHourService>.Instance);
         var result = await service.CheckComplianceAsync(employeeId);
 
         result.Should().ContainSingle(v => v.Description.Contains("80"));
@@ -162,7 +162,7 @@ public class DutyHourServiceTests
         db.Shifts.Add(new Shift { EmployeeId = employeeId, StartTime = day.AddHours(12), EndTime = day.AddHours(24), Status = "swapped" });
         await db.SaveChangesAsync();
 
-        var service = new DutyHourService(db, NullLogger<DutyHourService>.Instance);
+        var service = new DutyHourService(db, TestTenantScopes.Unrestricted, NullLogger<DutyHourService>.Instance);
         var result = await service.GetHoursWorkedAsync(employeeId, DateTime.UtcNow.AddDays(-1), DateTime.UtcNow.AddDays(1));
 
         // Only the "scheduled" shift counts (12h); the gap/swapped ones are rest.

@@ -19,6 +19,7 @@ public class ScheduleController : ControllerBase
     private readonly IHubContext<OnCallNotificationHub> _hub;
     private readonly AppDbContext _db;
     private readonly ITenantContextService _tenantContext;
+    private readonly ITenantBroadcaster _broadcast;
     private readonly ILogger<ScheduleController> _logger;
 
     public ScheduleController(
@@ -26,29 +27,22 @@ public class ScheduleController : ControllerBase
         IHubContext<OnCallNotificationHub> hub,
         AppDbContext db,
         ITenantContextService tenantContext,
+        ITenantBroadcaster broadcast,
         ILogger<ScheduleController> logger)
     {
         _scheduleService = scheduleService;
         _hub = hub;
         _db = db;
         _tenantContext = tenantContext;
+        _broadcast = broadcast;
         _logger = logger;
     }
 
-    private async Task BroadcastToTenantGroupAsync(int? tenantId, string method, object arg)
-    {
-        if (tenantId.HasValue)
-        {
-            await _hub.Clients.Group($"tenant-{tenantId.Value}").SendAsync(method, arg);
-        }
-        else
-        {
-            _logger.LogWarning(
-                "Could not resolve tenantId for notification '{Method}', broadcasting to all clients",
-                method);
-            await _hub.Clients.All.SendAsync(method, arg);
-        }
-    }
+    // Delegates to the shared broadcaster. This used to fall back to Clients.All when the
+    // tenant could not be resolved, which leaked one customer's schedule activity to every
+    // other customer; the broadcaster drops and reports instead.
+    private Task BroadcastToTenantGroupAsync(int? tenantId, string method, object arg)
+        => _broadcast.ToTenantAsync(tenantId, method, arg);
 
     /// <summary>Get all schedules, optionally filtered by department.</summary>
     [HttpGet]
@@ -119,7 +113,8 @@ public class ScheduleController : ControllerBase
 
         var shifts = await _scheduleService.GenerateShiftsAsync(scheduleId, weeks);
 
-        await _hub.Clients.All.SendAsync("ShiftsGenerated", new { scheduleId, count = shifts.Count });
+        await BroadcastToTenantGroupAsync(
+            await _broadcast.TenantForScheduleAsync(scheduleId), "ShiftsGenerated", new { scheduleId, count = shifts.Count });
         return Ok(shifts);
     }
 
@@ -138,7 +133,8 @@ public class ScheduleController : ControllerBase
         var shift = await _scheduleService.AssignShiftAsync(
             scheduleId, request.EmployeeId, request.StartTime, request.EndTime, request.Tier);
 
-        await _hub.Clients.All.SendAsync("ShiftAssigned", shift);
+        await BroadcastToTenantGroupAsync(
+            await _broadcast.TenantForScheduleAsync(scheduleId), "ShiftAssigned", shift);
         return CreatedAtAction(nameof(GetShifts), new { scheduleId }, shift);
     }
 
@@ -194,7 +190,8 @@ public class ScheduleController : ControllerBase
         var swap = await _scheduleService.RequestSwapAsync(
             request.ShiftId, me.Value, request.ReplacementUserId, request.Reason ?? string.Empty);
 
-        await _hub.Clients.All.SendAsync("SwapRequested", swap);
+        await BroadcastToTenantGroupAsync(
+            await _broadcast.TenantForShiftAsync(swap.OriginalShiftId), "SwapRequested", swap);
         return CreatedAtAction(nameof(RequestSwap), swap);
     }
 
@@ -208,7 +205,8 @@ public class ScheduleController : ControllerBase
 
         var swap = await _scheduleService.ApproveSwapAsync(id, approverId.Value);
 
-        await _hub.Clients.All.SendAsync("SwapApproved", swap);
+        await BroadcastToTenantGroupAsync(
+            await _broadcast.TenantForShiftAsync(swap.OriginalShiftId), "SwapApproved", swap);
         return swap;
     }
 
@@ -244,7 +242,8 @@ public class ScheduleController : ControllerBase
         timeOff.EmployeeId = employeeId.Value;
 
         var created = await _scheduleService.RequestTimeOffAsync(timeOff);
-        await _hub.Clients.All.SendAsync("TimeOffUpdated", created);
+        await BroadcastToTenantGroupAsync(
+            await _broadcast.TenantForEmployeeAsync(created.EmployeeId), "TimeOffUpdated", created);
         return CreatedAtAction(nameof(GetTimeOff), new { employeeId = timeOff.EmployeeId }, created);
     }
 
@@ -257,7 +256,8 @@ public class ScheduleController : ControllerBase
             var requesterId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
             if (!requesterId.HasValue) return BadRequest(new { error = "No employee profile is linked to your account." });
             var updated = await _scheduleService.UpdateTimeOffAsync(id, request, requesterId.Value);
-            await _hub.Clients.All.SendAsync("TimeOffUpdated", updated);
+            await BroadcastToTenantGroupAsync(
+                await _broadcast.TenantForEmployeeAsync(updated.EmployeeId), "TimeOffUpdated", updated);
             return Ok(updated);
         }
         catch (KeyNotFoundException) { return NotFound(); }
@@ -273,7 +273,8 @@ public class ScheduleController : ControllerBase
             var requesterId = await _tenantContext.GetCurrentEmployeeIdAsync(User);
             if (!requesterId.HasValue) return BadRequest(new { error = "No employee profile is linked to your account." });
             await _scheduleService.CancelTimeOffAsync(id, requesterId.Value);
-            await _hub.Clients.All.SendAsync("TimeOffUpdated", new { id, action = "cancelled" });
+            await BroadcastToTenantGroupAsync(
+                await _broadcast.TenantForEmployeeAsync(requesterId.Value), "TimeOffUpdated", new { id, action = "cancelled" });
             return NoContent();
         }
         catch (KeyNotFoundException) { return NotFound(); }
@@ -292,7 +293,8 @@ public class ScheduleController : ControllerBase
             var (allowed, approverId) = await ResolveApproverAsync(id);
             if (!allowed) return Forbid();
             var approved = await _scheduleService.ApproveTimeOffAsync(id, approverId, request?.Reason);
-            await _hub.Clients.All.SendAsync("TimeOffUpdated", approved);
+            await BroadcastToTenantGroupAsync(
+                await _broadcast.TenantForEmployeeAsync(approved.EmployeeId), "TimeOffUpdated", approved);
             return Ok(approved);
         }
         catch (KeyNotFoundException) { return NotFound(); }
@@ -311,7 +313,8 @@ public class ScheduleController : ControllerBase
             var (allowed, approverId) = await ResolveApproverAsync(id);
             if (!allowed) return Forbid();
             var denied = await _scheduleService.DenyTimeOffAsync(id, approverId, request?.Reason);
-            await _hub.Clients.All.SendAsync("TimeOffUpdated", denied);
+            await BroadcastToTenantGroupAsync(
+                await _broadcast.TenantForEmployeeAsync(denied.EmployeeId), "TimeOffUpdated", denied);
             return Ok(denied);
         }
         catch (KeyNotFoundException) { return NotFound(); }

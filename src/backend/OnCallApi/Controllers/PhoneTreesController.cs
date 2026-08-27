@@ -13,12 +13,12 @@ namespace OnCallApi.Controllers;
 public class PhoneTreesController : ControllerBase
 {
     private readonly IDirectoryService _directoryService;
-    private readonly IHubContext<OnCallNotificationHub> _hub;
+    private readonly ITenantBroadcaster _broadcast;
 
-    public PhoneTreesController(IDirectoryService directoryService, IHubContext<OnCallNotificationHub> hub)
+    public PhoneTreesController(IDirectoryService directoryService, ITenantBroadcaster broadcast)
     {
         _directoryService = directoryService;
-        _hub = hub;
+        _broadcast = broadcast;
     }
 
     [HttpGet]
@@ -40,7 +40,8 @@ public class PhoneTreesController : ControllerBase
     public async Task<ActionResult<PhoneTree>> Create(PhoneTree tree)
     {
         var created = await _directoryService.CreatePhoneTreeAsync(tree);
-        await _hub.Clients.All.SendAsync("PhoneTreeCreated", created);
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForPhoneTreeAsync(created.Id), "PhoneTreeCreated", created, safetyCritical: true);
         return CreatedAtAction(nameof(Get), new { id = created.Id }, created);
     }
 
@@ -50,7 +51,8 @@ public class PhoneTreesController : ControllerBase
     {
         if (id != tree.Id) return BadRequest();
         var updated = await _directoryService.UpdatePhoneTreeAsync(tree);
-        await _hub.Clients.All.SendAsync("PhoneTreeUpdated", updated);
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForPhoneTreeAsync(updated.Id), "PhoneTreeUpdated", updated, safetyCritical: true);
         return updated;
     }
 
@@ -58,8 +60,10 @@ public class PhoneTreesController : ControllerBase
     [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> Delete(int id)
     {
+        // Resolved before the delete, while the row that carries the tenant still exists.
+        var deletedTenantId = await _broadcast.TenantForPhoneTreeAsync(id);
         await _directoryService.DeletePhoneTreeAsync(id);
-        await _hub.Clients.All.SendAsync("PhoneTreeDeleted", new { id });
+        await _broadcast.ToTenantAsync(deletedTenantId, "PhoneTreeDeleted", new { id }, safetyCritical: true);
         return NoContent();
     }
 
@@ -68,7 +72,9 @@ public class PhoneTreesController : ControllerBase
     public async Task<ActionResult<PhoneTreeNode>> AddNode(int treeId, PhoneTreeNode node)
     {
         var created = await _directoryService.AddNodeAsync(treeId, node);
-        await _hub.Clients.All.SendAsync("PhoneTreeUpdated", new { treeId, action = "nodeAdded" });
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForPhoneTreeAsync(treeId),
+            "PhoneTreeUpdated", new { treeId, action = "nodeAdded" }, safetyCritical: true);
         return CreatedAtAction(nameof(Get), new { id = treeId }, created);
     }
 
@@ -78,7 +84,9 @@ public class PhoneTreesController : ControllerBase
     {
         if (nodeId != node.Id) return BadRequest();
         await _directoryService.UpdateNodeAsync(node);
-        await _hub.Clients.All.SendAsync("PhoneTreeUpdated", new { nodeId, action = "nodeUpdated" });
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForPhoneTreeNodeAsync(nodeId),
+            "PhoneTreeUpdated", new { nodeId, action = "nodeUpdated" }, safetyCritical: true);
         return NoContent();
     }
 
@@ -86,8 +94,11 @@ public class PhoneTreesController : ControllerBase
     [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> RemoveNode(int nodeId)
     {
+        // Resolved before the delete, while the row that carries the tenant still exists.
+        var nodeTenantId = await _broadcast.TenantForPhoneTreeNodeAsync(nodeId);
         await _directoryService.RemoveNodeAsync(nodeId);
-        await _hub.Clients.All.SendAsync("PhoneTreeUpdated", new { nodeId, action = "nodeRemoved" });
+        await _broadcast.ToTenantAsync(
+            nodeTenantId, "PhoneTreeUpdated", new { nodeId, action = "nodeRemoved" }, safetyCritical: true);
         return NoContent();
     }
 
@@ -96,7 +107,9 @@ public class PhoneTreesController : ControllerBase
     public async Task<ActionResult> Reorder(int treeId, [FromBody] List<int> nodeIds)
     {
         await _directoryService.ReorderNodesAsync(treeId, nodeIds);
-        await _hub.Clients.All.SendAsync("PhoneTreeUpdated", new { treeId, action = "reordered" });
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForPhoneTreeAsync(treeId),
+            "PhoneTreeUpdated", new { treeId, action = "reordered" }, safetyCritical: true);
         return NoContent();
     }
 }

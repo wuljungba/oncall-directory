@@ -21,27 +21,37 @@ public class DepartmentsController : ControllerBase
         _tenantContext = tenantContext;
     }
 
+    /// <summary>
+    /// Restricts a department query to the caller's tenants.
+    ///
+    /// Shared by the list and single-item endpoints deliberately: the filter lived only in
+    /// GetAll, so Get(id) returned any tenant's department to anyone holding Directory.Read
+    /// — a plain id-enumeration hole. Keeping one helper stops the two drifting again.
+    /// </summary>
+    private async Task<IQueryable<Department>> ScopedAsync(IQueryable<Department> query)
+    {
+        if (_tenantContext.IsSuperAdmin(User)) return query;
+
+        var tenantIds = await _tenantContext.GetAuthorizedTenantIdsAsync(User);
+        return query.Where(d => d.TenantId.HasValue && tenantIds.Contains(d.TenantId.Value));
+    }
+
     [HttpGet]
     public async Task<ActionResult<List<Department>>> GetAll()
     {
-        var query = _db.Departments.Where(d => d.IsActive).AsQueryable();
-
-        // Apply tenant scoping for non-super-admin users. Filtering unconditionally is the
-        // point: skipping it when the user resolves to no tenants used to fail OPEN and
-        // show them every tenant's departments.
-        if (!_tenantContext.IsSuperAdmin(User))
-        {
-            var tenantIds = await _tenantContext.GetAuthorizedTenantIdsAsync(User);
-            query = query.Where(d => d.TenantId.HasValue && tenantIds.Contains(d.TenantId.Value));
-        }
-
+        // Filtering unconditionally is the point: skipping it when the user resolves to no
+        // tenants used to fail OPEN and show them every tenant's departments.
+        var query = await ScopedAsync(_db.Departments.Where(d => d.IsActive));
         return await query.OrderBy(d => d.Name).ToListAsync();
     }
 
     [HttpGet("{id}")]
     public async Task<ActionResult<Department>> Get(int id)
     {
-        var dept = await _db.Departments.FindAsync(id);
+        var query = await ScopedAsync(_db.Departments.Where(d => d.Id == id));
+        var dept = await query.FirstOrDefaultAsync();
+        // Not found rather than forbidden: the endpoint must not confirm that another
+        // tenant's department exists.
         if (dept == null) return NotFound();
         return dept;
     }

@@ -86,8 +86,12 @@ public class CodeCallDispatchTwilioTests
         services.AddScoped<IInformaCastClient>(_ => new StubInformaCastClient());
         services.AddScoped<IVoceraClient>(_ => new StubVoceraClient());
         services.AddScoped<ITwilioClient>(_ => twilio);
+        // Dispatch runs outside any request, so it sees the whole estate — the same
+        // posture TenantScope adopts when there is no HttpContext.
         services.AddScoped<IPhoneTreeEventService>(sp => new PhoneTreeEventService(
-            sp.GetRequiredService<AppDbContext>(), NullLogger<PhoneTreeEventService>.Instance));
+            sp.GetRequiredService<AppDbContext>(),
+            TestTenantScopes.Unrestricted,
+            NullLogger<PhoneTreeEventService>.Instance));
 
         var provider = services.BuildServiceProvider();
 

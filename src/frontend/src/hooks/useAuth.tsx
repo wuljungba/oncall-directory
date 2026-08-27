@@ -34,6 +34,15 @@ interface AuthState {
   canAdminScoped: boolean
   canTenantManage: boolean
 
+  /**
+   * True when the backend is running with dev auth: the identity and permissions above
+   * are simulated from a cookie, not proven by a token. Surfaced so the UI can say so.
+   */
+  isDevAuth: boolean
+
+  /** Minutes of inactivity before the client signs the user out. 0 disables it. */
+  sessionTimeoutMinutes: number
+
   // Linked profile
   employeeId: string | null
 
@@ -71,6 +80,8 @@ function useAuthState(): AuthState {
   const [tenantIds, setTenantIds] = useState<number[]>([])
   const [tenantRoles, setTenantRoles] = useState<Record<string, string>>({})
   const [employeeId, setEmployeeId] = useState<string | null>(null)
+  const [isDevAuth, setIsDevAuth] = useState(false)
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState(0)
   const [activeTenantId, setActiveTenantIdState] = useState<number | null>(() => {
     const stored = sessionStorage.getItem('activeTenantId')
     return stored ? Number(stored) : null
@@ -92,8 +103,10 @@ function useAuthState(): AuthState {
   }, [])
 
   // Shared handler for processing auth/me response
-  const handleAuthResponse = useCallback((res: { permissions: string[]; tenantIds?: number[]; tenantRoles?: Record<string, string>; employeeId?: string | null }) => {
+  const handleAuthResponse = useCallback((res: { permissions: string[]; tenantIds?: number[]; tenantRoles?: Record<string, string>; employeeId?: string | null; authMode?: string; sessionTimeoutMinutes?: number }) => {
     setPermissions(res.permissions)
+    setIsDevAuth(res.authMode === 'development')
+    setSessionTimeoutMinutes(res.sessionTimeoutMinutes ?? 0)
     setPermissionsUnavailable(false)
     if (res.tenantIds) setTenantIds(res.tenantIds)
     if (res.tenantRoles) setTenantRoles(res.tenantRoles)
@@ -248,6 +261,8 @@ function useAuthState(): AuthState {
     canAdminScoped: perms.includes('Admin.Scoped'),
     canTenantManage: perms.includes('Tenant.Manage'),
     employeeId,
+    isDevAuth,
+    sessionTimeoutMinutes,
     tenantIds,
     tenantRoles,
     activeTenantId,

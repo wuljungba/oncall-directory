@@ -496,16 +496,27 @@ public class CodeCallDispatchService : ICodeCallDispatchService
         }
         else
         {
-            _logger.LogWarning(
-                "Could not resolve tenantId for dispatch event {EventId}, broadcasting to all clients",
-                eventId);
-            await _hub.Clients.All.SendAsync("DispatchStepCompleted", new
+            // Broadcasting to every client would hand one hospital's live code-call
+            // activity to all the others. The DispatchStep row above is the durable
+            // record of what happened; this is the notification failing to reach the
+            // console, and it is recorded rather than dropped quietly.
+            _logger.LogError(
+                "Dispatch step {StepKey} for event {EventId} could not be delivered: its tenant "
+                + "could not be resolved. It was NOT broadcast to other tenants.", stepKey, eventId);
+
+            // Resolved leniently on purpose: an audit sink that is absent or failing must
+            // never take the dispatch path down with it. The error log above is the signal
+            // that always fires; this is the durable copy when a sink is available.
+            using var auditScope = _scopeFactory.CreateScope();
+            var audit = auditScope.ServiceProvider.GetService<IAuditService>();
+            audit?.Enqueue(new AuditLog
             {
-                eventId,
-                stepKey,
-                status,
-                detail,
-                completedAt = DateTime.UtcNow,
+                Action = "NotificationUndeliverable",
+                ResourceType = "DispatchStep",
+                ResourceId = eventId.ToString(),
+                UserName = "system",
+                Details = $"Dispatch step '{stepKey}' had no resolvable tenant and was not delivered.",
+                Timestamp = DateTime.UtcNow,
             });
         }
     }

@@ -1,18 +1,41 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace OnCallApi.Models;
 
-/// <summary>Request to create a new employee account.</summary>
+/// <summary>
+/// Request to create a new employee account.
+///
+/// The annotations live on this record, not only on the Employee entity. [ApiController]
+/// validates the bound request type, so entity-level attributes never fired on this path
+/// and the API happily accepted "not-an-email" and 300-character names against a
+/// MaxLength(100). An EmployeeValidator exists and is registered in DI, but nothing ever
+/// invokes it and it targets the entity rather than this record -- so it was dead code.
+/// Same fix already applied to the tenant requests below.
+///
+/// Phones are deliberately NOT constrained to E.164 here: AdminService normalizes them the
+/// way the importer does, so "(202) 555-0134" is accepted and stored canonically rather
+/// than rejected for formatting.
+/// </summary>
 public record CreateEmployeeRequest(
+    [MaxLength(100)]
     string? AzureAdObjectId,
+
+    [Required(AllowEmptyStrings = false), MaxLength(100)]
     string FirstName,
+
+    [Required(AllowEmptyStrings = false), MaxLength(100)]
     string LastName,
+
+    [Required(AllowEmptyStrings = false), EmailAddress, MaxLength(256)]
     string Email,
-    string? Title,
-    string? Specialty,
-    string? ClinicalRole,
-    string? OfficePhone,
-    string? MobilePhone,
-    string? PagerNumber,
-    string? OfficeLocation,
+
+    [MaxLength(200)] string? Title,
+    [MaxLength(200)] string? Specialty,
+    [MaxLength(100)] string? ClinicalRole,
+    [MaxLength(50)] string? OfficePhone,
+    [MaxLength(50)] string? MobilePhone,
+    [MaxLength(50)] string? PagerNumber,
+    [MaxLength(200)] string? OfficeLocation,
     int? DepartmentId,
     Guid? ManagerId,
     List<string>? Certifications,
@@ -20,18 +43,24 @@ public record CreateEmployeeRequest(
     int? TenantId = null
 );
 
-/// <summary>Request to update an existing employee account.</summary>
+/// <summary>Request to update an existing employee account. See CreateEmployeeRequest.</summary>
 public record UpdateEmployeeRequest(
+    [Required(AllowEmptyStrings = false), MaxLength(100)]
     string FirstName,
+
+    [Required(AllowEmptyStrings = false), MaxLength(100)]
     string LastName,
+
+    [Required(AllowEmptyStrings = false), EmailAddress, MaxLength(256)]
     string Email,
-    string? Title,
-    string? Specialty,
-    string? ClinicalRole,
-    string? OfficePhone,
-    string? MobilePhone,
-    string? PagerNumber,
-    string? OfficeLocation,
+
+    [MaxLength(200)] string? Title,
+    [MaxLength(200)] string? Specialty,
+    [MaxLength(100)] string? ClinicalRole,
+    [MaxLength(50)] string? OfficePhone,
+    [MaxLength(50)] string? MobilePhone,
+    [MaxLength(50)] string? PagerNumber,
+    [MaxLength(200)] string? OfficeLocation,
     int? DepartmentId,
     Guid? ManagerId,
     List<string>? Certifications,
@@ -60,20 +89,44 @@ public record UpdateDepartmentRequest(
 
 // ── Tenant Requests ──
 
-/// <summary>Request to create a new tenant (business/facility).</summary>
+/// <summary>
+/// Request to create a new tenant (business/facility).
+///
+/// The annotations live here, not only on the Tenant entity: [ApiController] validates the
+/// bound request type, so an entity-only [Required] never fired and an empty or oversized
+/// name reached SaveChanges — a 500 on SQL Server, or silently stored on SQLite.
+/// </summary>
 public record CreateTenantRequest(
+    [Required(AllowEmptyStrings = false)]
+    [MaxLength(200)]
     string Name,
+
+    [MaxLength(1000)]
     string? Description,
+
+    [MaxLength(100)]
     string? AzureAdGroupId,
+
+    [EmailAddress]
+    [MaxLength(100)]
     string? ContactEmail
 );
 
-/// <summary>Request to update a tenant.</summary>
+/// <summary>Request to update a tenant. Every field is optional; omitted ones are unchanged.</summary>
 public record UpdateTenantRequest(
+    [MaxLength(200)]
     string? Name,
+
+    [MaxLength(1000)]
     string? Description,
+
+    [MaxLength(100)]
     string? AzureAdGroupId,
+
+    [EmailAddress]
+    [MaxLength(100)]
     string? ContactEmail,
+
     bool? IsActive
 );
 

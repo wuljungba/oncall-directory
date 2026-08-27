@@ -1,8 +1,10 @@
+using ValidationException = System.ComponentModel.DataAnnotations.ValidationException;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using OnCallApi.Data;
 using OnCallApi.Models;
+using OnCallApi.Validators;
 
 namespace OnCallApi.Services;
 
@@ -90,18 +92,79 @@ public class AdminService : IAdminService
             {
                 var exists = await _db.Tenants.AnyAsync(t => t.Id == requested.Value);
                 if (!exists)
-                    throw new InvalidOperationException($"Subscription (tenant) {requested.Value} does not exist.");
+                    throw new ValidationException($"Subscription (tenant) {requested.Value} does not exist.");
             }
             return requested;
         }
         return await GetCurrentUserTenantId();
     }
 
+    /// <summary>
+    /// Confirms the foreign keys on an employee request actually resolve.
+    ///
+    /// Nothing checked these, so a departmentId or managerId that did not exist reached
+    /// SaveChanges and surfaced as a raw DbUpdateException -- an HTTP 500 with no clue
+    /// which field was wrong. The bulk importer has validated department ids all along
+    /// (BulkImportService.ValidateDepartmentIdsAsync); the single-record admin path had
+    /// simply been missed.
+    ///
+    /// ValidationException maps to 400 in ExceptionHandlingMiddleware. InvalidOperationException
+    /// is left to mean "conflicts with what already exists" (a duplicate email), which the
+    /// controller maps to 409.
+    /// </summary>
+    private async Task ValidateEmployeeReferencesAsync(int? departmentId, Guid? managerId)
+    {
+        if (departmentId.HasValue)
+        {
+            var departmentExists = await _db.Departments.AnyAsync(d => d.Id == departmentId.Value);
+            if (!departmentExists)
+                throw new ValidationException($"Department {departmentId.Value} does not exist.");
+        }
+
+        if (managerId.HasValue)
+        {
+            var managerExists = await _db.Employees.AnyAsync(e => e.Id == managerId.Value);
+            if (!managerExists)
+                throw new ValidationException($"Manager {managerId.Value} does not exist.");
+        }
+    }
+
+    /// <summary>
+    /// Normalizes a phone number the same way the importer does, or reports why it cannot.
+    ///
+    /// Employee.OfficePhone/MobilePhone/PagerNumber carry a [RegularExpression] demanding
+    /// E.164, but nothing enforced it on this path, so whatever the user typed was stored
+    /// raw -- including values the dispatch path could never dial. Normalizing rather than
+    /// rejecting means "(202) 555-0134" is accepted and stored as "+12025550134", which is
+    /// what someone typing into the admin form actually expects.
+    /// </summary>
+    private static string? NormalizePhoneOrThrow(string? raw, string fieldName)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var normalized = PhoneValidation.NormalizeToDialable(raw);
+        if (normalized == null)
+        {
+            throw new ValidationException(
+                $"{fieldName} could not be read as a dialable phone number. "
+                + "Use a full number such as (202) 555-0134 or +12025550134, without an extension.");
+        }
+
+        return normalized;
+    }
+
     // ── Employees ──
 
     public async Task<List<Employee>> GetAllEmployeesAsync(bool includeInactive = false)
     {
+        // AsNoTracking is load-bearing here, not just a performance choice. With tracking
+        // on, EF relationship fixup back-populates Department.Employees with every loaded
+        // employee, so each employee serializes a department containing all the others --
+        // output grows with the square of the employees in a department. A 5,000-row
+        // directory produced an 18 GB response. ReferenceHandler.IgnoreCycles only breaks
+        // ancestor cycles; it does not stop that breadth.
         var query = _db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Include(e => e.Manager)
             .AsQueryable();
@@ -117,6 +180,7 @@ public class AdminService : IAdminService
     public async Task<Employee?> GetEmployeeByIdAsync(Guid id)
     {
         IQueryable<Employee> query = _db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Include(e => e.Manager)
             .Include(e => e.DirectReports);
@@ -129,6 +193,7 @@ public class AdminService : IAdminService
     public async Task<Employee> CreateEmployeeAsync(CreateEmployeeRequest request)
     {
         var tenantId = await ResolveCreateTenantId(request.TenantId);
+        await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId);
 
         // One employee per email (onboarding standard). Prevents duplicate directory
         // entries for the same person no matter which path creates them.
@@ -150,9 +215,9 @@ public class AdminService : IAdminService
             Title = request.Title,
             Specialty = request.Specialty,
             ClinicalRole = request.ClinicalRole,
-            OfficePhone = request.OfficePhone,
-            MobilePhone = request.MobilePhone,
-            PagerNumber = request.PagerNumber,
+            OfficePhone = NormalizePhoneOrThrow(request.OfficePhone, "Office phone"),
+            MobilePhone = NormalizePhoneOrThrow(request.MobilePhone, "Mobile phone"),
+            PagerNumber = NormalizePhoneOrThrow(request.PagerNumber, "Pager number"),
             OfficeLocation = request.OfficeLocation,
             DepartmentId = request.DepartmentId,
             ManagerId = request.ManagerId,
@@ -216,6 +281,8 @@ public class AdminService : IAdminService
                 throw new KeyNotFoundException($"Employee {id} not found.");
         }
 
+        await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId);
+
         // Prevent circular manager reference
         if (request.ManagerId.HasValue && request.ManagerId.Value == id)
             throw new InvalidOperationException("An employee cannot be their own manager.");
@@ -233,9 +300,9 @@ public class AdminService : IAdminService
         existing.Title = request.Title;
         existing.Specialty = request.Specialty;
         existing.ClinicalRole = request.ClinicalRole;
-        existing.OfficePhone = request.OfficePhone;
-        existing.MobilePhone = request.MobilePhone;
-        existing.PagerNumber = request.PagerNumber;
+        existing.OfficePhone = NormalizePhoneOrThrow(request.OfficePhone, "Office phone");
+        existing.MobilePhone = NormalizePhoneOrThrow(request.MobilePhone, "Mobile phone");
+        existing.PagerNumber = NormalizePhoneOrThrow(request.PagerNumber, "Pager number");
         existing.OfficeLocation = request.OfficeLocation;
         existing.DepartmentId = request.DepartmentId;
         existing.ManagerId = request.ManagerId;
@@ -340,6 +407,7 @@ public class AdminService : IAdminService
     public async Task<List<Employee>> GetDirectReportsAsync(Guid managerId)
     {
         var query = _db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Where(e => e.ManagerId == managerId && e.IsActive);
 
@@ -424,6 +492,7 @@ public class AdminService : IAdminService
         if (!deptExists) return [];
 
         var empQuery = _db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Where(e => e.DepartmentId == departmentId && e.IsActive);
 

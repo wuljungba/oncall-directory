@@ -30,11 +30,21 @@ public class OnCallNotificationHub : Hub
         var userId = Context.UserIdentifier ?? "unknown";
         _logger.LogInformation("Client connected: {UserId}", userId);
 
-        // Join user to their department group for targeted notifications
+        // Join the caller's department group, but verify the claim first. The department
+        // claim is carried by the token, and the tenant groups below are resolved from the
+        // database precisely because a claim is not an authorization decision — this one
+        // was being trusted as-is, so it gets the same check JoinDepartment applies.
         var departmentClaim = Context.User?.FindFirst("department")?.Value;
-        if (departmentClaim != null)
+        if (int.TryParse(departmentClaim, out var claimedDepartmentId)
+            && await CanAccessDepartmentAsync(claimedDepartmentId))
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"dept-{departmentClaim}");
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"dept-{claimedDepartmentId}");
+        }
+        else if (departmentClaim != null)
+        {
+            _logger.LogWarning(
+                "Client {UserId} was not added to department group for claimed department {Department}",
+                userId, departmentClaim);
         }
 
         // Tenant groups come from the database, not from the client. Claims are used only

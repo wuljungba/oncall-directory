@@ -38,6 +38,11 @@ public class SuperAdminGrantTests
         {
             builder.UseEnvironment("Development");
 
+            // Stated outright rather than inherited from appsettings.Development.json:
+            // that file is gitignored, so these tests passed or failed depending on whether
+            // the machine running them happened to have dev auth switched on locally.
+            builder.UseSetting("DevAuth:Enabled", "true");
+
             builder.ConfigureAppConfiguration((_, config) =>
             {
                 if (configureSuperAdmin)

@@ -90,6 +90,13 @@ public class TenantScopingTests
                 Tier = "primary", Status = "scheduled", StartTime = now.AddHours(-1), EndTime = now.AddHours(1),
             });
 
+        db.DutyHourRules.AddRange(
+            new DutyHourRule { Id = 500, Name = "Cardiology 80h", DepartmentId = 10, IsEnabled = true },
+            new DutyHourRule { Id = 600, Name = "Neurology 80h", DepartmentId = 20, IsEnabled = true });
+        db.CodeCallLocations.AddRange(
+            new CodeCallLocation { Id = 700, Name = "A-Ward-3", DepartmentId = 10, IsActive = true },
+            new CodeCallLocation { Id = 800, Name = "B-Ward-9", DepartmentId = 20, IsActive = true });
+
         if (!noGrant)
         {
             db.PermissionGrants.Add(new PermissionGrant
@@ -288,5 +295,107 @@ public class TenantScopingTests
         var departments = await GetDepartments(client, token);
 
         departments!.Select(d => d.Name).Should().BeEquivalentTo("Neurology");
+    }
+
+    // ── Compliance ─────────────────────────────────────────────────────────────
+    // DutyHourService had no tenant filter at all, and departmentId is optional: omitting
+    // it returned every tenant's rules and swept every tenant's staff into the check.
+    // CheckComplianceAsync also PERSISTS violations, so this was a cross-tenant write.
+
+    [Fact]
+    public async Task ComplianceRules_AreScopedToTheCallersTenant()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        var rules = await GetAs<DutyHourRule>(client, UserToken(factory), "/api/compliance/rules");
+
+        rules!.Select(r => r.Name).Should().BeEquivalentTo("Cardiology 80h");
+    }
+
+    [Fact]
+    public async Task ComplianceCheck_DoesNotEvaluateAnotherTenantsStaff()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        var violations = await GetAs<DutyHourViolation>(client, UserToken(factory), "/api/compliance/check");
+
+        // The seeded shifts are short, so the sweep may legitimately find nothing. What
+        // must hold either way is that it never reached tenant B's staff.
+        violations!.Should().NotContain(
+            v => v.EmployeeId == Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"),
+            "a compliance sweep must not reach into another tenant's staff");
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.DutyHourViolations.Any(v => v.EmployeeId == Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002"))
+            .Should().BeFalse("the sweep must not write to another tenant's compliance record either");
+    }
+
+    [Fact]
+    public async Task ComplianceCheck_ForAnotherTenantsEmployee_WritesNoViolation()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+        var benId = Guid.Parse("bbbbbbbb-0000-0000-0000-000000000002");
+
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/compliance/check/{benId}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", UserToken(factory));
+        using var response = await client.SendAsync(request);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await response.Content.ReadFromJsonAsync<List<DutyHourViolation>>())!.Should().BeEmpty();
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        db.DutyHourViolations.Any(v => v.EmployeeId == benId)
+            .Should().BeFalse("evaluating an out-of-scope employee must not write to their compliance record");
+    }
+
+    // ── Single-item endpoints ──────────────────────────────────────────────────
+    // The tenant filter lived only in the list endpoints, so one id read — or rewrote —
+    // any other tenant's record.
+
+    private static async Task<HttpResponseMessage> SendAs(
+        HttpClient client, string token, HttpMethod method, string url, object? body = null)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body != null) request.Content = JsonContent.Create(body);
+        return await client.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task DepartmentById_FromAnotherTenant_IsNotFound()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        using var response = await SendAs(client, UserToken(factory), HttpMethod.Get, "/api/departments/20");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task DepartmentById_InOwnTenant_IsReturned()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        using var response = await SendAs(client, UserToken(factory), HttpMethod.Get, "/api/departments/10");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task CodeCallLocationById_FromAnotherTenant_IsNotFound()
+    {
+        using var factory = Seed(grantTenantId: TenantA);
+        using var client = factory.CreateClient();
+
+        using var response = await SendAs(client, UserToken(factory), HttpMethod.Get, "/api/code-call-locations/800");
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 }

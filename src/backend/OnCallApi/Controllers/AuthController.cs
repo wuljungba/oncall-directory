@@ -11,10 +11,14 @@ namespace OnCallApi.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly ITenantContextService _tenantContext;
+    private readonly IConfiguration _config;
+    private readonly IWebHostEnvironment _env;
 
-    public AuthController(ITenantContextService tenantContext)
+    public AuthController(ITenantContextService tenantContext, IConfiguration config, IWebHostEnvironment env)
     {
         _tenantContext = tenantContext;
+        _config = config;
+        _env = env;
     }
 
     /// <summary>
@@ -57,6 +61,10 @@ public class AuthController : ControllerBase
             TenantIds = tenantIds,
             TenantRoles = tenantRoles,
             EmployeeId = await _tenantContext.GetCurrentEmployeeIdAsync(User),
+            AuthMode = _config.GetValue<bool>("DevAuth:Enabled") && _env.IsDevelopment()
+                ? "development"
+                : "production",
+            SessionTimeoutMinutes = _config.GetValue<int>("Hipaa:SessionTimeoutMinutes", 0),
         });
     }
 }
@@ -73,4 +81,18 @@ public record CurrentUserResponse
 
     /// <summary>The authenticated user's internal Employee.Id, when a profile is linked.</summary>
     public Guid? EmployeeId { get; init; }
+
+    /// <summary>
+    /// "development" when the identity above is simulated by the dev-auth handler rather
+    /// than proven by a validated token. The UI shows a banner for it, because a fake
+    /// admin session is otherwise indistinguishable from a real one.
+    /// </summary>
+    public string AuthMode { get; init; } = "production";
+
+    /// <summary>
+    /// Minutes of inactivity after which the client must sign the user out. 0 disables the
+    /// idle timer. The server caps token lifetime to the same value, so this is the client
+    /// half of the HIPAA auto-logoff requirement, not the whole of it.
+    /// </summary>
+    public int SessionTimeoutMinutes { get; init; }
 }

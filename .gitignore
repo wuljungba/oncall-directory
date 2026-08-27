@@ -37,3 +37,4 @@ oncall-agent-team*/
 # Playwright test results
 src/frontend/test-results/
 src/frontend/playwright-report/
+src/backend/OnCallApi/test-results/

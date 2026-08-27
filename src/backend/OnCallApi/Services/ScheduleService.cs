@@ -1,3 +1,4 @@
+using ValidationException = System.ComponentModel.DataAnnotations.ValidationException;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using OnCallApi.Configuration;
@@ -53,6 +54,48 @@ public class ScheduleService : IScheduleService
             && tenantIds.Contains(sh.Schedule.Department.TenantId.Value));
     }
 
+    /// <summary>
+    /// Resolves a schedule the caller is allowed to touch, or throws.
+    ///
+    /// Reads went through ScopeSchedulesAsync but every write used a bare FindAsync, so a
+    /// scheduler in one tenant could rename, repoint, deactivate or delete another
+    /// hospital's on-call schedule -- and the on-call schedule decides who gets paged.
+    /// Same reads-scoped-writes-unscoped shape that was fixed on phone trees.
+    /// </summary>
+    private async Task<Schedule> RequireScheduleAsync(int scheduleId)
+    {
+        var scoped = await ScopeSchedulesAsync(_db.Schedules.Where(s => s.Id == scheduleId));
+        return await scoped.FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException($"Schedule {scheduleId} not found");
+    }
+
+    /// <summary>Resolves a shift the caller may touch, via its schedule's tenant.</summary>
+    private async Task<Shift> RequireShiftAsync(int shiftId)
+    {
+        var scoped = await ScopeShiftsAsync(_db.Shifts.Where(sh => sh.Id == shiftId));
+        return await scoped.FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException($"Shift {shiftId} not found");
+    }
+
+    /// <summary>
+    /// Confirms a department the caller may file a schedule under. A schedule reaches its
+    /// tenant only through its department, so a null department would create a schedule no
+    /// scoped read can ever see again.
+    /// </summary>
+    private async Task EnsureDepartmentAllowedAsync(int? departmentId)
+    {
+        var tenantIds = await AllowedTenantsAsync();
+        if (tenantIds == null) return;
+
+        if (departmentId == null)
+            throw new ValidationException("A schedule must belong to a department.");
+
+        var allowed = await _db.Departments.AnyAsync(d => d.Id == departmentId.Value
+            && d.TenantId.HasValue && tenantIds.Contains(d.TenantId.Value));
+        if (!allowed)
+            throw new ValidationException($"Department {departmentId.Value} does not exist.");
+    }
+
     public async Task<List<Schedule>> GetSchedulesAsync(int? departmentId = null)
     {
         var query = _db.Schedules
@@ -78,11 +121,10 @@ public class ScheduleService : IScheduleService
 
     public async Task<Schedule> CreateScheduleAsync(Schedule schedule)
     {
-        // A schedule must belong to a real department — otherwise the FK insert
-        // fails with an opaque 500. Surface a clear validation error instead.
-        var deptExists = await _db.Departments.AnyAsync(d => d.Id == schedule.DepartmentId);
-        if (!deptExists)
-            throw new InvalidOperationException("A valid department is required to create a schedule.");
+        // A schedule must belong to a real department the caller may actually use --
+        // otherwise the FK insert fails with an opaque 500, or the schedule lands inside
+        // another tenant's department.
+        await EnsureDepartmentAllowedAsync(schedule.DepartmentId);
 
         _db.Schedules.Add(schedule);
         await _db.SaveChangesAsync();
@@ -107,6 +149,13 @@ public class ScheduleService : IScheduleService
 
     public async Task<Shift> AssignShiftAsync(int scheduleId, Guid employeeId, DateTime start, DateTime end, string tier)
     {
+        // Both foreign keys are checked here rather than at SaveChanges, where a bad id
+        // surfaced as a raw DbUpdateException -- an HTTP 500 naming neither field.
+        await RequireScheduleAsync(scheduleId);
+        var employeeExists = await _db.Employees.AnyAsync(e => e.Id == employeeId);
+        if (!employeeExists)
+            throw new ValidationException($"Employee {employeeId} does not exist.");
+
         var shift = new Shift
         {
             ScheduleId = scheduleId,
@@ -141,6 +190,10 @@ public class ScheduleService : IScheduleService
 
     public async Task<ShiftSwap> RequestSwapAsync(int shiftId, Guid requestedById, Guid? replacementUserId, string reason)
     {
+        // Scoped, so a swap cannot be filed against another tenant's shift, and an
+        // unknown id fails as a 404 rather than an FK violation at SaveChanges.
+        await RequireShiftAsync(shiftId);
+
         var swap = new ShiftSwap
         {
             OriginalShiftId = shiftId,
@@ -162,6 +215,9 @@ public class ScheduleService : IScheduleService
             .Include(s => s.OriginalShift)
             .FirstOrDefaultAsync(s => s.Id == swapId)
             ?? throw new KeyNotFoundException($"Swap {swapId} not found");
+
+        // Approving reassigns who is on call, so it must be a shift the caller may touch.
+        await RequireShiftAsync(swap.OriginalShiftId);
 
         swap.Status = "approved";
         swap.ApprovedById = approvedById;
@@ -228,7 +284,10 @@ public class ScheduleService : IScheduleService
 
     public async Task<Shift?> AcknowledgeShiftAsync(int shiftId, Guid acknowledgedById, bool isAdmin)
     {
-        var shift = await _db.Shifts.FirstOrDefaultAsync(s => s.Id == shiftId);
+        // Scoped: acknowledging is the signal the escalation engine trusts, so it must not
+        // be possible to silence another tenant's shift.
+        var scoped = await ScopeShiftsAsync(_db.Shifts.Where(s => s.Id == shiftId));
+        var shift = await scoped.FirstOrDefaultAsync();
         if (shift == null) return null;
 
         // Only the person actually on call can confirm coverage — otherwise the signal the
@@ -315,8 +374,9 @@ public class ScheduleService : IScheduleService
 
     public async Task<Schedule> UpdateScheduleAsync(Schedule schedule)
     {
-        var existing = await _db.Schedules.FindAsync(schedule.Id)
-            ?? throw new KeyNotFoundException($"Schedule {schedule.Id} not found");
+        var existing = await RequireScheduleAsync(schedule.Id);
+        // Guard the destination too, so an update cannot move a schedule to another tenant.
+        await EnsureDepartmentAllowedAsync(schedule.DepartmentId);
 
         existing.Name = schedule.Name;
         existing.DepartmentId = schedule.DepartmentId;
@@ -334,8 +394,7 @@ public class ScheduleService : IScheduleService
 
     public async Task DeleteScheduleAsync(int id)
     {
-        var schedule = await _db.Schedules.FindAsync(id)
-            ?? throw new KeyNotFoundException($"Schedule {id} not found");
+        var schedule = await RequireScheduleAsync(id);
 
         _db.Schedules.Remove(schedule);
         await _db.SaveChangesAsync();
@@ -344,9 +403,10 @@ public class ScheduleService : IScheduleService
 
     public async Task<List<Shift>> GenerateShiftsAsync(int scheduleId, int weeks)
     {
-        var schedule = await _db.Schedules
+        var scopedSchedules = await ScopeSchedulesAsync(_db.Schedules.Where(s => s.Id == scheduleId));
+        var schedule = await scopedSchedules
             .Include(s => s.Shifts)
-            .FirstOrDefaultAsync(s => s.Id == scheduleId)
+            .FirstOrDefaultAsync()
             ?? throw new KeyNotFoundException($"Schedule {scheduleId} not found");
 
         // Find employees in the same department to auto-assign

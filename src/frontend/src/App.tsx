@@ -17,14 +17,14 @@ import LandingPage from '@/pages/LandingPage'
 import PublicSchedulePage from '@/pages/PublicSchedulePage'
 import AdminPage from '@/pages/AdminPage'
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
   if (isLoading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
   if (!isAuthenticated) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
-function AdminRoute({ children }: { children: React.ReactNode }) {
+export function AdminRoute({ children }: { children: React.ReactNode }) {
   const { isAdmin, canAdminScoped, isLoading } = useAuth()
   if (isLoading) return <div className="flex items-center justify-center h-screen"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
   if (!isAdmin && !canAdminScoped) return <Navigate to="/dashboard" replace />

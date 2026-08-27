@@ -28,7 +28,15 @@ public class JwtValidationMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<JwtValidationMiddleware> _logger;
 
-    // Endpoint prefixes that require scoped JWT validation
+    // Endpoint prefixes that require scoped JWT validation.
+    //
+    // Kept in step with HipaaAuditMiddleware.AuditedPrefixes: the two lists had drifted, so
+    // routes recognised as PHI-adjacent enough to audit — departments, tenants, escalation,
+    // import, messaging, code-call locations — skipped the scope and tenant sanity checks.
+    // The bearer handler still validated every token's signature before any of this, so
+    // this closes an inconsistency rather than an authentication bypass.
+    //
+    // Anonymous routes must stay out: /api/public/* and /api/auth/* have no principal yet.
     private static readonly HashSet<string> ProtectedPrefixes = new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/directory",
@@ -38,6 +46,13 @@ public class JwtValidationMiddleware
         "/api/settings",
         "/api/integrations",
         "/api/admin",
+        "/api/departments",
+        "/api/tenants",
+        "/api/escalation",
+        "/api/import",
+        "/api/messaging",
+        "/api/code-call-locations",
+        "/api/audit",
     };
 
     public JwtValidationMiddleware(RequestDelegate next, ILogger<JwtValidationMiddleware> logger)

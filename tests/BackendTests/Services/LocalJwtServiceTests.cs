@@ -72,4 +72,64 @@ public class LocalJwtServiceTests
         public string ContentRootPath { get; set; } = Directory.GetCurrentDirectory();
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
+
+    private static LocalJwtService CreateService(Dictionary<string, string?> settings)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var hostEnv = new StubHostEnvironment { EnvironmentName = Environments.Development };
+        return new LocalJwtService(config, NullLogger<LocalJwtService>.Instance, hostEnv);
+    }
+
+    private static DateTime ExpiryOf(string token)
+        => new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler().ReadJwtToken(token).ValidTo;
+
+    // ── HIPAA session timeout ──────────────────────────────────────────────────
+    // Hipaa:SessionTimeoutMinutes was configured and read by nothing: the settings page
+    // wrote it, no code consulted it, and a session lived for the token's full 24 hours.
+    // A client-side idle timer alone cannot fix that, because a captured token can be
+    // replayed from a script — so the lifetime is capped where a client cannot reach it.
+
+    [Fact]
+    public void GenerateToken_CapsLifetimeToTheHipaaSessionTimeout()
+    {
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["Authentication:Local:SigningKey"] = "a-perfectly-adequate-signing-key-0123456789",
+            ["Authentication:Local:TokenExpiryMinutes"] = "1440",
+            ["Hipaa:SessionTimeoutMinutes"] = "15",
+        });
+
+        var expiry = ExpiryOf(service.GenerateToken(1, "u@h.org", "User", ["OnCall.Viewer"]));
+
+        expiry.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(15), TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public void GenerateToken_DoesNotExtendLifetimeWhenTheTimeoutIsLonger()
+    {
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["Authentication:Local:SigningKey"] = "a-perfectly-adequate-signing-key-0123456789",
+            ["Authentication:Local:TokenExpiryMinutes"] = "30",
+            ["Hipaa:SessionTimeoutMinutes"] = "480",
+        });
+
+        var expiry = ExpiryOf(service.GenerateToken(1, "u@h.org", "User", ["OnCall.Viewer"]));
+
+        expiry.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(30), TimeSpan.FromMinutes(1));
+    }
+
+    [Fact]
+    public void GenerateToken_UsesTheConfiguredLifetimeWhenNoTimeoutIsSet()
+    {
+        var service = CreateService(new Dictionary<string, string?>
+        {
+            ["Authentication:Local:SigningKey"] = "a-perfectly-adequate-signing-key-0123456789",
+            ["Authentication:Local:TokenExpiryMinutes"] = "60",
+        });
+
+        var expiry = ExpiryOf(service.GenerateToken(1, "u@h.org", "User", ["OnCall.Viewer"]));
+
+        expiry.Should().BeCloseTo(DateTime.UtcNow.AddMinutes(60), TimeSpan.FromMinutes(1));
+    }
 }

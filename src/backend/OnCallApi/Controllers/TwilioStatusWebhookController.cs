@@ -147,9 +147,17 @@ public class TwilioStatusWebhookController : ControllerBase
             .FirstOrDefaultAsync();
 
         if (tenantId.HasValue)
+        {
             await _hub.Clients.Group($"tenant-{tenantId.Value}").SendAsync("DispatchStepCompleted", payload);
+        }
         else
-            await _hub.Clients.All.SendAsync("DispatchStepCompleted", payload);
+        {
+            // Never fan a delivery receipt out to every tenant. The step row is already
+            // persisted; this records that the console was not told.
+            _logger.LogError(
+                "Twilio status for dispatch step {StepId} could not be delivered: its tenant "
+                + "could not be resolved. It was NOT broadcast to other tenants.", step.Id);
+        }
     }
 
     /// <summary>

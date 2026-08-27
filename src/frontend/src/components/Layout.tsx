@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { useState } from 'react'
 import { useAuth } from '@/hooks/useAuth'
+import { useIdleTimeout } from '@/hooks/useIdleTimeout'
 import OnboardingWizard, { useOnboarding } from '@/components/OnboardingWizard'
 
 const navItems = [
@@ -30,7 +31,7 @@ const navItems = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions, permissionsUnavailable } = useAuth()
+  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions, permissionsUnavailable, isDevAuth, sessionTimeoutMinutes } = useAuth()
   const { isConnected } = useSignalR()
   const { showOnboarding, checking, dismiss } = useOnboarding()
   const visibleNavItems = (isAdmin || canAdminScoped)
@@ -48,8 +49,32 @@ export default function Layout() {
   const awaitingProvisioning = !isLoading && permissions.length === 0 && !permissionsUnavailable
   const serverUnreachable = !isLoading && permissionsUnavailable
 
+  // HIPAA auto-logoff. The server caps token lifetime to the same value; this is the
+  // part that clears the screen in front of an unattended workstation.
+  const idle = useIdleTimeout(sessionTimeoutMinutes, () => { void signOut() })
+
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex">
+      {idle.isWarning && (
+        <div
+          role="alertdialog"
+          aria-label="Session expiring"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4"
+        >
+          <div className="max-w-sm rounded-xl border border-amber-600 bg-gray-900 p-6 text-center">
+            <h2 className="text-lg font-semibold text-amber-500">Still there?</h2>
+            <p className="mt-2 text-sm text-gray-300">
+              You will be signed out in {idle.secondsRemaining ?? 0} seconds because of inactivity.
+            </p>
+            <button
+              onClick={idle.staySignedIn}
+              className="mt-4 rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-amber-950 hover:bg-amber-500"
+            >
+              Stay signed in
+            </button>
+          </div>
+        </div>
+      )}
       {/* Onboarding wizard for new users */}
       {!checking && showOnboarding && (
         <OnboardingWizard onComplete={dismiss} />
@@ -141,6 +166,17 @@ export default function Layout() {
           </div>
         </header>
 
+        {/*
+          A dev-auth session is simulated from a cookie and always defaults to full admin,
+          so it is indistinguishable from a real one on screen. That is how a brand-new
+          account appeared to have been granted "All Tenants" super admin. Say so plainly.
+        */}
+        {isDevAuth && (
+          <div role="alert" className="bg-amber-600 text-amber-950 px-6 py-2 text-sm font-medium">
+            DEVELOPMENT AUTH — you are not really signed in. This identity and its
+            permissions are simulated, and any bearer token is ignored.
+          </div>
+        )}
         <main role="main" className="flex-1 p-6 overflow-auto" aria-label="Main content">
           {serverUnreachable
             ? <ServerUnreachable />

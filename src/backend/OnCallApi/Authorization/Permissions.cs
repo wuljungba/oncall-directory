@@ -31,11 +31,21 @@ public static class Permissions
     public const string TenantManage = "Tenant.Manage";
 
     /// <summary>
-    /// Maps legacy Azure AD role names to their granular permission claims.
-    /// Used by DevelopmentAuthenticationHandler and could be used in production
-    /// to expand Azure AD roles into claims at token validation time.
+    /// Maps simulated role names to permission claims for the DEV-AUTH HANDLER ONLY.
+    ///
+    /// DevelopmentAuthenticationHandler is its only consumer, and it must stay that way:
+    /// the role-claim authorization policies were deliberately removed as "a weaker
+    /// parallel authorization path", so no real token's roles are expanded into
+    /// permissions anywhere. A real user's permissions come from configured super admins,
+    /// TenantAdmin rows or PermissionGrant rows — never from a role name in a token.
+    ///
+    /// The "admin" entry deliberately includes Admin.Full and Tenant.Manage: simulating the
+    /// highest-privilege user is the whole point of dev auth, and the handler that reads
+    /// this cannot start outside Development. What matters is that a REAL token carrying
+    /// the role "OnCall.Admin" gains nothing from it — pinned by
+    /// PermissionModelTests.AnAdminRoleClaimOnARealTokenGrantsNoAdminPermissions.
     /// </summary>
-    public static readonly Dictionary<string, string[]> RoleToPermissions = new()
+    public static readonly Dictionary<string, string[]> DevRoleToPermissions = new()
     {
         ["OnCall.Viewer"] = [ScheduleRead, DirectoryRead],
         ["OnCall.Scheduler"] = [ScheduleRead, ScheduleWrite, DirectoryRead, CodeCallWrite],
@@ -51,6 +61,23 @@ public static class Permissions
         ScheduleRead, ScheduleWrite,
         DirectoryRead, DirectoryWrite,
         CodeCallWrite,
+        AdminScoped,
+    ];
+
+    /// <summary>
+    /// Permissions granted when a user is auto-assigned to a tenant by Entra group
+    /// membership (Tenant.AzureAdGroupId), rather than by anyone approving them.
+    ///
+    /// Deliberately ScopedAdminPermissions minus CodeCall.Write: group membership is
+    /// managed by IT and can change without anyone reviewing what it confers here, and
+    /// CodeCall.Write is the right to page on-call clinicians for a real emergency. That
+    /// is not a side effect anyone should acquire by being added to a directory group —
+    /// it stays available through an explicit PermissionGrant.
+    /// </summary>
+    public static readonly string[] AutoAssignedPermissions =
+    [
+        ScheduleRead, ScheduleWrite,
+        DirectoryRead, DirectoryWrite,
         AdminScoped,
     ];
 

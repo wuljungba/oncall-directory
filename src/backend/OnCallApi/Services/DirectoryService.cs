@@ -15,6 +15,14 @@ public class DirectoryService : IDirectoryService
         _scope = scope;
     }
 
+    // Read paths are AsNoTracking deliberately, and it is not only a performance choice.
+    // With tracking on, EF relationship fixup back-populates the reverse navigations on
+    // every entity it loads -- Department.Employees gets filled in with each tracked
+    // employee, whose own Department is filled in, and so on. Serializing that graph turned
+    // a 17-row directory into a 3 GB response. ReferenceHandler.IgnoreCycles only breaks
+    // true cycles; it does not stop the breadth. Not tracking means the reverse navigations
+    // stay empty and each row serializes as itself.
+
     /// <summary>
     /// Restricts an employee query to the caller's tenants. A caller with no tenants sees
     /// nothing — the filter is never skipped, which is what made this fail open before.
@@ -39,6 +47,7 @@ public class DirectoryService : IDirectoryService
     public async Task<List<Employee>> SearchEmployeesAsync(string query, int? departmentId = null)
     {
         var q = _db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Where(e => e.IsActive);
 
@@ -66,6 +75,7 @@ public class DirectoryService : IDirectoryService
     public async Task<List<Employee>> GetDepartmentEmployeesAsync(int departmentId)
     {
         var q = await ScopeEmployeesAsync(_db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Where(e => e.DepartmentId == departmentId && e.IsActive));
 
@@ -75,6 +85,7 @@ public class DirectoryService : IDirectoryService
     public async Task<Employee?> GetEmployeeByIdAsync(Guid id)
     {
         var q = await ScopeEmployeesAsync(_db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Include(e => e.Manager)
             .Where(e => e.Id == id));
@@ -85,6 +96,7 @@ public class DirectoryService : IDirectoryService
     public async Task<Employee?> GetEmployeeByEmailAsync(string email)
     {
         var q = await ScopeEmployeesAsync(_db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Where(e => e.Email.ToLower() == email.ToLower()));
 
@@ -94,6 +106,7 @@ public class DirectoryService : IDirectoryService
     public async Task<List<PhoneTree>> GetPhoneTreesAsync(int? departmentId = null)
     {
         var query = _db.PhoneTrees
+            .AsNoTracking()
             .Include(t => t.Nodes.OrderBy(n => n.Order))
             .ThenInclude(n => n.Employee)
             .AsQueryable();
@@ -119,6 +132,7 @@ public class DirectoryService : IDirectoryService
     {
         var now = DateTime.UtcNow;
         var query = _db.Employees
+            .AsNoTracking()
             .Include(e => e.Department)
             .Where(e => e.OnCallStatus && e.IsActive);
 
@@ -129,8 +143,59 @@ public class DirectoryService : IDirectoryService
         return await query.ToListAsync();
     }
 
+    /// <summary>
+    /// Resolves a phone tree the caller is allowed to touch, or throws.
+    ///
+    /// Reads were scoped through ScopePhoneTreesAsync but writes were not, so a scheduler
+    /// in one tenant could rewrite another tenant's escalation tree — repointing or
+    /// emptying it so their next code call paged nobody. Every mutator now resolves through
+    /// the same scoped query, and an out-of-tenant id reads as "not found".
+    /// </summary>
+    private async Task<PhoneTree> RequireTreeAsync(int treeId)
+    {
+        var scoped = await ScopePhoneTreesAsync(_db.PhoneTrees.Where(t => t.Id == treeId));
+        return await scoped.FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException($"Phone tree {treeId} not found");
+    }
+
+    /// <summary>
+    /// Confirms a department the caller may place a tree in.
+    ///
+    /// A tree reaches its tenant only through its department, so a null department would
+    /// create a tree that no scoped read can ever see again — an orphan nobody can find or
+    /// fix. Only an unrestricted caller (super admin, background service) may create one.
+    /// </summary>
+    private async Task EnsureDepartmentAllowedAsync(int? departmentId)
+    {
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+
+        // Existence is checked for everyone, super admins included. Returning early for an
+        // unrestricted caller meant a typo'd department id reached SaveChanges and came
+        // back as an opaque 500 instead of a 404.
+        if (tenantIds == null)
+        {
+            if (departmentId == null) return;
+            var exists = await _db.Departments.AnyAsync(d => d.Id == departmentId.Value);
+            if (!exists)
+                throw new KeyNotFoundException($"Department {departmentId} not found");
+            return;
+        }
+
+        if (departmentId == null)
+            throw new KeyNotFoundException("A phone tree must belong to a department.");
+
+        var allowed = await _db.Departments
+            .AnyAsync(d => d.Id == departmentId.Value
+                && d.TenantId.HasValue
+                && tenantIds.Contains(d.TenantId.Value));
+
+        if (!allowed)
+            throw new KeyNotFoundException($"Department {departmentId} not found");
+    }
+
     public async Task<PhoneTree> CreatePhoneTreeAsync(PhoneTree tree)
     {
+        await EnsureDepartmentAllowedAsync(tree.DepartmentId);
         _db.PhoneTrees.Add(tree);
         await _db.SaveChangesAsync();
         return tree;
@@ -138,8 +203,9 @@ public class DirectoryService : IDirectoryService
 
     public async Task<PhoneTree> UpdatePhoneTreeAsync(PhoneTree tree)
     {
-        var existing = await _db.PhoneTrees.FindAsync(tree.Id)
-            ?? throw new KeyNotFoundException($"Phone tree {tree.Id} not found");
+        var existing = await RequireTreeAsync(tree.Id);
+        // Guard the destination too, so an update cannot move a tree into another tenant.
+        await EnsureDepartmentAllowedAsync(tree.DepartmentId);
         _db.Entry(existing).CurrentValues.SetValues(tree);
         await _db.SaveChangesAsync();
         return existing;
@@ -147,14 +213,14 @@ public class DirectoryService : IDirectoryService
 
     public async Task DeletePhoneTreeAsync(int id)
     {
-        var tree = await _db.PhoneTrees.FindAsync(id)
-            ?? throw new KeyNotFoundException($"Phone tree {id} not found");
+        var tree = await RequireTreeAsync(id);
         _db.PhoneTrees.Remove(tree);
         await _db.SaveChangesAsync();
     }
 
     public async Task<PhoneTreeNode> AddNodeAsync(int treeId, PhoneTreeNode node)
     {
+        await RequireTreeAsync(treeId);
         node.PhoneTreeId = treeId;
         _db.PhoneTreeNodes.Add(node);
         await _db.SaveChangesAsync();
@@ -165,6 +231,12 @@ public class DirectoryService : IDirectoryService
     {
         var existing = await _db.PhoneTreeNodes.FindAsync(node.Id)
             ?? throw new KeyNotFoundException($"Phone tree node {node.Id} not found");
+
+        // Both the tree the node is in and the tree it would move to must be in scope.
+        await RequireTreeAsync(existing.PhoneTreeId);
+        if (node.PhoneTreeId != existing.PhoneTreeId)
+            await RequireTreeAsync(node.PhoneTreeId);
+
         _db.Entry(existing).CurrentValues.SetValues(node);
         await _db.SaveChangesAsync();
     }
@@ -173,12 +245,15 @@ public class DirectoryService : IDirectoryService
     {
         var node = await _db.PhoneTreeNodes.FindAsync(nodeId)
             ?? throw new KeyNotFoundException($"Phone tree node {nodeId} not found");
+        await RequireTreeAsync(node.PhoneTreeId);
         _db.PhoneTreeNodes.Remove(node);
         await _db.SaveChangesAsync();
     }
 
     public async Task ReorderNodesAsync(int treeId, List<int> nodeIds)
     {
+        await RequireTreeAsync(treeId);
+
         var nodes = await _db.PhoneTreeNodes
             .Where(n => n.PhoneTreeId == treeId)
             .ToListAsync();

@@ -7,12 +7,31 @@ namespace OnCallApi.Services;
 public class DutyHourService : IDutyHourService
 {
     private readonly AppDbContext _db;
+    private readonly ITenantScope _scope;
     private readonly ILogger<DutyHourService> _logger;
 
-    public DutyHourService(AppDbContext db, ILogger<DutyHourService> logger)
+    public DutyHourService(AppDbContext db, ITenantScope scope, ILogger<DutyHourService> logger)
     {
         _db = db;
+        _scope = scope;
         _logger = logger;
+    }
+
+    /// <summary>
+    /// True when the employee is one the caller may evaluate.
+    ///
+    /// This gates reads AND writes: CheckComplianceAsync persists DutyHourViolation rows,
+    /// so an unscoped call did not merely leak another tenant's staff hours, it wrote to
+    /// their compliance record.
+    /// </summary>
+    private async Task<bool> EmployeeInScopeAsync(Guid employeeId)
+    {
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds == null) return true;
+
+        return await _db.Employees.AnyAsync(e => e.Id == employeeId
+            && e.TenantId.HasValue
+            && tenantIds.Contains(e.TenantId.Value));
     }
 
     public async Task<List<DutyHourRule>> GetRulesAsync(int? departmentId = null)
@@ -20,6 +39,22 @@ public class DutyHourService : IDutyHourService
         var query = _db.DutyHourRules.AsQueryable();
         if (departmentId.HasValue)
             query = query.Where(r => r.DepartmentId == null || r.DepartmentId == departmentId.Value);
+
+        // A rule reaches a tenant only through its department. Omitting departmentId used
+        // to return every tenant's rules; now an unscoped caller sees only their own.
+        //
+        // Known gap: a rule with no department is "organization-wide", a notion that
+        // predates multi-tenancy and has no owner, so those stay visible to everyone.
+        // Giving DutyHourRule its own TenantId is the real fix and needs a migration.
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds != null)
+        {
+            query = query.Where(r => r.DepartmentId == null
+                || (r.Department != null
+                    && r.Department.TenantId.HasValue
+                    && tenantIds.Contains(r.Department.TenantId.Value)));
+        }
+
         return await query.Where(r => r.IsEnabled).OrderBy(r => r.Name).ToListAsync();
     }
 
@@ -55,6 +90,10 @@ public class DutyHourService : IDutyHourService
     /// </summary>
     public async Task<List<DutyHourViolation>> CheckComplianceAsync(Guid employeeId, DateTime? from = null, DateTime? to = null, int? departmentId = null)
     {
+        // Checked before anything is evaluated or persisted: this method writes violation
+        // rows, so an out-of-scope employee must not reach it at all.
+        if (!await EmployeeInScopeAsync(employeeId)) return new List<DutyHourViolation>();
+
         var rules = await GetRulesAsync(departmentId);
         if (rules.Count == 0) return new List<DutyHourViolation>();
 
@@ -186,6 +225,11 @@ public class DutyHourService : IDutyHourService
         if (departmentId.HasValue)
             query = query.Where(e => e.DepartmentId == departmentId.Value);
 
+        // Without this, omitting departmentId swept every tenant's staff into the check.
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds != null)
+            query = query.Where(e => e.TenantId.HasValue && tenantIds.Contains(e.TenantId.Value));
+
         var employees = await query.ToListAsync();
         var violations = new List<DutyHourViolation>();
         foreach (var emp in employees)
@@ -197,6 +241,8 @@ public class DutyHourService : IDutyHourService
 
     public async Task<int> GetHoursWorkedAsync(Guid employeeId, DateTime from, DateTime to)
     {
+        if (!await EmployeeInScopeAsync(employeeId)) return 0;
+
         var shifts = await _db.Shifts
             .Where(s => s.EmployeeId == employeeId
                 && s.StartTime >= from
@@ -211,6 +257,8 @@ public class DutyHourService : IDutyHourService
 
     public async Task<int> GetConsecutiveDaysAsync(Guid employeeId, DateTime asOf)
     {
+        if (!await EmployeeInScopeAsync(employeeId)) return 0;
+
         var shifts = await _db.Shifts
             .Where(s => s.EmployeeId == employeeId
                 && s.EndTime <= asOf

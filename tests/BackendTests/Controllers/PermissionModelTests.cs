@@ -219,7 +219,13 @@ public class PermissionModelTests
         var permissions = await PermissionsFor(factory, token);
 
         permissions.Should().Contain(Permissions.AdminScoped);
-        permissions.Should().Contain(Permissions.CodeCallWrite);
+        permissions.Should().Contain(Permissions.DirectoryWrite);
+
+        // Deliberately NOT CodeCall.Write. This path grants access because IT added someone
+        // to a directory group, with nobody reviewing the individual; firing a live code
+        // call pages on-call clinicians for a real emergency and needs an explicit grant.
+        permissions.Should().NotContain(Permissions.CodeCallWrite,
+            "group membership must not confer the right to page clinicians");
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -326,5 +332,49 @@ public class PermissionModelTests
             IsActive = true,
         });
         db.SaveChanges();
+    }
+
+    // ── Role names confer nothing on a real token ──────────────────────────────
+    // Permissions.DevRoleToPermissions maps "OnCall.Admin" to Admin.Full + Tenant.Manage,
+    // but it exists solely for the dev-auth handler. The role-claim policies were removed
+    // as "a weaker parallel authorization path", and this pins that: if anyone reconnects
+    // role expansion to real tokens, one app role would silently own every tenant's data.
+
+    [Fact]
+    public async Task AnAdminRoleClaimOnARealTokenGrantsNoAdminPermissions()
+    {
+        var factory = CreateFactory($"perm-model-{Guid.NewGuid():N}");
+
+        string token;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var jwt = scope.ServiceProvider.GetRequiredService<LocalJwtService>();
+            token = jwt.GenerateToken(
+                31, "roleclaimer@hospital.test", "Role Claimer", new[] { "OnCall.Admin" });
+        }
+
+        var permissions = await PermissionsFor(factory, token);
+
+        permissions.Should().NotContain(Permissions.AdminFull);
+        permissions.Should().NotContain(Permissions.TenantManage);
+        permissions.Should().NotContain(Permissions.AdminScoped);
+        permissions.Should().BeEmpty(
+            "a role name in a token is not an authorization decision; permissions come from "
+            + "configured super admins, TenantAdmin rows or PermissionGrant rows");
+    }
+
+    /// <summary>
+    /// The grant UI must never be able to mint an administrator. AssignablePermissions
+    /// excludes the admin permissions and ParseAssignablePermissionCsv enforces it; this
+    /// pins the end-to-end result rather than the constant.
+    /// </summary>
+    [Fact]
+    public void AdminPermissionsAreNotAssignableThroughAGrant()
+    {
+        var parsed = Permissions.ParseAssignablePermissionCsv(
+            $"{Permissions.AdminFull},{Permissions.TenantManage},{Permissions.AdminScoped},{Permissions.ScheduleRead}");
+
+        parsed.Should().BeEquivalentTo(new[] { Permissions.ScheduleRead },
+            "only the non-admin permissions may be handed out by an admin through the dashboard");
     }
 }

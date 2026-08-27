@@ -32,7 +32,10 @@ import { getAuthProvider } from '@/services/auth'
 interface ImportResult {
   totalRows: number
   imported: number
+  /** The errors shown to the user. Capped by the server; see totalErrors. */
   errors: string[]
+  /** How many errors there were in total, including any the list omits. */
+  totalErrors?: number
   isValid: boolean
 }
 
@@ -74,6 +77,30 @@ function buildQueryString(params: Record<string, string | number | boolean | und
  * (404) apart from "you are not allowed / not signed in" (401/403) — a distinction
  * that decides, for example, whether the onboarding wizard should appear.
  */
+/**
+ * Pulls a human-readable message out of an error response.
+ *
+ * The body was surfaced verbatim, so a failed save showed the user the raw JSON --
+ * `{"error":"An employee with this email already exists."}` -- inside a toast. The API
+ * uses two shapes: `{error: "..."}` for handled cases and `{error: {code, message}}` for
+ * the exception middleware.
+ */
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  const text = await res.text()
+  if (!text) return fallback
+
+  try {
+    const body = JSON.parse(text)
+    if (typeof body?.error === 'string') return body.error
+    if (typeof body?.error?.message === 'string') return body.error.message
+    if (typeof body?.message === 'string') return body.message
+    if (typeof body?.title === 'string') return body.title
+  } catch {
+    // Not JSON — the raw text is the best message available.
+  }
+  return text
+}
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message)
@@ -95,8 +122,7 @@ async function fetchApi<T>(
   const res = await fetch(`${API_BASE}${endpoint}`, { ...options, headers })
 
   if (!res.ok) {
-    const error = await res.text()
-    throw new ApiError(res.status, error || `API error: ${res.status}`)
+    throw new ApiError(res.status, await readErrorMessage(res, `API error: ${res.status}`))
   }
 
   return res.json()
@@ -232,8 +258,7 @@ async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
   })
 
   if (!res.ok) {
-    const error = await res.text()
-    throw new ApiError(res.status, error || `API error: ${res.status}`)
+    throw new ApiError(res.status, await readErrorMessage(res, `API error: ${res.status}`))
   }
 
   return res.json()
@@ -477,6 +502,10 @@ export interface CurrentUserResponse {
   tenantIds: number[]
   tenantRoles: Record<string, string>
   employeeId?: string | null
+  /** "development" when the backend simulated this identity instead of validating a token. */
+  authMode?: 'development' | 'production'
+  /** Minutes of inactivity before the client must sign the user out. 0 disables it. */
+  sessionTimeoutMinutes?: number
 }
 
 // ── Tenant Management ──

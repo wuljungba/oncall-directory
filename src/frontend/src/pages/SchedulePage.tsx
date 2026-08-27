@@ -8,6 +8,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { useSignalR } from '@/hooks/useSignalR'
 import { formatTimeRange, formatDateOnly } from '@/utils/date'
 import type { Schedule, Shift, Department, Employee } from '@/types'
+import { downloadBlob } from '@/utils/download'
 
 export default function SchedulePage() {
   const [schedules, setSchedules] = useState<Schedule[]>([])
@@ -264,12 +265,7 @@ export default function SchedulePage() {
     lines.push('END:VCALENDAR')
 
     const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `oncall-schedule-${selectedSchedule}.ics`
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadBlob(blob, `oncall-schedule-${selectedSchedule}.ics`)
   }
 
   async function handleCreateSchedule(data: Partial<Schedule>) {

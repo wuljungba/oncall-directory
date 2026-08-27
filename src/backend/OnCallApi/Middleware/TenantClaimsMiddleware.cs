@@ -221,7 +221,12 @@ public class TenantClaimsMiddleware
                 identity.AddClaim(new Claim($"TenantId:{tenant.Id}", "DepartmentAdmin"));
             }
 
-            foreach (var perm in Permissions.ScopedAdminPermissions)
+            // AutoAssignedPermissions, not ScopedAdminPermissions: this path grants access
+            // because IT added someone to a directory group, with nobody reviewing the
+            // individual. It therefore withholds CodeCall.Write — the right to page on-call
+            // clinicians for a real emergency — which stays available through an explicit
+            // grant. An admin who genuinely needs it can still hand it out.
+            foreach (var perm in Permissions.AutoAssignedPermissions)
             {
                 if (!identity.HasClaim(Permissions.ClaimType, perm))
                 {

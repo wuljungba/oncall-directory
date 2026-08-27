@@ -3,6 +3,7 @@ import { AlertTriangle, Download, FileText } from 'lucide-react'
 import { auditApi } from '@/services/api'
 import { formatDateOnly } from '@/utils/date'
 import type { OnCallReportRow } from '@/types'
+import { downloadCsv } from '@/utils/download'
 
 /**
  * Admin on-call audit report: who was on call, when, what tier, shift status, and any
@@ -33,18 +34,21 @@ export default function OnCallAuditSection() {
   const incidentCount = useMemo(() => rows.reduce((n, r) => n + r.incidents.length, 0), [rows])
 
   function handleExportCsv() {
-    const header = 'Date,Employee,Tier,Shift Start,Shift End,Status,Incidents\n'
-    const body = rows.map(r => {
-      const inc = r.incidents.map(i =>
-        `#${i.id} ${i.location || ''} ${i.requestedByName ? `reported:${i.requestedByName}` : ''} ${i.initiatedByName ? `triggered:${i.initiatedByName}` : ''} ${i.notifiedByName ? `notified:${i.notifiedByName}` : ''} ${i.outcome || ''}`
-      ).join(' | ')
-      return `"${formatDateOnly(r.start)}","${r.employeeName}","${r.tier}","${new Date(r.start).toLocaleString()}","${new Date(r.end).toLocaleString()}","${r.status}","${inc}"`
-    }).join('\n')
-    const blob = new Blob([header + body], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `oncall-audit-${new Date().toISOString().slice(0, 10)}.csv`
-    a.click(); URL.revokeObjectURL(url)
+    const csvRows = [
+      ['Date', 'Employee', 'Tier', 'Shift Start', 'Shift End', 'Status', 'Incidents'],
+      ...rows.map(r => [
+        formatDateOnly(r.start),
+        r.employeeName,
+        r.tier,
+        new Date(r.start).toLocaleString(),
+        new Date(r.end).toLocaleString(),
+        r.status,
+        r.incidents.map(i =>
+          `#${i.id} ${i.location || ''} ${i.requestedByName ? `reported:${i.requestedByName}` : ''} ${i.initiatedByName ? `triggered:${i.initiatedByName}` : ''} ${i.notifiedByName ? `notified:${i.notifiedByName}` : ''} ${i.outcome || ''}`
+        ).join(' | '),
+      ]),
+    ]
+    downloadCsv(`oncall-audit-${new Date().toISOString().slice(0, 10)}.csv`, csvRows)
   }
 
   return (

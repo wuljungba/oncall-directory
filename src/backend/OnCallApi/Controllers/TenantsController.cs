@@ -43,13 +43,16 @@ public class TenantsController : ControllerBase
     [HttpPost]
     public async Task<ActionResult<Tenant>> Create([FromBody] CreateTenantRequest request)
     {
-        var existing = await _db.Tenants.AnyAsync(t => t.Name == request.Name);
+        // Trimmed and compared case-insensitively: "Acme" and "acme " both succeeded and
+        // then looked identical in the admin UI, which is a support call waiting to happen.
+        var name = request.Name.Trim();
+        var existing = await _db.Tenants.AnyAsync(t => t.Name.ToLower() == name.ToLower());
         if (existing)
             return Conflict(new { error = "A tenant with this name already exists." });
 
         var tenant = new Tenant
         {
-            Name = request.Name,
+            Name = name,
             Description = request.Description,
             AzureAdGroupId = request.AzureAdGroupId,
             ContactEmail = request.ContactEmail,

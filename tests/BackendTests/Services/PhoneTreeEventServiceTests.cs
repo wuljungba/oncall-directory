@@ -29,7 +29,7 @@ public class PhoneTreeEventServiceTests
     public async Task CreateEventAsync_PersistsReporterAndLoadsCodeType()
     {
         var db = CreateDb();
-        var service = new PhoneTreeEventService(db, NullLogger<PhoneTreeEventService>.Instance);
+        var service = new PhoneTreeEventService(db, TestTenantScopes.Unrestricted, NullLogger<PhoneTreeEventService>.Instance);
 
         var created = await service.CreateEventAsync(new PhoneTreeEvent
         {
@@ -52,7 +52,7 @@ public class PhoneTreeEventServiceTests
     public async Task ResolveEventAsync_StoresNotifiedNameAndEndsEvent()
     {
         var db = CreateDb();
-        var service = new PhoneTreeEventService(db, NullLogger<PhoneTreeEventService>.Instance);
+        var service = new PhoneTreeEventService(db, TestTenantScopes.Unrestricted, NullLogger<PhoneTreeEventService>.Instance);
 
         var created = await service.CreateEventAsync(new PhoneTreeEvent
         {

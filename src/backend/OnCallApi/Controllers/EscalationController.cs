@@ -13,12 +13,12 @@ namespace OnCallApi.Controllers;
 public class EscalationController : ControllerBase
 {
     private readonly EscalationService _escalationService;
-    private readonly IHubContext<OnCallNotificationHub> _hub;
+    private readonly ITenantBroadcaster _broadcast;
 
-    public EscalationController(EscalationService escalationService, IHubContext<OnCallNotificationHub> hub)
+    public EscalationController(EscalationService escalationService, ITenantBroadcaster broadcast)
     {
         _escalationService = escalationService;
-        _hub = hub;
+        _broadcast = broadcast;
     }
 
     // ── Policies ──
@@ -36,7 +36,9 @@ public class EscalationController : ControllerBase
     public async Task<ActionResult<EscalationPolicy>> CreatePolicy(EscalationPolicy policy)
     {
         var created = await _escalationService.CreatePolicyAsync(policy);
-        await _hub.Clients.All.SendAsync("EscalationPolicyUpdated", created);
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForDepartmentAsync(created.DepartmentId),
+            "EscalationPolicyUpdated", created, safetyCritical: true);
         return CreatedAtAction(nameof(GetPolicies), new { id = created.Id }, created);
     }
 
@@ -49,7 +51,9 @@ public class EscalationController : ControllerBase
             return BadRequest(new { error = "Route ID and body ID must match." });
 
         var updated = await _escalationService.UpdatePolicyAsync(policy);
-        await _hub.Clients.All.SendAsync("EscalationPolicyUpdated", updated);
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForDepartmentAsync(updated.DepartmentId),
+            "EscalationPolicyUpdated", updated, safetyCritical: true);
         return Ok(updated);
     }
 
@@ -58,8 +62,11 @@ public class EscalationController : ControllerBase
     [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> DeletePolicy(int id)
     {
+        // Resolved before the delete, while the row that carries the tenant still exists.
+        var policyTenantId = await _broadcast.TenantForEscalationPolicyAsync(id);
         await _escalationService.DeletePolicyAsync(id);
-        await _hub.Clients.All.SendAsync("EscalationPolicyUpdated", new { id, deleted = true });
+        await _broadcast.ToTenantAsync(
+            policyTenantId, "EscalationPolicyUpdated", new { id, deleted = true }, safetyCritical: true);
         return NoContent();
     }
 
@@ -83,7 +90,9 @@ public class EscalationController : ControllerBase
         try
         {
             var escEvent = await _escalationService.AcknowledgeEventAsync(id);
-            await _hub.Clients.All.SendAsync("EscalationEventUpdated", escEvent);
+            await _broadcast.ToTenantAsync(
+                await _broadcast.TenantForEscalationPolicyAsync(escEvent.PolicyId),
+                "EscalationEventUpdated", escEvent, safetyCritical: true);
             return Ok(escEvent);
         }
         catch (KeyNotFoundException ex)

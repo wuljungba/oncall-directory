@@ -13,13 +13,13 @@ public class AdminController : ControllerBase
 {
     private readonly IAdminService _adminService;
     private readonly ILogger<AdminController> _logger;
-    private readonly IHubContext<OnCallNotificationHub> _hub;
+    private readonly ITenantBroadcaster _broadcast;
 
-    public AdminController(IAdminService adminService, ILogger<AdminController> logger, IHubContext<OnCallNotificationHub> hub)
+    public AdminController(IAdminService adminService, ILogger<AdminController> logger, ITenantBroadcaster broadcast)
     {
         _adminService = adminService;
         _logger = logger;
-        _hub = hub;
+        _broadcast = broadcast;
     }
 
     // ── Employees ──
@@ -50,7 +50,7 @@ public class AdminController : ControllerBase
         try
         {
             var employee = await _adminService.CreateEmployeeAsync(request);
-            await _hub.Clients.All.SendAsync("EmployeeCreated", employee);
+            await _broadcast.ToTenantAsync(employee.TenantId, "EmployeeCreated", employee);
             return CreatedAtAction(nameof(GetEmployee), new { id = employee.Id }, employee);
         }
         catch (InvalidOperationException ex)
@@ -67,7 +67,7 @@ public class AdminController : ControllerBase
         try
         {
             var employee = await _adminService.UpdateEmployeeAsync(id, request);
-            await _hub.Clients.All.SendAsync("EmployeeUpdated", employee);
+            await _broadcast.ToTenantAsync(employee.TenantId, "EmployeeUpdated", employee);
             return Ok(employee);
         }
         catch (KeyNotFoundException)
@@ -87,8 +87,9 @@ public class AdminController : ControllerBase
     {
         try
         {
+            var deactivatedTenantId = await _broadcast.TenantForEmployeeAsync(id);
             await _adminService.DeactivateEmployeeAsync(id);
-            await _hub.Clients.All.SendAsync("EmployeeDeactivated", new { id });
+            await _broadcast.ToTenantAsync(deactivatedTenantId, "EmployeeDeactivated", new { id });
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -105,7 +106,8 @@ public class AdminController : ControllerBase
         try
         {
             await _adminService.ReactivateEmployeeAsync(id);
-            await _hub.Clients.All.SendAsync("EmployeeUpdated", new { id, isActive = true });
+            await _broadcast.ToTenantAsync(
+                await _broadcast.TenantForEmployeeAsync(id), "EmployeeUpdated", new { id, isActive = true });
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -122,8 +124,10 @@ public class AdminController : ControllerBase
     {
         try
         {
+            // Resolved before the delete, while the row that carries the tenant still exists.
+            var deletedTenantId = await _broadcast.TenantForEmployeeAsync(id);
             await _adminService.DeleteEmployeeAsync(id);
-            await _hub.Clients.All.SendAsync("EmployeeDeleted", new { id });
+            await _broadcast.ToTenantAsync(deletedTenantId, "EmployeeDeleted", new { id });
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -159,9 +163,18 @@ public class AdminController : ControllerBase
     [Authorize(Policy = "RequireAdminFullOrScoped")]
     public async Task<ActionResult<Department>> CreateDepartment([FromBody] CreateDepartmentRequest request)
     {
-        var department = await _adminService.CreateDepartmentAsync(request);
-        await _hub.Clients.All.SendAsync("DepartmentCreated", department);
-        return CreatedAtAction(nameof(GetAllDepartments), new { id = department.Id }, department);
+        try
+        {
+            var department = await _adminService.CreateDepartmentAsync(request);
+            await _broadcast.ToTenantAsync(department.TenantId, "DepartmentCreated", department);
+            return CreatedAtAction(nameof(GetAllDepartments), new { id = department.Id }, department);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Without this the action had no handler at all, so a name clash or a bad
+            // tenant surfaced as an opaque 500.
+            return Conflict(new { error = ex.Message });
+        }
     }
 
     /// <summary>Update a department.</summary>
@@ -172,7 +185,7 @@ public class AdminController : ControllerBase
         try
         {
             var department = await _adminService.UpdateDepartmentAsync(id, request);
-            await _hub.Clients.All.SendAsync("DepartmentUpdated", department);
+            await _broadcast.ToTenantAsync(department.TenantId, "DepartmentUpdated", department);
             return Ok(department);
         }
         catch (KeyNotFoundException)
@@ -188,8 +201,9 @@ public class AdminController : ControllerBase
     {
         try
         {
+            var deptTenantId = await _broadcast.TenantForDepartmentAsync(id);
             await _adminService.DeactivateDepartmentAsync(id);
-            await _hub.Clients.All.SendAsync("DepartmentDeactivated", new { id });
+            await _broadcast.ToTenantAsync(deptTenantId, "DepartmentDeactivated", new { id });
             return NoContent();
         }
         catch (KeyNotFoundException)

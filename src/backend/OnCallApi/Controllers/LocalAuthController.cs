@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OnCallApi.Models;
@@ -26,8 +27,15 @@ public class LocalAuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             return BadRequest(new { error = "Email and password are required." });
 
-        if (request.Password.Length < 8)
-            return BadRequest(new { error = "Password must be at least 8 characters." });
+        // The login identifier must be a real email address, and this matters beyond
+        // hygiene: TenantClaimsMiddleware decides whether a PermissionGrant targets an
+        // email or an object id purely by whether it contains "@". A non-email username
+        // that happens to contain one would be matched against the wrong set of grants.
+        if (!new EmailAddressAttribute().IsValid(request.Email) || request.Email.Length > 256)
+            return BadRequest(new { error = "Email must be a valid address of at most 256 characters." });
+
+        if (request.Password.Length < 8 || request.Password.Length > 256)
+            return BadRequest(new { error = "Password must be between 8 and 256 characters." });
 
         try
         {

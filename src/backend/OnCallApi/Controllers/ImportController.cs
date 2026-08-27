@@ -70,11 +70,20 @@ public class ImportController : ControllerBase
             // Tenant scoping: a super admin may import into the requested subscription;
             // any other caller (sub-admin / Directory.Write) is forced to their own tenant
             // regardless of the query param — prevents cross-tenant employee writes.
-            var effectiveTenantId = _tenants.IsSuperAdmin(User)
+            var isSuperAdmin = _tenants.IsSuperAdmin(User);
+            var effectiveTenantId = isSuperAdmin
                 ? tenantId
                 : (await _tenants.GetAuthorizedTenantIdsAsync(User)).FirstOrDefault();
 
-            var result = await _importService.ImportEmployeesAsync(memoryStream, effectiveTenantId);
+            // Which existing records this caller may match against. Null means a super
+            // admin (unrestricted); anyone else can only touch their own tenants, so an
+            // upload cannot reach across into another customer's directory.
+            var allowedTenantIds = isSuperAdmin
+                ? null
+                : await _tenants.GetAuthorizedTenantIdsAsync(User);
+
+            var result = await _importService.ImportEmployeesAsync(
+                memoryStream, effectiveTenantId, allowedTenantIds);
 
             _logger.LogInformation("Import result: {TotalRows} total, {Imported} imported, {Errors} errors (tenantId={TenantId})",
                 result.TotalRows, result.Imported, result.Errors.Count, effectiveTenantId);

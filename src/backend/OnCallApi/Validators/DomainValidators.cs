@@ -59,11 +59,38 @@ public static partial class PhoneValidation
     /// </summary>
     public static string? NormalizeToDialable(string? phone, string defaultCountryCode = "1")
     {
+        // A number carrying an extension is refused rather than repaired. Stripping
+        // non-digits merges the extension into the number itself -- "202-555-0134 x4412"
+        // became "+120255501344412", which is 15 digits, passes the E.164 regex and clears
+        // the dialable floor, so it looked entirely valid and would have been dialled.
+        // Dropping the extension instead would silently reroute a page to a switchboard.
+        // Refusing puts the problem in front of whoever is importing the data.
+        if (HasExtension(phone)) return null;
+
         var normalized = NormalizeToE164(phone, defaultCountryCode);
         if (normalized == null) return null;
 
         return normalized.Count(char.IsDigit) >= MinimumDialableDigits ? normalized : null;
     }
+
+    /// <summary>Markers real HR exports use for an extension, e.g. "555-0134 x4412".</summary>
+    private static bool HasExtension(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return false;
+
+        var value = phone.Trim();
+        // A leading marker is a bare extension, which the dialable floor already rejects;
+        // what matters here is a marker following an otherwise plausible number.
+        var firstDigit = value.IndexOfAny("0123456789".ToCharArray());
+        if (firstDigit < 0) return false;
+
+        var tail = value[firstDigit..];
+        return ExtensionMarker.IsMatch(tail);
+    }
+
+    private static readonly Regex ExtensionMarker =
+        new(@"(?:\bx|\bext\.?|\bextension\b|#)\s*\d+\s*$",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     public static IRuleBuilderOptions<T, string?> E164Phone<T>(this IRuleBuilder<T, string?> ruleBuilder, string fieldName)
     {

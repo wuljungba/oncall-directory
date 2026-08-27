@@ -1,0 +1,210 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.45.15.27210",
+      "templateHash": "5806387493007798482"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "westus3"
+    },
+    "environmentName": {
+      "type": "string",
+      "defaultValue": "production"
+    },
+    "entraTenantId": {
+      "type": "string"
+    },
+    "entraClientId": {
+      "type": "string"
+    },
+    "entraDomain": {
+      "type": "string"
+    },
+    "corsOrigin": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "kvName": {
+      "type": "string",
+      "defaultValue": "kv-prod-lfwnuoyu5blao"
+    }
+  },
+  "variables": {
+    "appName": "[format('app-oncall-{0}', parameters('environmentName'))]",
+    "aiName": "[format('ai-oncall-{0}', parameters('environmentName'))]",
+    "stName": "[format('stoncall{0}', parameters('environmentName'))]",
+    "defaultCorsOrigin": "[if(not(empty(parameters('corsOrigin'))), parameters('corsOrigin'), format('https://{0}.azurewebsites.net', variables('appName')))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-12-01",
+      "name": "[format('plan-oncall-{0}', parameters('environmentName'))]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "S1",
+        "tier": "Standard",
+        "capacity": 1
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-12-01",
+      "name": "[variables('appName')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('plan-oncall-{0}', parameters('environmentName')))]",
+        "httpsOnly": true,
+        "siteConfig": {
+          "netFrameworkVersion": "v8.0",
+          "alwaysOn": true,
+          "minTlsVersion": "1.2",
+          "appSettings": [
+            {
+              "name": "ConnectionStrings__DefaultConnection",
+              "value": "[format('@Microsoft.KeyVault(SecretUri=https://{0}.vault.azure.net/secrets/SqlConnectionString)', parameters('kvName'))]"
+            },
+            {
+              "name": "AzureAd__Instance",
+              "value": "[replace(environment().authentication.loginEndpoint, '/$', '')]"
+            },
+            {
+              "name": "AzureAd__Domain",
+              "value": "[parameters('entraDomain')]"
+            },
+            {
+              "name": "AzureAd__TenantId",
+              "value": "[parameters('entraTenantId')]"
+            },
+            {
+              "name": "AzureAd__ClientId",
+              "value": "[parameters('entraClientId')]"
+            },
+            {
+              "name": "Cors__Origin",
+              "value": "[variables('defaultCorsOrigin')]"
+            },
+            {
+              "name": "ApplicationInsights__ConnectionString",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('aiName')), '2020-02-02').ConnectionString]"
+            },
+            {
+              "name": "Storage__ConnectionString",
+              "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('stName')), '2023-01-01').primaryEndpoints.blob]"
+            },
+            {
+              "name": "WEBSITE_RUN_FROM_PACKAGE",
+              "value": "1"
+            },
+            {
+              "name": "DevAuth__Enabled",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', format('plan-oncall-{0}', parameters('environmentName')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Web/sites/slots",
+      "apiVersion": "2023-12-01",
+      "name": "[format('{0}/{1}', variables('appName'), 'staging')]",
+      "location": "[parameters('location')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', format('plan-oncall-{0}', parameters('environmentName')))]",
+        "httpsOnly": true,
+        "siteConfig": {
+          "netFrameworkVersion": "v8.0",
+          "alwaysOn": true,
+          "minTlsVersion": "1.2",
+          "appSettings": [
+            {
+              "name": "ConnectionStrings__DefaultConnection",
+              "value": "[format('@Microsoft.KeyVault(SecretUri=https://{0}.vault.azure.net/secrets/SqlConnectionString)', parameters('kvName'))]"
+            },
+            {
+              "name": "AzureAd__Instance",
+              "value": "[replace(environment().authentication.loginEndpoint, '/$', '')]"
+            },
+            {
+              "name": "AzureAd__Domain",
+              "value": "[parameters('entraDomain')]"
+            },
+            {
+              "name": "AzureAd__TenantId",
+              "value": "[parameters('entraTenantId')]"
+            },
+            {
+              "name": "AzureAd__ClientId",
+              "value": "[parameters('entraClientId')]"
+            },
+            {
+              "name": "Cors__Origin",
+              "value": "[variables('defaultCorsOrigin')]"
+            },
+            {
+              "name": "ApplicationInsights__ConnectionString",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('aiName')), '2020-02-02').ConnectionString]"
+            },
+            {
+              "name": "Storage__ConnectionString",
+              "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('stName')), '2023-01-01').primaryEndpoints.blob]"
+            },
+            {
+              "name": "WEBSITE_RUN_FROM_PACKAGE",
+              "value": "1"
+            },
+            {
+              "name": "DevAuth__Enabled",
+              "value": "false"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', format('plan-oncall-{0}', parameters('environmentName')))]",
+        "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('kvName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('kvName')), resourceId('Microsoft.Web/sites', variables('appName')), 'kvsecrets-user')]",
+      "properties": {
+        "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites', variables('appName')), '2023-12-01', 'full').identity.principalId]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('appName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults', parameters('kvName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', parameters('kvName')), resourceId('Microsoft.Web/sites/slots', variables('appName'), 'staging'), 'kvsecrets-user')]",
+      "properties": {
+        "roleDefinitionId": "/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6",
+        "principalId": "[reference(resourceId('Microsoft.Web/sites/slots', variables('appName'), 'staging'), '2023-12-01', 'full').identity.principalId]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites/slots', variables('appName'), 'staging')]"
+      ]
+    }
+  ]
+}

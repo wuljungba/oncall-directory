@@ -6,6 +6,7 @@ using OnCallApi.Middleware;
 using OnCallApi.Hubs;
 using OnCallApi.Authentication;
 using OnCallApi.Services.Dispatch;
+using OnCallApi.Authorization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
@@ -125,6 +126,19 @@ if (localSigningKey.Length < 32)
 // ── Authentication ──
 var devAuthEnabled = builder.Configuration.GetValue<bool>("DevAuth:Enabled");
 
+// DevAuth replaces the ENTIRE authentication pipeline: the Microsoft, Google and Local
+// bearer schemes are never registered, JwtValidationMiddleware is skipped, and every
+// request is authenticated from a cookie that defaults to full admin. Outside Development
+// that is a total authentication bypass one setting away, so it fails fast here rather
+// than booting into it. Same posture as the signing-key guard above.
+if (devAuthEnabled && !builder.Environment.IsDevelopment())
+{
+    throw new InvalidOperationException(
+        $"SECURITY: DevAuth:Enabled is true in the '{builder.Environment.EnvironmentName}' environment. "
+        + "Dev auth bypasses all token validation and grants every caller full admin. "
+        + "It is only ever valid in Development — remove the setting from this environment.");
+}
+
 // Register local JWT service (needed by LocalAccountService regardless of auth mode)
 builder.Services.AddSingleton<LocalJwtService>();
 
@@ -185,7 +199,10 @@ else
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
-            ValidIssuer = "https://accounts.google.com",
+            // Google issues `iss` in both forms. The ForwardDefaultSelector below already
+            // routes both to this scheme, so accepting only the absolute form meant a
+            // bare-issuer token was routed here and then rejected as an invalid issuer.
+            ValidIssuers = ["https://accounts.google.com", "accounts.google.com"],
             ValidateAudience = true,
             ValidAudience = googleConfig["ClientId"],
             ValidateLifetime = true,
@@ -202,8 +219,16 @@ else
                     identity.AddClaim(new Claim("auth_provider", "google"));
                     identity.AddClaim(new Claim("auth_validated", "true"));
 
-                    // Map Google "sub" to "oid" for compatibility
-                    var sub = context.Principal!.FindFirst("sub")?.Value;
+                    // Map Google "sub" to "oid" for compatibility.
+                    //
+                    // JwtBearerOptions.MapInboundClaims defaults to true, which renames
+                    // "sub" to ClaimTypes.NameIdentifier before this runs. Reading only
+                    // "sub" therefore always found null, so the "oid" claim was never
+                    // added and PrincipalClaims.GetObjectId fell through to the bare sub —
+                    // meaning a TenantAdmin or PermissionGrant row keyed on "google-{sub}"
+                    // silently never matched the user it was created for.
+                    var sub = context.Principal!.FindFirst("sub")?.Value
+                              ?? context.Principal!.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                     if (sub != null)
                         identity.AddClaim(new Claim("oid", $"google-{sub}"));
 
@@ -225,12 +250,53 @@ else
             OnTokenValidated = async context =>
             {
                 var identity = context.Principal?.Identity as ClaimsIdentity;
-                if (identity != null)
+                if (identity == null)
                 {
-                    identity.AddClaim(new Claim("auth_provider", "local"));
-                    identity.AddClaim(new Claim("auth_validated", "true"));
+                    context.Fail("No identity on the validated token.");
+                    return;
                 }
-                await Task.CompletedTask;
+
+                identity.AddClaim(new Claim("auth_provider", "local"));
+                identity.AddClaim(new Claim("auth_validated", "true"));
+
+                // A local token is self-contained and lives for its full lifetime (24h by
+                // default), so deactivating an account did nothing to sessions already
+                // issued: a departing employee kept working access for another day. The
+                // account is re-checked here, on every request, against the database.
+                //
+                // TenantClaimsMiddleware already does per-request DB work, so this matches
+                // the existing cost model rather than adding a new one.
+                var oid = PrincipalClaims.GetObjectId(context.Principal!);
+                if (oid != null && oid.StartsWith("local-", StringComparison.Ordinal)
+                    && int.TryParse(oid.AsSpan(6), out var accountId))
+                {
+                    var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                    var account = await db.LocalAccounts
+                        .AsNoTracking()
+                        .FirstOrDefaultAsync(a => a.Id == accountId);
+
+                    // Only an account that exists and has been switched off is refused.
+                    // Deactivation is the only removal path (DELETE /api/auth/local/{id} is
+                    // a soft delete), so an absent row means this token was never issued for
+                    // a local account and there is nothing here to revoke.
+                    if (account is { IsActive: false })
+                    {
+                        context.Fail("Local account has been deactivated.");
+                        return;
+                    }
+
+                    // Roles were baked into the token at sign-in and never re-read, so a
+                    // role change did not reach an existing session. Authorization runs on
+                    // Permission claims rather than roles today, but leaving a stale copy
+                    // in place is a trap.
+                    if (account != null)
+                    {
+                        foreach (var stale in identity.FindAll(ClaimTypes.Role).ToList())
+                            identity.RemoveClaim(stale);
+                        foreach (var role in account.Roles)
+                            identity.AddClaim(new Claim(ClaimTypes.Role, role));
+                    }
+                }
             }
         };
     });
@@ -444,6 +510,9 @@ builder.Services.AddScoped<BulkImportService>();
 builder.Services.Configure<OnCallApi.Configuration.SchedulingOptions>(
     builder.Configuration.GetSection(OnCallApi.Configuration.SchedulingOptions.SectionName));
 builder.Services.AddScoped<ITenantScope, TenantScope>();
+// Real-time notifications are addressed to one tenant's group. Registered alongside the
+// tenant scope because it enforces the same boundary on the push side.
+builder.Services.AddScoped<OnCallApi.Hubs.ITenantBroadcaster, OnCallApi.Hubs.TenantBroadcaster>();
 builder.Services.AddScoped<TeamsNotificationService>();
 builder.Services.AddScoped<ITeamsNotificationService>(sp => sp.GetRequiredService<TeamsNotificationService>());
 builder.Services.AddSingleton<AuditService>();

@@ -3,12 +3,15 @@ import { Search, Phone, Mail, MapPin, ShieldCheck, Upload, Download, MessageSqua
 import { directoryApi, importApi, adminApi, departmentsApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import ImportModal from '@/components/ImportModal'
+import { downloadCsv } from '@/utils/download'
+import { useToast } from '@/components/Toast'
 import { isValidE164 } from '@/utils/validation'
 import { presenceLabel } from '@/utils/presence'
 import type { Employee, Department, Tenant } from '@/types'
 
 export default function DirectoryPage() {
   const { canDirectoryWrite, isAdmin, canTenantManage, activeTenantId } = useAuth()
+  const { addToast } = useToast()
   const canPickTenant = isAdmin || canTenantManage
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [importTenantId, setImportTenantId] = useState<number | ''>(activeTenantId ?? '')
@@ -73,25 +76,7 @@ export default function DirectoryPage() {
       '+12025551234', '+12025555678', 'Floor 3 - West Wing', '1',
     ]
 
-    const escape = (val: string) => {
-      if (val.includes(',') || val.includes('"') || val.includes('\n')) {
-        return `"${val.replace(/"/g, '""')}"`
-      }
-      return val
-    }
-
-    const csv = [
-      headers.join(','),
-      sampleRow.map(escape).join(','),
-    ].join('\n')
-
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'employee-import-template.csv'
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadCsv('employee-import-template.csv', [headers, sampleRow])
   }
 
   async function handleUpdateEmployee(id: string, data: Partial<Employee>) {
@@ -102,7 +87,13 @@ export default function DirectoryPage() {
       setShowEditModal(false)
       setEditingEmployee(null)
     } catch (err) {
-      console.error('Failed to update employee:', err)
+      // The modal stays open on failure, so without this the user got no feedback at all —
+      // a duplicate email came back as a silent no-op.
+      addToast({
+        type: 'error',
+        title: 'Could not save changes',
+        description: err instanceof Error ? err.message : 'Please try again.',
+      })
     }
   }
 
@@ -113,7 +104,11 @@ export default function DirectoryPage() {
       setSelectedEmployee(created)
       setShowAddModal(false)
     } catch (err) {
-      console.error('Failed to create employee:', err)
+      addToast({
+        type: 'error',
+        title: 'Could not add employee',
+        description: err instanceof Error ? err.message : 'Please try again.',
+      })
     }
   }
 
@@ -164,7 +159,8 @@ export default function DirectoryPage() {
       <div className="relative">
         <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
         <input
-          type="text"
+          type="search"
+          aria-label="Search the directory"
           placeholder="Search by name, specialty, title, location, department, or email..."
           value={query}
           onChange={(e) => handleSearch(e.target.value)}
@@ -347,7 +343,7 @@ export default function DirectoryPage() {
         isOpen={showImport}
         onClose={() => { setShowImport(false); reloadEmployees() }}
         title="Import Employees"
-        description="Upload a CSV file with employee data. Columns: azureAdObjectId (optional, leave blank for manual accounts), firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId. Phone numbers must be in E.164 format (e.g. +12025551234)."
+        description="Upload a CSV or Excel (.xlsx) file of employee data. Columns: firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId, and azureAdObjectId (optional — leave blank for manual accounts). Everyday headings such as 'First Name' and 'Work Email' are understood too, and any column not listed here is ignored. Phone numbers are accepted in ordinary form, e.g. (202) 555-0134."
         extra={canPickTenant ? (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Subscription (tenant) to import into</label>
@@ -471,8 +467,9 @@ function EditEmployeeModal({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-gray-500 mb-1">First Name</label>
+              <label htmlFor="emp-first-name" className="block text-sm text-gray-500 mb-1">First Name</label>
               <input
+                id="emp-first-name"
                 type="text"
                 required
                 value={firstName}
@@ -481,8 +478,9 @@ function EditEmployeeModal({
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Last Name</label>
+              <label htmlFor="emp-last-name" className="block text-sm text-gray-500 mb-1">Last Name</label>
               <input
+                id="emp-last-name"
                 type="text"
                 required
                 value={lastName}
@@ -493,8 +491,9 @@ function EditEmployeeModal({
           </div>
 
           <div>
-            <label className="block text-sm text-gray-500 mb-1">Email</label>
+            <label htmlFor="emp-email" className="block text-sm text-gray-500 mb-1">Email</label>
             <input
+              id="emp-email"
               type="email"
               required
               value={email}
@@ -505,8 +504,9 @@ function EditEmployeeModal({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Title</label>
+              <label htmlFor="emp-title" className="block text-sm text-gray-500 mb-1">Title</label>
               <input
+                id="emp-title"
                 type="text"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
@@ -515,8 +515,9 @@ function EditEmployeeModal({
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Specialty</label>
+              <label htmlFor="emp-specialty" className="block text-sm text-gray-500 mb-1">Specialty</label>
               <input
+                id="emp-specialty"
                 type="text"
                 value={specialty}
                 onChange={(e) => setSpecialty(e.target.value)}
@@ -528,8 +529,9 @@ function EditEmployeeModal({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Clinical Role</label>
+              <label htmlFor="emp-clinical-role" className="block text-sm text-gray-500 mb-1">Clinical Role</label>
               <input
+                id="emp-clinical-role"
                 type="text"
                 value={clinicalRole}
                 onChange={(e) => setClinicalRole(e.target.value)}
@@ -538,8 +540,9 @@ function EditEmployeeModal({
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Department</label>
+              <label htmlFor="emp-department" className="block text-sm text-gray-500 mb-1">Department</label>
               <select
+                id="emp-department"
                 value={departmentId}
                 onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : '')}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
@@ -554,8 +557,9 @@ function EditEmployeeModal({
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Office Phone</label>
+              <label htmlFor="emp-office-phone" className="block text-sm text-gray-500 mb-1">Office Phone</label>
               <input
+                id="emp-office-phone"
                 type="tel"
                 value={officePhone}
                 onChange={(e) => setOfficePhone(e.target.value)}
@@ -564,8 +568,9 @@ function EditEmployeeModal({
               />
             </div>
             <div>
-              <label className="block text-sm text-gray-500 mb-1">Mobile Phone</label>
+              <label htmlFor="emp-mobile-phone" className="block text-sm text-gray-500 mb-1">Mobile Phone</label>
               <input
+                id="emp-mobile-phone"
                 type="tel"
                 value={mobilePhone}
                 onChange={(e) => setMobilePhone(e.target.value)}
@@ -576,8 +581,9 @@ function EditEmployeeModal({
           </div>
 
           <div>
-            <label className="block text-sm text-gray-500 mb-1">Office Location</label>
+            <label htmlFor="emp-office-location" className="block text-sm text-gray-500 mb-1">Office Location</label>
             <input
+              id="emp-office-location"
               type="text"
               value={officeLocation}
               onChange={(e) => setOfficeLocation(e.target.value)}

@@ -18,19 +18,28 @@ public class PhoneTreeEventsController : ControllerBase
     private readonly ICodeCallDispatchService _dispatch;
     private readonly DispatchBackgroundService _dispatchStatus;
     private readonly ITenantContextService _tenantContext;
+    private readonly IDirectoryService _directory;
+    private readonly ITenantBroadcaster _broadcast;
+    private readonly ILogger<PhoneTreeEventsController> _logger;
 
     public PhoneTreeEventsController(
         IPhoneTreeEventService service,
         IHubContext<OnCallNotificationHub> hub,
         ICodeCallDispatchService dispatch,
         DispatchBackgroundService dispatchStatus,
-        ITenantContextService tenantContext)
+        ITenantContextService tenantContext,
+        IDirectoryService directory,
+        ITenantBroadcaster broadcast,
+        ILogger<PhoneTreeEventsController> logger)
     {
         _service = service;
         _hub = hub;
         _dispatch = dispatch;
         _dispatchStatus = dispatchStatus;
         _tenantContext = tenantContext;
+        _directory = directory;
+        _broadcast = broadcast;
+        _logger = logger;
     }
 
     // ── Command Center Endpoints ──
@@ -67,7 +76,8 @@ public class PhoneTreeEventsController : ControllerBase
         try
         {
             var evt = await _service.AcknowledgeEventAsync(eventId);
-            await _hub.Clients.All.SendAsync("IncidentUpdated", evt);
+            await _broadcast.ToTenantAsync(
+                await _broadcast.TenantForEventAsync(eventId), "IncidentUpdated", evt, safetyCritical: true);
             return Ok(evt);
         }
         catch (KeyNotFoundException) { return NotFound(); }
@@ -82,7 +92,8 @@ public class PhoneTreeEventsController : ControllerBase
         try
         {
             var evt = await _service.ResolveEventAsync(eventId, request?.Outcome, request?.NotifiedByName);
-            await _hub.Clients.All.SendAsync("IncidentResolved", evt);
+            await _broadcast.ToTenantAsync(
+                await _broadcast.TenantForEventAsync(eventId), "IncidentResolved", evt, safetyCritical: true);
             return Ok(evt);
         }
         catch (KeyNotFoundException) { return NotFound(); }
@@ -108,7 +119,8 @@ public class PhoneTreeEventsController : ControllerBase
     public async Task<ActionResult<DispatchStep>> AddDispatchStep(int eventId, DispatchStep step)
     {
         var created = await _service.AddDispatchStepAsync(eventId, step);
-        await _hub.Clients.All.SendAsync("DispatchStepCompleted", created);
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForEventAsync(eventId), "DispatchStepCompleted", created, safetyCritical: true);
         return Ok(created);
     }
 
@@ -141,6 +153,17 @@ public class PhoneTreeEventsController : ControllerBase
         if (request == null || !request.Confirm)
             return BadRequest(new { error = "Operator confirmation required to dispatch a code call." });
 
+        // Authorization gate, distinct from the consent gate above: confirm the tree is one
+        // the caller may actually use. GetPhoneTreeByIdAsync is tenant-scoped, so a tree in
+        // another tenant reads as "not found" and no event row and no dispatch is created.
+        // Without this, any Schedule.Write holder could page another customer's clinicians.
+        if (await _directory.GetPhoneTreeByIdAsync(treeId) is null)
+        {
+            _logger.LogWarning(
+                "Refused code call: phone tree {TreeId} is not in the caller's tenant scope.", treeId);
+            return NotFound();
+        }
+
         var evt = new PhoneTreeEvent
         {
             PhoneTreeId = treeId,
@@ -164,7 +187,8 @@ public class PhoneTreeEventsController : ControllerBase
         // Enqueue the dispatch job; it is processed by the dispatch background service
         await _dispatch.DispatchIncidentAsync(created.Id, treeType);
 
-        await _hub.Clients.All.SendAsync("IncidentCreated", created);
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForEventAsync(created.Id), "IncidentCreated", created, safetyCritical: true);
         return CreatedAtAction(nameof(GetEvent), new { eventId = created.Id }, created);
     }
 
@@ -179,7 +203,8 @@ public class PhoneTreeEventsController : ControllerBase
         try
         {
             var updated = await _service.UpdateEventAsync(evt);
-            await _hub.Clients.All.SendAsync("IncidentUpdated", updated);
+            await _broadcast.ToTenantAsync(
+                await _broadcast.TenantForEventAsync(eventId), "IncidentUpdated", updated, safetyCritical: true);
             return Ok(updated);
         }
         catch (KeyNotFoundException)
@@ -195,8 +220,11 @@ public class PhoneTreeEventsController : ControllerBase
     {
         try
         {
+            // Resolved before the delete, while the row that carries the tenant still exists.
+            var tenantId = await _broadcast.TenantForEventAsync(eventId);
             await _service.DeleteEventAsync(eventId);
-            await _hub.Clients.All.SendAsync("IncidentUpdated", new { eventId, deleted = true });
+            await _broadcast.ToTenantAsync(
+                tenantId, "IncidentUpdated", new { eventId, deleted = true }, safetyCritical: true);
             return NoContent();
         }
         catch (KeyNotFoundException)
@@ -211,7 +239,9 @@ public class PhoneTreeEventsController : ControllerBase
     public async Task<ActionResult<PhoneTreeEventParticipant>> AddParticipant(int eventId, PhoneTreeEventParticipant participant)
     {
         var created = await _service.AddParticipantAsync(eventId, participant);
-        await _hub.Clients.All.SendAsync("IncidentUpdated", new { eventId, action = "participantAdded" });
+        await _broadcast.ToTenantAsync(
+            await _broadcast.TenantForEventAsync(eventId),
+            "IncidentUpdated", new { eventId, action = "participantAdded" }, safetyCritical: true);
         return CreatedAtAction(nameof(GetEvent), new { eventId }, created);
     }
 
@@ -223,7 +253,9 @@ public class PhoneTreeEventsController : ControllerBase
         try
         {
             await _service.RemoveParticipantAsync(participantId);
-            await _hub.Clients.All.SendAsync("IncidentUpdated", new { eventId, action = "participantRemoved" });
+            await _broadcast.ToTenantAsync(
+                await _broadcast.TenantForEventAsync(eventId),
+                "IncidentUpdated", new { eventId, action = "participantRemoved" }, safetyCritical: true);
             return NoContent();
         }
         catch (KeyNotFoundException)

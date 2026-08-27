@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { AlertTriangle, CheckCircle, Clock, ShieldAlert, Download, ShieldCheck } from 'lucide-react'
 import { complianceApi } from '@/services/api'
 import type { DutyHourRule, DutyHourViolation } from '@/types'
+import { downloadCsv } from '@/utils/download'
 
 function ruleSummary(r: DutyHourRule): string {
   const parts: string[] = []
@@ -65,15 +66,17 @@ export default function CompliancePage() {
   const maxTrend = Math.max(...weeklyTrend.map(w => w.count), 1)
 
   function handleExportCsv() {
-    const header = 'Employee,Description,Severity,Date,Rule\n'
-    const rows = violations.map(v =>
-      `"${v.employee?.firstName || ''} ${v.employee?.lastName || ''}","${v.description}",${v.severity >= 2 ? 'Breach' : 'Warning'},"${new Date(v.violatedAt).toLocaleDateString()}",${v.rule?.name || ''}`
-    ).join('\n')
-    const blob = new Blob([header + rows], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url; a.download = `compliance-report-${new Date().toISOString().slice(0, 10)}.csv`
-    a.click(); URL.revokeObjectURL(url)
+    const rows = [
+      ['Employee', 'Description', 'Severity', 'Date', 'Rule'],
+      ...violations.map(v => [
+        `${v.employee?.firstName || ''} ${v.employee?.lastName || ''}`.trim(),
+        v.description,
+        v.severity >= 2 ? 'Breach' : 'Warning',
+        new Date(v.violatedAt).toLocaleDateString(),
+        v.rule?.name || '',
+      ]),
+    ]
+    downloadCsv(`compliance-report-${new Date().toISOString().slice(0, 10)}.csv`, rows)
   }
 
   return (
