@@ -3,10 +3,10 @@ import {
   Users, Building2, RefreshCw, Shield, Plus, Search, X, Save, Trash2,
   CheckCircle, AlertTriangle, Calendar, Phone, Building,
 } from 'lucide-react'
-import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi } from '@/services/api'
+import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi, identitiesApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import { formatDateOnly } from '@/utils/date'
-import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus } from '@/types'
+import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
 import PermissionsSection from './admin/PermissionsSection'
 import SharedSchedulesSection from './admin/SharedSchedulesSection'
@@ -1593,6 +1593,7 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
       {/* Assign Admin Modal */}
       {showAdminModal && adminTenantId && (
         <AssignAdminModal
+          tenantId={adminTenantId}
           tenantName={tenants.find(t => t.id === adminTenantId)?.name ?? `Tenant ${adminTenantId}`}
           onAssign={handleAssignAdmin}
           onClose={() => { setShowAdminModal(false); setAdminTenantId(null) }}
@@ -1804,7 +1805,20 @@ function TenantFormModal({ tenant, onSave, onClose }: {
   )
 }
 
-function AssignAdminModal({ tenantName, onAssign, onClose }: {
+/**
+ * Appoints an admin for one subscription.
+ *
+ * The identifier this writes is opaque and provider-specific -- an Entra oid for one user,
+ * "google-{sub}" for another -- and nothing validates it, so a typo saved cleanly, showed
+ * "1 Admin" against the tenant, and granted the person nothing. Worse, the value had to be
+ * copied by hand from a different tab.
+ *
+ * So the list of people who have signed in is the primary input, and the id is derived from
+ * whoever is picked. Typing one by hand is still possible, for somebody who has not signed
+ * in yet and therefore appears nowhere to select.
+ */
+function AssignAdminModal({ tenantId, tenantName, onAssign, onClose }: {
+  tenantId: number
   tenantName: string
   onAssign: (azureAdObjectId: string, role: string) => Promise<void>
   onClose: () => void
@@ -1814,9 +1828,40 @@ function AssignAdminModal({ tenantName, onAssign, onClose }: {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [identities, setIdentities] = useState<SignInIdentity[]>([])
+  const [loadingIdentities, setLoadingIdentities] = useState(true)
+  const [identitiesFailed, setIdentitiesFailed] = useState(false)
+  const [search, setSearch] = useState('')
+  const [manualEntry, setManualEntry] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    identitiesApi.list()
+      .then(list => { if (!cancelled) setIdentities(list) })
+      .catch(() => {
+        if (cancelled) return
+        // Fall back to the field rather than stranding the operator with no way through.
+        setIdentitiesFailed(true)
+        setManualEntry(true)
+      })
+      .finally(() => { if (!cancelled) setLoadingIdentities(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  const term = search.trim().toLowerCase()
+  const matches = identities.filter(i => !term
+    || (i.displayName ?? '').toLowerCase().includes(term)
+    || (i.email ?? '').toLowerCase().includes(term)
+    || i.externalObjectId.toLowerCase().includes(term))
+
+  const selected = identities.find(i => i.externalObjectId === azureAdObjectId)
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!azureAdObjectId.trim()) { setError('Azure AD Object ID is required.'); return }
+    if (!azureAdObjectId.trim()) {
+      setError(manualEntry ? "Enter the user's object id." : 'Choose a user to appoint.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -1838,19 +1883,96 @@ function AssignAdminModal({ tenantName, onAssign, onClose }: {
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
             </div>
           )}
-          <div>
-            <label className="block text-sm text-gray-500 mb-1">Azure AD Object ID *</label>
-            <input type="text" required value={azureAdObjectId} onChange={e => setAzureAdObjectId(e.target.value)}
-              placeholder="User's Azure AD Object ID (oid claim)"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
-          </div>
+          {manualEntry ? (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm text-gray-500">User&apos;s object id *</label>
+                {!identitiesFailed && (
+                  <button type="button" onClick={() => { setManualEntry(false); setAzureAdObjectId('') }}
+                    className="text-xs text-amber-500 hover:text-amber-400">Choose from signed-in users</button>
+                )}
+              </div>
+              <input type="text" required value={azureAdObjectId} onChange={e => setAzureAdObjectId(e.target.value)}
+                placeholder="Entra object id, or google-... for a Google account"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+              <p className="text-xs text-gray-600 mt-1">
+                {identitiesFailed
+                  ? 'The signed-in user list could not be loaded, so the id must be entered by hand.'
+                  : 'For someone who has not signed in yet. Anyone who has is easier to pick from the list.'}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm text-gray-500">User *</label>
+                <button type="button" onClick={() => { setManualEntry(true); setAzureAdObjectId('') }}
+                  className="text-xs text-amber-500 hover:text-amber-400">Enter an id instead</button>
+              </div>
+
+              {identities.length > 5 && (
+                <div className="relative mb-2">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-600" />
+                  <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+                    placeholder="Search by name or email"
+                    className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+                </div>
+              )}
+
+              <div className="max-h-56 overflow-y-auto rounded-lg border border-gray-800 divide-y divide-gray-800">
+                {loadingIdentities ? (
+                  <div className="flex justify-center py-8">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-amber-600" />
+                  </div>
+                ) : matches.length === 0 ? (
+                  <p className="text-xs text-gray-600 text-center py-8 px-4">
+                    {identities.length === 0
+                      ? 'Nobody has signed in yet. People appear here the first time they sign in.'
+                      : 'No signed-in user matches that search.'}
+                  </p>
+                ) : matches.map(i => {
+                  const already = i.tenantAdminOf.includes(tenantId)
+                  const isSelected = i.externalObjectId === azureAdObjectId
+                  return (
+                    <button
+                      key={i.id}
+                      type="button"
+                      disabled={already}
+                      onClick={() => setAzureAdObjectId(i.externalObjectId)}
+                      className={`w-full text-left px-4 py-2.5 transition-colors ${
+                        already ? 'opacity-50 cursor-not-allowed'
+                          : isSelected ? 'bg-amber-600/15' : 'hover:bg-gray-800'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm">{i.displayName || i.email || i.externalObjectId}</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400 capitalize">{i.provider}</span>
+                        {already && (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-400">Already an admin here</span>
+                        )}
+                        {isSelected && !already && <CheckCircle className="w-4 h-4 text-amber-500" />}
+                      </div>
+                      <p className="text-xs text-gray-500 truncate">{i.email || 'no email on token'}</p>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {selected && (
+                <p className="text-xs text-gray-600 mt-1 font-mono truncate">{selected.externalObjectId}</p>
+              )}
+            </div>
+          )}
           <div>
             <label className="block text-sm text-gray-500 mb-1">Role</label>
             <select value={role} onChange={e => setRole(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
-              <option value="DepartmentAdmin">Department Admin (scoped to tenant)</option>
-              <option value="SuperAdmin">Scoped Super Admin (this subscription only)</option>
+              <option value="DepartmentAdmin">Department Admin</option>
+              <option value="SuperAdmin">Scoped Super Admin</option>
             </select>
+            <p className="text-xs text-gray-600 mt-1">
+              Both are limited to {tenantName} and currently carry the same permissions:
+              schedules, directory, and starting a code call.
+            </p>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose}
