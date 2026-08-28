@@ -31,7 +31,7 @@ const navItems = [
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions, permissionsUnavailable, isDevAuth, sessionTimeoutMinutes } = useAuth()
+  const { user, signOut, isAdmin, canAdminScoped, isLoading, permissions, permissionsUnavailable, authRejected, isDevAuth, sessionTimeoutMinutes } = useAuth()
   const { isConnected } = useSignalR()
   const { showOnboarding, checking, dismiss } = useOnboarding()
   const visibleNavItems = (isAdmin || canAdminScoped)
@@ -46,8 +46,11 @@ export default function Layout() {
   // A FAILED /api/auth/me is a different thing entirely and must not be reported as a
   // provisioning gap: it sends the user to chase an administrator over what is actually
   // a stopped server or a dropped network.
-  const awaitingProvisioning = !isLoading && permissions.length === 0 && !permissionsUnavailable
+  const awaitingProvisioning = !isLoading && permissions.length === 0
+    && !permissionsUnavailable && !authRejected
   const serverUnreachable = !isLoading && permissionsUnavailable
+  // The API answered and refused the token. Neither of the two states above fits.
+  const sessionRejected = !isLoading && authRejected
 
   // HIPAA auto-logoff. The server caps token lifetime to the same value; this is the
   // part that clears the screen in front of an unattended workstation.
@@ -178,11 +181,13 @@ export default function Layout() {
           </div>
         )}
         <main role="main" className="flex-1 p-6 overflow-auto" aria-label="Main content">
-          {serverUnreachable
-            ? <ServerUnreachable />
-            : awaitingProvisioning
-              ? <AwaitingProvisioning email={user?.email} />
-              : <Outlet />}
+          {sessionRejected
+            ? <SessionRejected onSignOut={() => { void signOut() }} />
+            : serverUnreachable
+              ? <ServerUnreachable />
+              : awaitingProvisioning
+                ? <AwaitingProvisioning email={user?.email} />
+                : <Outlet />}
         </main>
       </div>
     </div>
@@ -196,6 +201,49 @@ export default function Layout() {
  * until an administrator grants it (see docs/onboarding-standard.md §2). Saying so beats
  * rendering a dashboard of 403s.
  */
+/**
+ * Shown when /api/auth/me was reached and refused the token (401/403).
+ *
+ * This used to fall into "can't reach the server", which is actively misleading: the
+ * server is up and answering. The usual causes are configuration rather than outage --
+ * the API validating a different audience or tenant than the one the sign-in was issued
+ * for, or simply an expired session. Signing in again fixes the second; only an operator
+ * can fix the first, so say both.
+ */
+function SessionRejected({ onSignOut }: { onSignOut: () => void }) {
+  return (
+    <div className="max-w-xl mx-auto mt-16 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center">
+      <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-600/10 mb-4">
+        <AlertTriangle className="w-6 h-6 text-red-500" />
+      </div>
+      <h2 className="text-lg font-medium">Your session wasn&apos;t accepted</h2>
+      <p className="text-sm text-gray-400 mt-3">
+        You signed in successfully, but the API rejected the token. The server is running
+        and answering &mdash; this is not an outage, and it is not a missing permission.
+      </p>
+      <p className="text-xs text-gray-600 mt-4">
+        Usually the session has simply expired, so signing in again is worth trying. If it
+        keeps happening, the API is validating a different application or tenant than the
+        one you signed in to, and an operator needs to correct its configuration.
+      </p>
+      <div className="flex items-center justify-center gap-2 mt-5">
+        <button
+          onClick={() => window.location.reload()}
+          className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
+        >
+          Try again
+        </button>
+        <button
+          onClick={onSignOut}
+          className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
+        >
+          Sign in again
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Shown when /api/auth/me could not be reached.
  *

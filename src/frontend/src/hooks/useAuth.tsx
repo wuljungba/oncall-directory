@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react'
-import { authApi } from '@/services/api'
+import { authApi, ApiError } from '@/services/api'
 import { getAuthProvider, getActiveProviderType } from '@/services/auth'
 import type { AuthUser, AuthProviderType } from '@/services/auth'
 
@@ -21,6 +21,16 @@ interface AuthState {
    * backend is not a provisioning problem and must not be reported as one.
    */
   permissionsUnavailable: boolean
+
+  /**
+   * True when /api/auth/me was reached and REJECTED the token (401/403).
+   *
+   * Distinct from both other states: the server is up, so calling it unreachable
+   * sends the user to chase an outage that is not happening, and the account may
+   * hold plenty of permissions, so calling it a provisioning gap is wrong too.
+   * The token itself is the problem -- wrong audience, wrong tenant, or expired.
+   */
+  authRejected: boolean
 
   // Granular permissions (from backend /api/auth/me)
   isAdmin: boolean
@@ -77,6 +87,7 @@ function useAuthState(): AuthState {
   )
   const [permissions, setPermissions] = useState<string[]>(DEV_AUTH ? ALL_PERMISSIONS : [])
   const [permissionsUnavailable, setPermissionsUnavailable] = useState(false)
+  const [authRejected, setAuthRejected] = useState(false)
   const [tenantIds, setTenantIds] = useState<number[]>([])
   const [tenantRoles, setTenantRoles] = useState<Record<string, string>>({})
   const [employeeId, setEmployeeId] = useState<string | null>(null)
@@ -108,6 +119,7 @@ function useAuthState(): AuthState {
     setIsDevAuth(res.authMode === 'development')
     setSessionTimeoutMinutes(res.sessionTimeoutMinutes ?? 0)
     setPermissionsUnavailable(false)
+    setAuthRejected(false)
     if (res.tenantIds) setTenantIds(res.tenantIds)
     if (res.tenantRoles) setTenantRoles(res.tenantRoles)
     setEmployeeId(res.employeeId ?? null)
@@ -162,12 +174,15 @@ function useAuthState(): AuthState {
             const res = await authApi.me()
             handleAuthResponse(res)
           }
-        } catch {
-          // The call failed, so we do not know what this account may do. Recording that
-          // separately stops Layout telling the user their administrator has not granted
-          // them access when in fact the API never answered.
+        } catch (err) {
+          // The call failed, so we do not know what this account may do. WHY it failed
+          // decides what to tell the user: a 401 means the API answered and refused the
+          // token, which reported as "can't reach the server" and sent the user looking
+          // for an outage instead of a misconfigured audience or tenant.
+          const rejected = err instanceof ApiError && (err.status === 401 || err.status === 403)
           setPermissions([])
-          setPermissionsUnavailable(true)
+          setAuthRejected(rejected)
+          setPermissionsUnavailable(!rejected)
         } finally {
           setIsLoading(false)
         }
@@ -262,6 +277,7 @@ function useAuthState(): AuthState {
     canTenantManage: perms.includes('Tenant.Manage'),
     employeeId,
     isDevAuth,
+    authRejected,
     sessionTimeoutMinutes,
     tenantIds,
     tenantRoles,

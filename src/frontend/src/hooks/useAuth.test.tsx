@@ -4,7 +4,17 @@ import { renderHook, waitFor } from '@testing-library/react'
 const me = vi.hoisted(() => vi.fn())
 const getAuthProvider = vi.hoisted(() => vi.fn())
 
-vi.mock('@/services/api', () => ({ authApi: { me } }))
+// useAuth checks `err instanceof ApiError` to tell a refused token apart from an
+// unreachable API, so the mock must carry a compatible class -- omitting it made the
+// whole catch block throw rather than classify.
+const ApiError = vi.hoisted(() => class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+  }
+})
+
+vi.mock('@/services/api', () => ({ authApi: { me }, ApiError }))
 vi.mock('@/services/auth', () => ({
   getAuthProvider,
   getActiveProviderType: () => 'local',
@@ -71,6 +81,28 @@ describe('useAuth permission mapping', () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false))
     expect(result.current.permissionsUnavailable).toBe(true)
     expect(result.current.permissions).toEqual([])
+  })
+
+  // A 401 is the server answering and refusing the token. Reporting it as unreachable
+  // sent the user hunting an outage that was not happening -- the real cause was the API
+  // validating a different audience than the sign-in was issued for.
+  it('treats a refused token as rejected, not unreachable', async () => {
+    me.mockRejectedValue(new ApiError(401, 'Unauthorized'))
+    const { result } = renderHook(() => useAuth(), { wrapper })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.authRejected).toBe(true)
+    expect(result.current.permissionsUnavailable).toBe(false)
+    expect(result.current.permissions).toEqual([])
+  })
+
+  it('treats an unreachable API as unavailable, not rejected', async () => {
+    me.mockRejectedValue(new Error('network down'))
+    const { result } = renderHook(() => useAuth(), { wrapper })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.permissionsUnavailable).toBe(true)
+    expect(result.current.authRejected).toBe(false)
   })
 
   it('auto-selects the only tenant for a scoped admin', async () => {
