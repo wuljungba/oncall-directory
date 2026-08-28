@@ -1,0 +1,682 @@
+<title>OnCall Field Guide</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+  /* ---- Light palette: clinical paper. Warm-neutral ground, ink with a green bias,
+         muted amber accent taken from the app itself, plus true signal colours. ---- */
+  :root {
+    --paper:        #FBFAF7;
+    --surface:      #FFFFFF;
+    --surface-sunk: #F3F1EC;
+    --ink:          #171D1C;
+    --ink-soft:     #4A524F;
+    --ink-faint:    #7A817D;
+    --rule:         #E2DED6;
+    --rule-strong:  #CFC9BE;
+
+    --accent:       #A65416;   /* amber, dialled down for document use */
+    --accent-soft:  #FBF1E6;
+    --critical:     #A32330;
+    --critical-soft:#FBEDEE;
+    --caution:      #8A6414;
+    --caution-soft: #FBF4E2;
+    --verified:     #0E6656;
+    --verified-soft:#E5F2EF;
+
+    --shadow: 0 1px 2px rgba(23,29,28,.05), 0 8px 24px -12px rgba(23,29,28,.14);
+
+    --measure: 68ch;
+    --step--1: clamp(.82rem, .8rem + .1vw, .875rem);
+    --step-0:  clamp(1rem, .97rem + .16vw, 1.075rem);
+    --step-1:  clamp(1.2rem, 1.13rem + .34vw, 1.42rem);
+    --step-2:  clamp(1.5rem, 1.36rem + .68vw, 2rem);
+    --step-3:  clamp(2rem, 1.7rem + 1.5vw, 3.05rem);
+  }
+
+  /* System-dark (no explicit stamp) — the state most viewers are in. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:        #121716;
+      --surface:      #18201E;
+      --surface-sunk: #101614;
+      --ink:          #E7E9E6;
+      --ink-soft:     #AEB5B1;
+      --ink-faint:    #7E8783;
+      --rule:         #2A3431;
+      --rule-strong:  #3B4744;
+
+      --accent:       #E9A85C;
+      --accent-soft:  #2A1F13;
+      --critical:     #F08592;
+      --critical-soft:#2E1519;
+      --caution:      #E5BE6A;
+      --caution-soft: #2A2213;
+      --verified:     #5FC7AE;
+      --verified-soft:#12251F;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+    }
+  }
+
+  /* Explicit dark choice wins in the other direction too. */
+  :root[data-theme="dark"] {
+    --paper:        #121716;
+    --surface:      #18201E;
+    --surface-sunk: #101614;
+    --ink:          #E7E9E6;
+    --ink-soft:     #AEB5B1;
+    --ink-faint:    #7E8783;
+    --rule:         #2A3431;
+    --rule-strong:  #3B4744;
+
+    --accent:       #E9A85C;
+    --accent-soft:  #2A1F13;
+    --critical:     #F08592;
+    --critical-soft:#2E1519;
+    --caution:      #E5BE6A;
+    --caution-soft: #2A2213;
+    --verified:     #5FC7AE;
+    --verified-soft:#12251F;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 28px -14px rgba(0,0,0,.7);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: var(--step-0);
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 0 1.25rem 6rem;
+  }
+  @media (min-width: 62rem) {
+    .shell { grid-template-columns: 15rem minmax(0, 1fr); gap: 3.5rem; }
+  }
+
+  /* ---- Masthead ---- */
+  header.masthead {
+    grid-column: 1 / -1;
+    padding: 3.5rem 0 2.25rem;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 2.5rem;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: var(--step--1);
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1rem;
+  }
+  h1 {
+    font-family: Newsreader, ui-serif, Georgia, serif;
+    font-size: var(--step-3);
+    font-weight: 500;
+    line-height: 1.06;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 .9rem;
+  }
+  .standfirst {
+    font-family: Newsreader, ui-serif, Georgia, serif;
+    font-size: var(--step-1);
+    font-weight: 400;
+    font-style: italic;
+    color: var(--ink-soft);
+    max-width: 46ch;
+    margin: 0;
+  }
+
+  /* ---- Draft notice: the most important thing on the page ---- */
+  .draft {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    background: var(--caution-soft);
+    border: 1px solid var(--caution);
+    border-left-width: 4px;
+    border-radius: 3px;
+    padding: 1.1rem 1.25rem;
+    margin-bottom: 2.75rem;
+  }
+  .draft .tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    font-weight: 500;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--caution);
+    white-space: nowrap;
+    padding-top: .12rem;
+  }
+  .draft p { margin: 0; color: var(--ink); font-size: var(--step--1); line-height: 1.6; }
+
+  /* ---- Contents rail ---- */
+  nav.toc { display: none; }
+  @media (min-width: 62rem) {
+    nav.toc {
+      display: block;
+      position: sticky;
+      top: 2rem;
+      align-self: start;
+      max-height: calc(100vh - 4rem);
+      overflow-y: auto;
+      font-size: var(--step--1);
+    }
+    nav.toc h2 {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: var(--step--1);
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--ink-faint);
+      font-weight: 500;
+      margin: 0 0 .85rem;
+    }
+    nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .1rem; }
+    nav.toc a {
+      display: block;
+      padding: .3rem .55rem .3rem .7rem;
+      color: var(--ink-soft);
+      text-decoration: none;
+      border-left: 2px solid var(--rule);
+      border-radius: 0 3px 3px 0;
+    }
+    nav.toc a:hover { color: var(--ink); background: var(--surface-sunk); border-left-color: var(--accent); }
+    nav.toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  }
+
+  main { grid-column: 1 / -1; min-width: 0; }
+  @media (min-width: 62rem) { main { grid-column: 2; } }
+
+  section { margin-bottom: 3.5rem; scroll-margin-top: 1.5rem; }
+
+  h2 {
+    font-family: Newsreader, ui-serif, Georgia, serif;
+    font-size: var(--step-2);
+    font-weight: 500;
+    line-height: 1.16;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin: 0 0 .3rem;
+    padding-top: .4rem;
+    border-top: 2px solid var(--ink);
+  }
+  h3 {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: var(--step-1);
+    font-weight: 600;
+    line-height: 1.3;
+    margin: 2.25rem 0 .5rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .6rem;
+  }
+  h4 {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 2rem 0 .75rem;
+  }
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 1rem; }
+  ul, ol { margin: 0 0 1rem; padding-left: 1.15rem; }
+  li { margin-bottom: .45rem; }
+  li::marker { color: var(--ink-faint); }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  strong { font-weight: 600; }
+
+  code {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: .875em;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: .08em .34em;
+  }
+  pre {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule-strong);
+    border-radius: 3px;
+    padding: .95rem 1.1rem;
+    overflow-x: auto;
+    margin: 0 0 1.25rem;
+    font-size: var(--step--1);
+    line-height: 1.65;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+  pre .cm { color: var(--ink-faint); }
+
+  /* ---- Verification badges. These encode how much to trust a section. ---- */
+  .badge {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .68rem;
+    font-weight: 500;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    padding: .18rem .5rem;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .badge.verified { color: var(--verified); background: var(--verified-soft); }
+  .badge.partial  { color: var(--caution);  background: var(--caution-soft); }
+  .badge.untested { color: var(--critical); background: var(--critical-soft); }
+
+  /* ---- Callouts ---- */
+  .callout {
+    border: 1px solid var(--rule-strong);
+    border-left: 4px solid var(--accent);
+    background: var(--surface);
+    border-radius: 3px;
+    padding: 1.05rem 1.2rem;
+    margin: 0 0 1.5rem;
+    max-width: var(--measure);
+    box-shadow: var(--shadow);
+  }
+  .callout > :last-child { margin-bottom: 0; }
+  .callout .label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: var(--step--1);
+    font-weight: 500;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: .45rem;
+    color: var(--accent);
+  }
+  .callout.danger { border-left-color: var(--critical); background: var(--critical-soft); }
+  .callout.danger .label { color: var(--critical); }
+
+  /* ---- Tables ---- */
+  .scroller { overflow-x: auto; margin: 0 0 1.5rem; border: 1px solid var(--rule); border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; font-size: var(--step--1); background: var(--surface); }
+  thead th {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 500;
+    font-size: .7rem;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: .7rem .9rem;
+    border-bottom: 1px solid var(--rule-strong);
+    background: var(--surface-sunk);
+    white-space: nowrap;
+  }
+  td { padding: .7rem .9rem; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.5; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td:first-child { color: var(--ink); font-weight: 500; }
+
+  /* ---- Numbered limitations. Numbering is real here: these get referenced by number. ---- */
+  .limits { list-style: none; padding: 0; max-width: var(--measure); counter-reset: lim; }
+  .limits li {
+    counter-increment: lim;
+    position: relative;
+    padding-left: 2.6rem;
+    margin-bottom: 1.05rem;
+  }
+  .limits li::before {
+    content: counter(lim);
+    position: absolute;
+    left: 0;
+    top: .1rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: .78rem;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: 2px;
+    width: 1.75rem;
+    text-align: center;
+    padding: .06rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  footer {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--rule);
+    margin-top: 1rem;
+    padding-top: 1.5rem;
+    color: var(--ink-faint);
+    font-size: var(--step--1);
+  }
+  footer p { max-width: var(--measure); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow">Operator documentation · rev. 2026-08-27</p>
+    <h1>OnCall Field Guide</h1>
+    <p class="standfirst">How to run the on-call schedule and phone directory — and what to expect from each part of it.</p>
+  </header>
+
+  <div class="draft">
+    <span class="tag">Draft</span>
+    <p><strong>Not yet ready to be the official onboarding document.</strong> Sections marked <em>Verified</em> were confirmed by driving the running application on 27 August 2026. The limitations in section&nbsp;7 are real defects a new user will hit. Promote this once that section is empty.</p>
+  </div>
+
+  <nav class="toc" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#what">1 · What this is</a></li>
+      <li><a href="#before">2 · Before you start</a></li>
+      <li><a href="#starting">3 · Starting the app</a></li>
+      <li><a href="#setup">4 · First-time setup</a></li>
+      <li><a href="#features">5 · Feature walkthrough</a></li>
+      <li><a href="#permissions">6 · Who can do what</a></li>
+      <li><a href="#limits">7 · Known limitations</a></li>
+      <li><a href="#trouble">8 · Troubleshooting</a></li>
+      <li><a href="#status">9 · Verification status</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <section id="what">
+      <h2>1 · What this application is</h2>
+      <p>A multi-tenant on-call scheduling and phone directory system for hospitals. It answers three questions:</p>
+      <ul>
+        <li><strong>Who is on call right now?</strong> — Dashboard, On-Call Schedule</li>
+        <li><strong>How do I reach them?</strong> — Phone Directory</li>
+        <li><strong>How do we page everyone at once in an emergency?</strong> — Command Center, Phone Trees</li>
+      </ul>
+      <p>Around those sit staff administration, time-off approvals, duty-hour compliance reporting, and a HIPAA audit trail.</p>
+      <p><em>Tenant</em> in this app means <strong>a hospital or facility</strong> — it is the data isolation boundary. A department such as Cardiology or Emergency Medicine sits inside a tenant.</p>
+    </section>
+
+    <section id="before">
+      <h2>2 · Before you start</h2>
+
+      <h4>Prerequisites</h4>
+      <ul>
+        <li>.NET 8 SDK</li>
+        <li>Node.js 18 or later</li>
+        <li>No database setup needed locally — development uses a SQLite file created on first run</li>
+      </ul>
+
+      <h3>The thing that confuses everyone: two authentication modes</h3>
+      <p>The frontend and the backend each decide <em>independently</em> whether to use real sign-in or development sign-in. <strong>They must agree.</strong> As of 28 August 2026 the repository ships them agreed, on <strong>real sign-in</strong>.</p>
+
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Side</th><th>Setting</th><th>File</th></tr></thead>
+          <tbody>
+            <tr><td>Frontend</td><td><code>VITE_DEV_AUTH</code></td><td><code>src/frontend/.env</code> (true), overridden by <code>.env.local</code> (false)</td></tr>
+            <tr><td>Backend</td><td><code>DevAuth:Enabled</code></td><td><code>appsettings.Development.json</code> (false)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>Development mode</strong> — both set to dev auth. You are signed in automatically as <code>dev@local</code> with full administrator rights, no Microsoft or Google account required. An amber banner reads <em>“DEVELOPMENT AUTH — you are not really signed in.”</em> Use this to explore the app.</p>
+      <p><strong>Real sign-in mode</strong> — both set to real auth. You sign in with Microsoft or Google, and a brand-new account gets <strong>no access at all</strong> until an administrator grants it. That is correct behaviour, not a bug.</p>
+
+      <div class="callout danger">
+        <span class="label">Do not mix the two</span>
+        <p>With the frontend on real sign-in and the backend on dev auth, the backend ignores your token entirely and treats every request as a full administrator. This is exactly what once made a brand-new Google account appear to hold “All Tenants” super-admin rights. A banner and a server log warning make it visible.</p>
+      </div>
+
+      <div class="callout caution">
+        <span class="label">The setting is not the only switch</span>
+        <p><code>Properties/launchSettings.json</code> set <code>DevAuth__Enabled=true</code> as an environment variable on the default profile, and <strong>environment variables outrank <code>appsettings.Development.json</code></strong>. Turning dev auth off in the config file therefore did nothing — the app still authenticated every request from a cookie as a full administrator while the file plainly read <code>false</code>. That override has been removed, so the config file is now the single switch.</p>
+        <p>Do not confirm this by reading configuration. Confirm it by behaviour: with dev auth off, a request carrying only <code>Cookie: X-Dev-Role=admin</code> must return <strong>401</strong>.</p>
+      </div>
+
+      <div class="callout">
+        <span class="label">Real Entra sign-in needs one local value</span>
+        <p><code>appsettings.json</code> ships placeholder Entra settings (<code>ClientId: your-api-client-id</code>). Dev auth replaced the whole pipeline, so nothing ever read them. With real auth on, the backend validates your genuine token against that placeholder and refuses it — <code>IDX10214: Audience validation failed</code> in the log. Set the real <code>AzureAd:ClientId</code> and <code>AzureAd:Audience</code> in <code>appsettings.Development.json</code>, matching <code>VITE_AZURE_CLIENT_ID</code> in the frontend. A client id is public, not a secret, and that file is gitignored regardless.</p>
+      </div>
+
+      <p>To explore the app with no account at all, set <code>VITE_DEV_AUTH=true</code> in <code>src/frontend/.env.local</code> (or delete that file) and <strong>restart the frontend</strong> — Vite only reads env files at startup — then set <code>DevAuth:Enabled</code> back to <code>true</code> and restart the backend. Both halves, or you have mixed the two.</p>
+
+      <p>To hold administrator rights under <em>real</em> sign-in, add your address to <code>Authentication:SuperAdmins:Emails</code> in <code>appsettings.Development.json</code> and restart the backend. It is matched by email across Entra, Google and local accounts, so one entry covers whichever provider you sign in with. Empty the list again to see the app as a brand-new user sees it.</p>
+    </section>
+
+    <section id="starting">
+      <h2>3 · Starting the application</h2>
+      <p>Two terminals. Backend first, because the frontend proxies to it.</p>
+<pre><code><span class="cm"># Terminal 1 — API on http://localhost:5000</span>
+cd src/backend/OnCallApi
+dotnet run --urls "http://localhost:5000"
+
+<span class="cm"># Terminal 2 — web app on http://localhost:5173</span>
+cd src/frontend
+npm install     <span class="cm"># first time only</span>
+npm run dev</code></pre>
+
+      <p><strong>Expected outcome:</strong> <code>http://localhost:5173</code> loads. In development mode you land on the Dashboard as <code>dev@local</code>. In real sign-in mode you get a login screen offering Microsoft and Google.</p>
+      <p>Verify the API independently with <code>curl http://localhost:5000/api/auth/me</code> — it returns your identity, <code>permissions</code>, <code>tenantIds</code>, <code>authMode</code> and <code>sessionTimeoutMinutes</code>.</p>
+
+      <div class="callout danger">
+        <span class="label">Before testing anything that pages people</span>
+        <p>Twilio is <strong>enabled with a real sender number</strong> in <code>appsettings.Development.json</code>. Starting a code call sends real SMS and voice calls. Run locally with dispatch off:</p>
+        <pre><code>Dispatch__Twilio__Enabled=false dotnet run --urls "http://localhost:5000"</code></pre>
+      </div>
+    </section>
+
+    <section id="setup">
+      <h2>4 · First-time setup</h2>
+      <p>On first sign-in as an administrator, the onboarding wizard appears automatically.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Step</th><th>What it asks</th><th>Expected outcome</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Connect Microsoft 365, or choose <strong>Local Only</strong></td><td>Local Only skips directory sync; you add staff by CSV or by hand</td></tr>
+            <tr><td>2</td><td>Import users</td><td>Confirms the directory is ready. The actual importing happens on the Phone Directory page</td></tr>
+            <tr><td>3</td><td>Create your first schedule</td><td>Creates a <code>Default</code> department if none exists, then a schedule. Toast reads <em>“All Set!”</em></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The wizard does not reappear once completed. Staff are added on the <strong>Phone Directory</strong> page, not in the wizard.</p>
+    </section>
+
+    <section id="features">
+      <h2>5 · Feature walkthrough</h2>
+      <p>Navigation is the left sidebar. <strong>Admin</strong> appears only for administrators. Each heading carries how thoroughly that area was checked.</p>
+
+      <h3>Dashboard <span class="badge verified">Verified</span></h3>
+      <p>The landing page: <strong>Currently On Call</strong>, <strong>Departments Covering</strong>, <strong>Directory Entries</strong>, your own upcoming coverage, and shortcuts.</p>
+      <p><strong>Expected outcome:</strong> counts reflect real data. With no shifts scheduled it reads <em>“No one is currently on call”</em> — correct, not an error. If your account has no linked employee profile it says so; see limitation&nbsp;4.</p>
+
+      <h3>Phone Directory <span class="badge verified">Verified</span></h3>
+      <p>The staff contact list, and the most-used page in the app.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Action</th><th>Expected outcome</th></tr></thead>
+          <tbody>
+            <tr><td>Search</td><td>Filters as you type across name, title, specialty, location, department and email. Apostrophes and long strings are handled safely</td></tr>
+            <tr><td>Add Employee</td><td>Creates the record; it appears in the list immediately</td></tr>
+            <tr><td>Add a duplicate email</td><td>Red toast: <em>“Could not add employee — An employee with this email already exists.”</em></td></tr>
+            <tr><td>Add an invalid email, blank name, or name over 100 characters</td><td>Rejected with a clear message</td></tr>
+            <tr><td>Phone as <code>(202) 555-0134</code></td><td>Accepted, stored as <code>+12025550134</code></td></tr>
+            <tr><td>Phone with an extension, <code>555-0134 x4412</code></td><td><strong>Rejected.</strong> An extension cannot be dialled, and merging it silently produced an undialable number</td></tr>
+            <tr><td>Edit</td><td>Saves; the list updates</td></tr>
+            <tr><td>Download Template</td><td>Downloads <code>employee-import-template.csv</code> with the nine expected headers</td></tr>
+            <tr><td>Import CSV</td><td>Opens the import dialog, with an optional dry-run validation pass</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>Import rules — read before importing</h4>
+      <p>The importer accepts <strong>CSV and Excel <code>.xlsx</code></strong>. The format is decided by the file’s <em>content</em>, never its extension, so a workbook saved or renamed as <code>.csv</code> — the commonest way a real export arrives — imports correctly. The canonical headers are:</p>
+<pre><code>azureAdObjectId,firstName,lastName,email,title,
+officePhone,mobilePhone,officeLocation,departmentId</code></pre>
+      <ul>
+        <li><code>firstName</code>, <code>lastName</code> and <code>email</code> are required; the rest optional.</li>
+        <li><strong>All or nothing</strong> — one bad row and nothing is imported.</li>
+        <li>Re-importing the same people <strong>updates</strong> them rather than creating duplicates.</li>
+        <li>Columns you leave out are untouched. A blank cell in a column you <em>do</em> include clears that value.</li>
+        <li>Messy phone formats are fine — <code>(202) 555-0134</code>, <code>202-555-0134</code>, <code>+1 202 555 0134</code>. A number too short to dial is refused rather than stored, because an undialable number in the directory is worse than an empty field.</li>
+        <li><strong>Everyday headings work too.</strong> Matching ignores case, spaces, underscores and hyphens, and understands common synonyms, so <em>First Name</em>, <em>Work Email</em>, <em>Job Title</em>, <em>Work Phone</em>, <em>Cell</em> and <em>Work Location</em> all land correctly.</li>
+        <li><strong>Columns it does not recognise are ignored</strong>, not rejected — an export carrying Salary, Manager and Address imports the fields that matter and drops the rest.</li>
+        <li>A file that is not a spreadsheet at all gives <strong>one sentence naming the fix</strong>, rather than one error per line. Error lists are capped at 25, with the true total reported alongside.</li>
+      </ul>
+      <p><strong>Download Template</strong> remains the surest starting point, but an HR export now usually imports as-is. A 30-row hospital export headed <em>First Name / Work Email / Work Phone</em>, saved as <code>.xlsx</code> but named <code>.csv</code>, imports 30 of 30 with no errors.</p>
+
+      <div class="callout caution">
+        <span class="label">Departments are the one column still done by hand</span>
+        <p>Exports name a department (“Cardiology”); the importer wants the numeric <code>departmentId</code>. Rather than fail every row, the column is ignored — so staff import cleanly but arrive <strong>with no department set</strong>, and department-scoped on-call lookups will not find them until it is filled in.</p>
+      </div>
+
+      <h3>On-Call Schedule <span class="badge partial">API verified</span></h3>
+      <p>Create schedules per department, generate rotations, assign shifts, handle swaps.</p>
+      <p><strong>Expected outcome:</strong> creating a schedule requires a department. Generating shifts produces a rotation with a <strong>primary</strong> clinician on call at every hour, overnight included. A swap must be approved before it takes effect. Schedules export as <code>.ics</code> for Outlook or Google Calendar.</p>
+
+      <h3>Command Center <span class="badge untested">Not exercised</span></h3>
+      <p>The live emergency view: active incidents, dispatch progress, and who has acknowledged.</p>
+      <div class="callout danger">
+        <span class="label">Why this was not tested</span>
+        <p>Starting a code call <strong>pages real clinicians by SMS and voice</strong>. Verify this feature only with dispatch channels disabled.</p>
+      </div>
+
+      <h3>Phone Trees <span class="badge partial">Renders</span></h3>
+      <p>Escalation chains for emergencies: an ordered list of people to reach, each with a timeout before the next is tried. Reachable only at <code>/dashboard/phone-trees</code> — there is no sidebar link (limitation&nbsp;3).</p>
+
+      <h3>Time Off <span class="badge partial">API verified</span></h3>
+      <p>Request time off; approve or deny as a manager.</p>
+      <p><strong>Expected outcome:</strong> you cannot approve your own request, but your manager can. Approving twice, denying after approval, or editing an approved request are each refused with an accurate message.</p>
+
+      <h3>Compliance <span class="badge verified">Verified</span></h3>
+      <p>Duty-hour rules — maximum hours per period, minimum rest between shifts, maximum consecutive days — and the violations found against them.</p>
+      <p><strong>Expected outcome:</strong> the violations table lists breaches with employee, rule and date. <strong>Export</strong> downloads a CSV. The page occasionally returns a server error on load; reloading clears it (limitation&nbsp;5).</p>
+
+      <h3>Escalation <span class="badge partial">Renders</span></h3>
+      <p>Policies governing what happens when an on-call clinician does not acknowledge in time. Reachable only at <code>/dashboard/escalation</code> — no sidebar link.</p>
+
+      <h3>Settings <span class="badge verified">Verified</span></h3>
+      <p>Microsoft 365 integration status, notification toggles, schedule defaults, and the <strong>HIPAA session timeout</strong> (default 15 minutes).</p>
+      <p>The timeout is enforced in two places: the browser warns <em>“Still there?”</em> about a minute before signing you out, and the server independently caps token lifetime to the same value, so a captured token cannot outlive the policy.</p>
+
+      <h3>Admin <span class="badge verified">Verified</span></h3>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Tab</th><th>Purpose</th></tr></thead>
+          <tbody>
+            <tr><td>Overview</td><td>Health summary and setup shortcuts</td></tr>
+            <tr><td>Accounts</td><td>Local accounts — create, deactivate</td></tr>
+            <tr><td>Departments</td><td>Create and manage departments</td></tr>
+            <tr><td>Integrations</td><td>Microsoft Graph connectivity diagnostics</td></tr>
+            <tr><td>Time Off</td><td>Organization-wide approvals</td></tr>
+            <tr><td>Code Call Locations</td><td>Locations selectable when starting a code call</td></tr>
+            <tr><td>Users &amp; Permissions</td><td>Grant access to people who have signed in</td></tr>
+            <tr><td>Public Schedule</td><td>Share links showing coverage without names or numbers</td></tr>
+            <tr><td>Subscriptions</td><td>Tenants — super admin only</td></tr>
+            <tr><td>Onboarding</td><td>Setup health check</td></tr>
+            <tr><td>On-Call Audit</td><td>Historical coverage report with CSV export</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Public schedule links <span class="badge partial">API verified</span></h3>
+      <p>A shareable read-only coverage link at <code>/on-call/{token}</code>, created under <strong>Admin → Public Schedule</strong>.</p>
+      <p><strong>Expected outcome:</strong> coverage counts only — <strong>no names, phone numbers or email addresses</strong>. Unknown, disabled and expired tokens all return an identical response, so a link cannot be probed to discover valid ones.</p>
+    </section>
+
+    <section id="permissions">
+      <h2>6 · Who can do what</h2>
+      <p>Permissions are granted per person, per tenant. A newly signed-in user has <strong>none</strong> until an administrator grants them under <strong>Admin → Users &amp; Permissions</strong>.</p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Permission</th><th>Grants</th></tr></thead>
+          <tbody>
+            <tr><td><code>Schedule.Read</code> / <code>Write</code></td><td>View / edit schedules and shifts</td></tr>
+            <tr><td><code>Directory.Read</code> / <code>Write</code></td><td>View / edit the phone directory</td></tr>
+            <tr><td><code>CodeCall.Write</code></td><td><strong>Start a live code call.</strong> This pages real clinicians</td></tr>
+            <tr><td><code>Admin.Scoped</code></td><td>Administer your own tenant</td></tr>
+            <tr><td><code>Admin.Full</code></td><td>Administer every tenant</td></tr>
+            <tr><td><code>Tenant.Manage</code></td><td>Create tenants and assign tenant administrators</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><code>Admin.Full</code>, <code>Admin.Scoped</code> and <code>Tenant.Manage</code> <strong>cannot</strong> be handed out through the permissions UI, by design. They come only from the configured super-admin list or an explicit tenant-admin assignment.</p>
+    </section>
+
+    <section id="limits">
+      <h2>7 · Known limitations</h2>
+      <p>These need resolving before this document becomes official. They are numbered so they can be referenced directly.</p>
+
+      <h4>Blocking for a new user</h4>
+      <ol class="limits">
+<li><strong>Phone Trees and Escalation have no sidebar link.</strong> Two whole features are reachable only by typing the URL.</li>
+        <li><strong>Imported staff arrive with no department.</strong> Exports name departments rather than numbering them, so the column is ignored and each person must be assigned afterwards. Until then they are missing from department-scoped on-call lookups.</li>
+      </ol>
+
+      <h4>Functional gaps</h4>
+      <ol class="limits" start="3">
+        <li><strong>Accounts created through the app cannot act as themselves.</strong> An employee added without an Entra object id cannot acknowledge a shift, request time off, or request a swap.</li>
+        <li><strong>Compliance intermittently errors on load.</strong> Reloading clears it. Concurrent requests race on the same rows, because the page writes data during a page view.</li>
+        <li><strong>Timestamps with a non-UTC offset are stored incorrectly</strong>, off by the server's offset. The web app is unaffected because it always sends UTC; an EHR or mobile integration would not be.</li>
+        <li><strong>Presence sync cannot be switched off</strong> and retries a misconfigured Microsoft Graph endpoint every minute, which has stalled the API under load.</li>
+        <li><strong>Escalation policies accept nonsensical values</strong> — a negative response time causes every unacknowledged shift to escalate immediately.</li>
+        <li><strong>Bulk import writes no per-record audit entry</strong>, which is thin against a six-year HIPAA retention requirement.</li>
+        <li><strong>The two tenant-admin roles are identical.</strong> <em>Department Admin</em> and <em>Scoped Super Admin</em> both confer the same permissions, including the right to start a code call; the role is recorded and displayed but nothing authorises on the difference. Do not rely on Department Admin as a restriction.</li>
+        <li><strong>Settings are not tenant-scoped</strong> — one tenant's setting keys are visible to another.</li>
+        <li><strong>Reversed and overlapping date ranges are accepted by the API.</strong> The web app blocks these client-side.</li>
+      </ol>
+
+      <h4>Not built yet</h4>
+      <ol class="limits" start="12">
+        <li><strong>Multi-file spreadsheet merge</strong> — uploading several files, auto-matching columns and de-duplicating people is designed but not implemented.</li>
+        <li><strong>No self-service signup.</strong> A new organization cannot create itself; an existing administrator must create the tenant and grant access. This is deliberate.</li>
+      </ol>
+    </section>
+
+    <section id="trouble">
+      <h2>8 · Troubleshooting</h2>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>Symptom</th><th>Cause and fix</th></tr></thead>
+          <tbody>
+            <tr><td>Login screen when you expected to be signed in</td><td>The frontend is in real sign-in mode. Set <code>VITE_DEV_AUTH=true</code> in <code>.env.local</code> and <strong>restart</strong> the frontend</td></tr>
+            <tr><td>Signed in, but every page is empty and access appears pending</td><td>Correct for a new account with no permissions. An administrator grants access under Admin → Users &amp; Permissions</td></tr>
+            <tr><td>“Can’t reach the server”</td><td>The backend is not running, or not on port 5000. This message now appears only for a genuine connection failure</td></tr>
+            <tr><td>“Your session wasn’t accepted”</td><td>The API answered and refused the token — not an outage. Either the session expired (sign in again) or the API validates a different application or tenant than you signed in to. Check <code>AzureAd:ClientId</code> against <code>VITE_AZURE_CLIENT_ID</code>, and the log for <code>IDX10214</code></td></tr>
+            <tr><td>Amber DEVELOPMENT AUTH banner</td><td>The backend is not checking credentials. Expected locally; must never appear in a deployed environment</td></tr>
+            <tr><td>“Offline” badge in the header</td><td>The real-time connection is not established. The app still works, but live updates will not arrive</td></tr>
+            <tr><td>Backend refuses to start, citing DevAuth</td><td>Intentional. <code>DevAuth:Enabled</code> is set outside development, which would disable all authentication</td></tr>
+            <tr><td>Import fails with “firstName and lastName are required” on every row</td><td>Those columns really are empty, or the headings are named something the aliases do not cover. Spreadsheets renamed <code>.csv</code> are no longer a cause. Compare against Download Template</td></tr>
+            <tr><td>A sub-admin sees “Failed to load permission grants”</td><td>Fixed. The grants had loaded; the tenant-name lookup was what failed, and the error named the wrong call</td></tr>
+            <tr><td>Appointing an admin appears to work but grants nothing</td><td>The object id did not match the user. Pick the person from the list in the Assign Admin dialog instead of pasting an id — for a Google account it is <code>google-&lt;sub&gt;</code>, never the email address</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="status">
+      <h2>9 · Verification status</h2>
+      <p>Verified on 27 August 2026 against the running application, and updated 28 August 2026: all ten pages render without console errors; the development-auth banner displays correctly at desktop and mobile widths with no horizontal overflow; template download, the import dialog, employee creation, duplicate-email rejection, input validation and phone normalization all behave as described here.</p>
+      <p>Backend behaviour for schedules, time-off, compliance, escalation, tenants and public share links was verified through the API rather than the browser. The Command Center dispatch path was deliberately not exercised, because it pages real people.</p>
+      <p>Test suites at time of writing: backend <strong>334 passing</strong>, frontend <strong>32 passing</strong>.</p>
+      <p>Re-verified on 28 August 2026 after the authentication and import changes: real Microsoft and Google sign-in both reach <code>/api/auth/me</code> successfully; a request carrying only the dev-role cookie returns 401; a 30-row <code>.xlsx</code> HR export named <code>.csv</code> imports 30 of 30; and a tenant sub-admin loads Users &amp; Permissions without error. Command Center dispatch remains deliberately unexercised, because it pages real people.</p>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Source of truth for this guide lives at <code>docs/user-guide.md</code> in the repository, and should be updated alongside the code it describes.</p>
+  </footer>
+
+</div>
