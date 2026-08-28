@@ -297,6 +297,77 @@ public class TenantScopingTests
         departments!.Select(d => d.Name).Should().BeEquivalentTo("Neurology");
     }
 
+    // ── Tenant list ────────────────────────────────────────────────────────────
+    // Reading /api/tenants used to require Tenant.Manage, which a sub-admin does not hold,
+    // so the admin UI could not resolve the name of the very subscription they administer
+    // and rendered it as "Tenant 2". The read is now open to any admin but FILTERED, so
+    // relaxing it must not turn into a disclosure of every other customer.
+
+    /// <summary>Creates a sub-admin of <paramref name="tenantId"/> and returns their token.</summary>
+    private static string SubAdminToken(WebApplicationFactory<Program> factory, int tenantId)
+    {
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.TenantAdmins.Add(new TenantAdmin
+            {
+                TenantId = tenantId,
+                AzureAdObjectId = "local-55",
+                Role = "DepartmentAdmin",
+                CreatedAt = DateTime.UtcNow,
+            });
+            db.SaveChanges();
+        }
+
+        using var tokenScope = factory.Services.CreateScope();
+        var jwt = tokenScope.ServiceProvider.GetRequiredService<LocalJwtService>();
+        return jwt.GenerateToken(55, "deptadmin@example.test", "Dept Admin", new[] { "OnCall.Viewer" });
+    }
+
+    [Fact]
+    public async Task TenantList_ForASubAdmin_ReturnsOnlyTheirOwnTenant()
+    {
+        using var factory = Seed(grantTenantId: null, noGrant: true);
+        using var client = factory.CreateClient();
+
+        var tenants = await GetAs<Tenant>(client, SubAdminToken(factory, TenantB), "/api/tenants?includeInactive=true");
+
+        tenants!.Select(t => t.Name).Should().BeEquivalentTo("North Campus");
+    }
+
+    [Fact]
+    public async Task SingleTenant_OutsideTheCallersScope_IsNotFound()
+    {
+        using var factory = Seed(grantTenantId: null, noGrant: true);
+        using var client = factory.CreateClient();
+        var token = SubAdminToken(factory, TenantB);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/tenants/{TenantA}");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request);
+
+        // NotFound, not Forbidden: whether another customer's tenant exists is itself
+        // something this caller should not learn.
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task CreatingATenant_StillRequiresTenantManage()
+    {
+        using var factory = Seed(grantTenantId: null, noGrant: true);
+        using var client = factory.CreateClient();
+        var token = SubAdminToken(factory, TenantB);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/tenants")
+        {
+            Content = JsonContent.Create(new { name = "Sneaky Hospital" }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     // ── Compliance ─────────────────────────────────────────────────────────────
     // DutyHourService had no tenant filter at all, and departmentId is optional: omitting
     // it returned every tenant's rules and swept every tenant's staff into the check.

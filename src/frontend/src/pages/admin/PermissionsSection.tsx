@@ -36,11 +36,21 @@ export default function PermissionsSection() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    // Loaded separately. Both used to share one try, so a failure in either was reported
+    // as "Failed to load permission grants" -- which named the wrong call, and left the
+    // tenant list empty so every subscription on the page read as "Tenant 4".
     try {
       setGrants(await permissionsAdminApi.list(undefined))
-      setTenants(await tenantsApi.getAll(true))
     } catch {
       setError('Failed to load permission grants.')
+    }
+
+    try {
+      setTenants(await tenantsApi.getAll(true))
+    } catch {
+      // Names only. Every id on this page still renders, just as "Tenant 4" rather than
+      // by name, so this is a degraded label and not worth a red banner over the page.
+      setTenants([])
     }
     // Separate from the grants load: the identity directory is new, so an older backend
     // (or a mid-deploy slot) returning 404 must not blank out the whole tab.
@@ -238,7 +248,9 @@ export default function PermissionsSection() {
         )}
       </section>
 
-      <LocalAccountsSection />
+      {/* Local accounts are managed under Admin.Full only, so a sub-admin was shown a
+          section that could do nothing but report "Failed to load local accounts". */}
+      {canAdminFull && <LocalAccountsSection />}
     </div>
   )
 }
