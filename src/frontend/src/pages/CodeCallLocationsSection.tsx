@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, Save, X, Trash2, AlertTriangle, MapPin } from 'lucide-react'
-import { codeCallLocationsApi } from '@/services/api'
-import type { CodeCallLocation } from '@/types'
+import { codeCallLocationsApi, departmentsApi } from '@/services/api'
+import type { CodeCallLocation, Department } from '@/types'
 
 // ─── CODE CALL LOCATIONS ─────────────────────────────────────────────────
 
@@ -33,7 +33,11 @@ export default function CodeCallLocationsSection() {
       }
       setShowModal(false)
       setEditingLocation(null)
-    } catch { setError('Failed to save location.') }
+    } catch {
+      // The server answers 404 when the department is missing or belongs to another
+      // tenant, which as a bare "failed to save" sent people looking at the name field.
+      setError('Could not save the location. Choose a department you administer — a location without one would be invisible to you afterwards.')
+    }
   }
 
   async function handleDelete(id: number) {
@@ -127,16 +131,39 @@ function LocationFormModal({ location, onSave, onClose }: {
 }) {
   const [name, setName] = useState(location?.name || '')
   const [zone, setZone] = useState(location?.zone || '')
+  const [departmentId, setDepartmentId] = useState<number | ''>(location?.departmentId ?? '')
+  const [departments, setDepartments] = useState<Department[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // The list is already scoped to the caller's tenants server-side, so whatever comes
+  // back is exactly the set this user is allowed to file a location against.
+  useEffect(() => {
+    let cancelled = false
+    departmentsApi.getAll()
+      .then(d => { if (!cancelled) setDepartments(d) })
+      .catch(() => { /* the field stays empty and the required check below explains why */ })
+    return () => { cancelled = true }
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) { setError('Location name is required.'); return }
+    if (departmentId === '') {
+      setError(departments.length === 0
+        ? 'No departments are available to you, so a location cannot be filed yet.'
+        : 'Choose a department. A code call location has to belong to one.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
-      await onSave({ name: name.trim(), zone: zone.trim() || undefined, isActive: location?.isActive ?? true })
+      await onSave({
+        name: name.trim(),
+        zone: zone.trim() || undefined,
+        departmentId: Number(departmentId),
+        isActive: location?.isActive ?? true,
+      })
     } catch { setError('Failed to save.') }
     finally { setSaving(false) }
   }
@@ -159,6 +186,15 @@ function LocationFormModal({ location, onSave, onClose }: {
             <input type="text" required value={name} onChange={e => setName(e.target.value)}
               placeholder="e.g., 3 West — Room 312"
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Department *</label>
+            <select value={departmentId}
+              onChange={e => setDepartmentId(e.target.value === '' ? '' : Number(e.target.value))}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
+              <option value="">Select a department</option>
+              {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
           </div>
           <div>
             <label className="block text-sm text-gray-500 mb-1">Zone (for SIP paging, optional)</label>
