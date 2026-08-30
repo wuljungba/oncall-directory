@@ -5,8 +5,8 @@ namespace OnCallApi.Models;
 /// <summary>Request DTO for resolving a phone tree event.</summary>
 public record ResolveEventRequest(string? Outcome, string? NotifiedByName = null);
 
-/// <summary>Request DTO for saving debrief notes.</summary>
-public record SaveDebriefNotesRequest(string? Notes);
+/// <summary>Request DTO for appending one entry to an incident's debrief log.</summary>
+public record AddDebriefNoteRequest(string? Note);
 
 /// <summary>
 /// Request DTO for starting a code call (dispatch). <see cref="Confirm"/> must be true —
@@ -74,6 +74,11 @@ public class PhoneTreeEvent
     [MaxLength(1000)]
     public string? Notes { get; set; }
 
+    /// <summary>
+    /// The original single-field debrief note, kept only so incidents written before the
+    /// debrief log existed still show what was recorded. Nothing writes it any more —
+    /// new entries go to <see cref="DebriefLog"/>.
+    /// </summary>
     [MaxLength(1000)]
     public string? DebriefNotes { get; set; }
 
@@ -81,6 +86,37 @@ public class PhoneTreeEvent
 
     public ICollection<PhoneTreeEventParticipant> Participants { get; set; } = new List<PhoneTreeEventParticipant>();
     public ICollection<DispatchStep> DispatchSteps { get; set; } = new List<DispatchStep>();
+    public ICollection<DebriefNote> DebriefLog { get; set; } = new List<DebriefNote>();
+}
+
+/// <summary>
+/// One entry in an incident's debrief log.
+///
+/// Append-only by design. The debrief is the written record of what happened during a
+/// code call — who was reached, what went wrong, what changed afterwards — so an entry,
+/// once saved, is never edited or removed. Correcting something means adding a further
+/// entry that says so, which leaves both the original account and the correction in the
+/// record. There is deliberately no update or delete path to this table.
+///
+/// This replaced a single overwritable string on the event, where saving a new note
+/// silently destroyed the previous one.
+/// </summary>
+public class DebriefNote
+{
+    public int Id { get; set; }
+
+    public int PhoneTreeEventId { get; set; }
+    public PhoneTreeEvent? PhoneTreeEvent { get; set; }
+
+    [Required]
+    [MaxLength(2000)]
+    public string Note { get; set; } = string.Empty;
+
+    /// <summary>Who wrote it, from the signed-in identity — not caller-supplied.</summary>
+    [MaxLength(200)]
+    public string? AuthorName { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class PhoneTreeEventParticipant

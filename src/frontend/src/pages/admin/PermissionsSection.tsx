@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle, Plus, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
 import { identitiesApi, localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
+import { useDialog } from '@/components/ui/Dialog'
 import { useAuth } from '@/hooks/useAuth'
 import type { LocalAccount, PermissionGrant, SignInIdentity, Tenant } from '@/types'
 
@@ -256,6 +257,7 @@ export default function PermissionsSection() {
 }
 
 function LocalAccountsSection() {
+  const dialog = useDialog()
   const [accounts, setAccounts] = useState<LocalAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -286,8 +288,18 @@ function LocalAccountsSection() {
   }
 
   async function resetPassword(acc: LocalAccount) {
-    const next = window.prompt(`New password for ${acc.email} (8+ characters):`)
-    if (!next || next.length < 8) { setError('Password must be 8+ characters.'); return }
+    // window.prompt has no masked mode, so this typed the new password in clear text
+    // on screen, in a dialog the browser also offers to remember.
+    const next = await dialog.prompt({
+      title: 'Reset password',
+      body: `${acc.email} will need this to sign in. Give it to them over a channel you trust.`,
+      label: 'New password (8+ characters)',
+      confirmLabel: 'Reset password',
+      required: true,
+      secret: true,
+    })
+    if (next === null) return
+    if (next.length < 8) { setError('Password must be 8+ characters.'); return }
     setError(null)
     try { await localAccountsApi.resetPassword(acc.id, next); setMessage('Password reset.'); setTimeout(() => setMessage(null), 2500) }
     catch (e) { setError(e instanceof Error ? e.message : 'Failed to reset password.') }

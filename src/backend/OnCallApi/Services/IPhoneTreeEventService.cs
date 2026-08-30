@@ -18,5 +18,5 @@ public interface IPhoneTreeEventService
     Task<PhoneTreeEvent> AcknowledgeEventAsync(int eventId);
     Task<PhoneTreeEvent> ResolveEventAsync(int eventId, string? outcome, string? notifiedByName = null);
     Task<DispatchStep> AddDispatchStepAsync(int eventId, DispatchStep step);
-    Task<PhoneTreeEvent> SaveDebriefNotesAsync(int eventId, string? notes);
+    Task<DebriefNote> AddDebriefNoteAsync(int eventId, string? note, string? authorName);
 }

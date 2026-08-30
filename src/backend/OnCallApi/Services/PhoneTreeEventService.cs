@@ -72,6 +72,7 @@ public class PhoneTreeEventService : IPhoneTreeEventService
             // the active/resolved list endpoints returned a populated one, so drilling into
             // a specific incident hid the very failures the operator opened it to see.
             .Include(e => e.DispatchSteps)
+            .Include(e => e.DebriefLog)
             .FirstOrDefaultAsync(e => e.Id == eventId);
     }
 
@@ -150,6 +151,7 @@ public class PhoneTreeEventService : IPhoneTreeEventService
             .Include(e => e.InitiatedBy)
             .Include(e => e.Participants).ThenInclude(p => p.Employee)
             .Include(e => e.DispatchSteps)
+            .Include(e => e.DebriefLog)
             .Where(e => e.Status == "active")
             .OrderByDescending(e => e.StartedAt)
             .ToListAsync();
@@ -163,6 +165,7 @@ public class PhoneTreeEventService : IPhoneTreeEventService
             .Include(e => e.InitiatedBy)
             .Include(e => e.Participants).ThenInclude(p => p.Employee)
             .Include(e => e.DispatchSteps)
+            .Include(e => e.DebriefLog)
             .Where(e => e.Status == "completed")
             .OrderByDescending(e => e.EndedAt)
             .ToListAsync();
@@ -213,13 +216,38 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         return step;
     }
 
-    public async Task<PhoneTreeEvent> SaveDebriefNotesAsync(int eventId, string? notes)
+    /// <summary>
+    /// Appends one entry to an incident's debrief log. There is no counterpart that edits
+    /// or removes an entry, and that is the point: the debrief is the written record of a
+    /// code call, so it only ever grows. A blank note is refused rather than stored, since
+    /// an empty entry would add a timestamp and an author to the record while saying
+    /// nothing about the incident.
+    /// </summary>
+    public async Task<DebriefNote> AddDebriefNoteAsync(int eventId, string? note, string? authorName)
     {
-        var evt = await RequireEventAsync(eventId);
+        await RequireEventAsync(eventId);
 
-        evt.DebriefNotes = notes;
+        var text = note?.Trim();
+        if (string.IsNullOrEmpty(text))
+            throw new InvalidOperationException("A debrief note cannot be empty.");
+
+        if (text.Length > 2000)
+            throw new InvalidOperationException("A debrief note cannot be longer than 2000 characters.");
+
+        var entry = new DebriefNote
+        {
+            PhoneTreeEventId = eventId,
+            Note = text,
+            AuthorName = string.IsNullOrWhiteSpace(authorName) ? null : authorName.Trim(),
+            CreatedAt = DateTime.UtcNow,
+        };
+
+        _db.DebriefNotes.Add(entry);
         await _db.SaveChangesAsync();
-        _logger.LogInformation("Debrief notes saved for event {Id}", eventId);
-        return evt;
+
+        // The note itself is never logged — a debrief describes a patient event and is
+        // treated as PHI. The entry id is enough to find it.
+        _logger.LogInformation("Debrief note {NoteId} added to event {Id}", entry.Id, eventId);
+        return entry;
     }
 }

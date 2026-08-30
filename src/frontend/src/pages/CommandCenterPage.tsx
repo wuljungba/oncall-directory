@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { AlertTriangle, CheckCircle, Play, X, PhoneCall } from 'lucide-react'
 import { commandCenterApi, phoneTreesApi, codeCallLocationsApi, departmentsApi } from '@/services/api'
 import { useSignalR } from '@/hooks/useSignalR'
-import type { PhoneTreeEvent, PhoneTree, CodeCallLocation, Department } from '@/types'
+import type { PhoneTreeEvent, PhoneTree, CodeCallLocation, Department, DebriefNote } from '@/types'
+import { useDialog } from '@/components/ui/Dialog'
 
 // Descriptions for the codes most hospitals share. This is no longer the list of codes
 // you may raise -- that comes from the tenant's own phone trees, so a site can define
@@ -47,8 +48,9 @@ export default function CommandCenterPage() {
   const [completing, setCompleting] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
-  const [debriefNotes, setDebriefNotes] = useState<Record<number, string>>({})
+  const [debriefLog, setDebriefLog] = useState<Record<number, DebriefNote[]>>({})
   const { lastEvent } = useSignalR()
+  const dialog = useDialog()
   const prevEventRef = useRef<string | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
 
@@ -97,10 +99,12 @@ export default function CommandCenterPage() {
       setResolvedIncidents(resolved)
       setPhoneTrees(trees)
       setLocations(locs)
-      // Initialize debrief notes from resolved incidents
-      const notes: Record<number, string> = {}
-      resolved.forEach((inc: PhoneTreeEvent) => { if (inc.debriefNotes) notes[inc.id] = inc.debriefNotes })
-      setDebriefNotes(prev => ({ ...prev, ...notes }))
+      // Seed each incident's debrief log from the server. Replace rather than merge:
+      // the server is the record, and merging would keep showing an entry that a reload
+      // says is not there.
+      const log: Record<number, DebriefNote[]> = {}
+      resolved.forEach((inc: PhoneTreeEvent) => { log[inc.id] = inc.debriefLog ?? [] })
+      setDebriefLog(log)
     } catch { /* ignore */ }
     setLoading(false)
   }
@@ -151,7 +155,18 @@ export default function CommandCenterPage() {
   }
 
   async function handleResolve(eventId: number) {
-    const notified = window.prompt('Person(s) notified after dispatch (optional):', '') ?? ''
+    const answer = await dialog.prompt({
+      title: `Resolve incident #${eventId}`,
+      body: 'Closing this incident stops it appearing as active. Recording who was told, if anyone, is what the debrief is later written against.',
+      label: 'Person(s) notified after dispatch (optional)',
+      placeholder: 'e.g. Charge nurse, 3 West',
+      confirmLabel: 'Mark resolved',
+    })
+    // Cancel means "do not resolve". window.prompt returned null for cancel too, but it
+    // also returned null when the browser had dialogs blocked, so a suppressed prompt
+    // used to resolve the incident with nobody recorded.
+    if (answer === null) return
+    const notified = answer
     setCompleting(eventId)
     try {
       await commandCenterApi.resolveEvent(eventId, { notifiedByName: notified || undefined })
@@ -170,9 +185,9 @@ export default function CommandCenterPage() {
 
   const filteredResolved = resolvedIncidents.filter(inc => matchesSearch(inc, search) && (showArchived || !isArchived(inc)))
 
-  const saveDebriefNote = useCallback(async (eventId: number, notes: string) => {
-    await commandCenterApi.saveDebriefNotes(eventId, notes)
-    setDebriefNotes(prev => ({ ...prev, [eventId]: notes }))
+  const addDebriefNote = useCallback(async (eventId: number, note: string) => {
+    const entry = await commandCenterApi.addDebriefNote(eventId, note)
+    setDebriefLog(prev => ({ ...prev, [eventId]: [...(prev[eventId] ?? []), entry] }))
   }, [])
 
   function fmt(s?: string) {
@@ -524,10 +539,11 @@ function dispatchReachedNobody(evt: PhoneTreeEvent) {
                       {/* The note had a Delete button pressed against it. Incident records
                           are the audit trail for who was paged, so that is gone entirely. */}
                       <td className="px-5 py-4">
-                        <DebriefNoteCell
+                        <DebriefLogCell
                           eventId={inc.id}
-                          saved={debriefNotes[inc.id] || ''}
-                          onSave={saveDebriefNote}
+                          legacyNote={inc.debriefNotes}
+                          entries={debriefLog[inc.id] ?? inc.debriefLog ?? []}
+                          onAdd={addDebriefNote}
                         />
                       </td>
                     </tr>
@@ -553,66 +569,93 @@ function dispatchReachedNobody(evt: PhoneTreeEvent) {
   )
 }
 
-// ─── DEBRIEF NOTE ────────────────────────────────────────────────────────
+// ─── DEBRIEF LOG ─────────────────────────────────────────────────────────
 //
-// The note used to save itself 800ms after the last keystroke, and failures were
-// swallowed. That made an incident's written record depend on a timer nobody could see,
-// and let a half-typed sentence become the saved version.
+// A debrief was one editable field. Saving replaced whatever was there, so a second
+// responder adding their account overwrote the first responder's, and clearing the box
+// took the record with it. For a code call that record is the only written account of
+// who was reached and what went wrong, which is not something a stray edit should be
+// able to remove.
 //
-// Saving is now deliberate, and a note cannot be emptied: a debrief is part of the
-// incident's record, so Save stays disabled on blank text. Existing text can still be
-// corrected and extended.
+// So the log only ever grows. Entries already saved are read, not edited; a correction
+// is a new entry saying so, and both stay visible. The server enforces this — there is
+// no endpoint that updates or deletes an entry — so this component is the shape of the
+// rule, not the rule itself.
 
-function DebriefNoteCell({ eventId, saved, onSave }: {
+function DebriefLogCell({ eventId, legacyNote, entries, onAdd }: {
   eventId: number
-  saved: string
-  onSave: (eventId: number, notes: string) => Promise<void>
+  /** A note written before the log existed. Displayed, never editable. */
+  legacyNote?: string
+  entries: DebriefNote[]
+  onAdd: (eventId: number, note: string) => Promise<void>
 }) {
-  const [draft, setDraft] = useState(saved)
-  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
-
-  // Re-sync if the row reloads with a newer note than the one being edited.
-  useEffect(() => { setDraft(saved); setState('idle') }, [saved])
+  const [draft, setDraft] = useState('')
+  const [state, setState] = useState<'idle' | 'saving' | 'error'>('idle')
 
   const trimmed = draft.trim()
-  const dirty = trimmed !== saved.trim()
-  const canSave = dirty && trimmed.length > 0
+  const canSave = trimmed.length > 0 && state !== 'saving'
 
-  async function handleSave() {
+  async function handleAdd() {
     if (!canSave) return
     setState('saving')
     try {
-      await onSave(eventId, trimmed)
-      setState('saved')
+      await onAdd(eventId, trimmed)
+      setDraft('')
+      setState('idle')
     } catch {
+      // The draft is deliberately left in the box. Clearing it on failure would lose
+      // what the person just wrote about an incident they may no longer be at.
       setState('error')
     }
   }
 
+  const hasHistory = !!legacyNote?.trim() || entries.length > 0
+
   return (
-    <div className="min-w-[15rem]">
+    <div className="min-w-[17rem] max-w-[24rem] space-y-2">
+      {hasHistory && (
+        <ul className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+          {legacyNote?.trim() && (
+            <li className="rounded-lg bg-gray-800/50 border border-gray-800 px-3 py-2">
+              <p className="text-xs text-gray-200 whitespace-pre-wrap break-words">{legacyNote.trim()}</p>
+              <p className="text-[10px] text-gray-600 mt-1">Recorded before the debrief log</p>
+            </li>
+          )}
+          {entries.map(entry => (
+            <li key={entry.id} className="rounded-lg bg-gray-800/50 border border-gray-800 px-3 py-2">
+              <p className="text-xs text-gray-200 whitespace-pre-wrap break-words">{entry.note}</p>
+              <p className="text-[10px] text-gray-600 mt-1">
+                {entry.authorName ? `${entry.authorName} · ` : ''}
+                {new Date(entry.createdAt).toLocaleString([], {
+                  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+                })}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+
       <div className="flex items-start gap-1.5">
         <textarea
           rows={2}
           value={draft}
           onChange={e => { setDraft(e.target.value); setState('idle') }}
-          placeholder="What happened, and what changed?"
+          placeholder={hasHistory ? 'Add to the debrief…' : 'What happened, and what changed?'}
           className="flex-1 bg-gray-800/70 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-amber-600 resize-y"
         />
         <button
           type="button"
-          onClick={handleSave}
-          disabled={!canSave || state === 'saving'}
+          onClick={handleAdd}
+          disabled={!canSave}
           className="shrink-0 px-2.5 py-1.5 rounded-lg text-xs bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
         >
           {state === 'saving' ? '…' : 'Save'}
         </button>
       </div>
-      {state === 'saved' && <p className="text-[10px] text-green-500 mt-1">Saved</p>}
-      {state === 'error' && <p className="text-[10px] text-red-400 mt-1">Could not save. Try again.</p>}
-      {state === 'idle' && dirty && trimmed.length === 0 && saved.trim().length > 0 && (
-        <p className="text-[10px] text-gray-500 mt-1">A debrief note cannot be emptied.</p>
-      )}
+
+      {state === 'error'
+        ? <p className="text-[10px] text-red-400">Could not save. Your text is still here — try again.</p>
+        : <p className="text-[10px] text-gray-600">Saved entries cannot be edited or deleted.</p>}
     </div>
   )
 }

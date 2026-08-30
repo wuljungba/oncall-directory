@@ -12,6 +12,7 @@ import type {
   TimeOff,
   PhoneTree,
   PhoneTreeEvent,
+  DebriefNote,
   PhoneTreeEventParticipant,
   DispatchStep,
   CodeCallLocation,
@@ -426,10 +427,12 @@ export const commandCenterApi = {
       method: 'POST',
       body: JSON.stringify(step),
     }),
-  saveDebriefNotes: (eventId: number, notes: string) =>
-    fetchApi<PhoneTreeEvent>(`/phone-trees/events/${eventId}/debrief`, {
-      method: 'PUT',
-      body: JSON.stringify({ notes }),
+  // Appends to the debrief log. There is deliberately no endpoint that edits or removes
+  // an entry — a code call debrief is a record, so it only grows.
+  addDebriefNote: (eventId: number, note: string) =>
+    fetchApi<DebriefNote>(`/phone-trees/events/${eventId}/debrief`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
     }),
 }
 

@@ -24,6 +24,7 @@ public class AppDbContext : DbContext
     public DbSet<PhoneTreeEvent> PhoneTreeEvents => Set<PhoneTreeEvent>();
     public DbSet<PhoneTreeEventParticipant> PhoneTreeEventParticipants => Set<PhoneTreeEventParticipant>();
     public DbSet<DispatchStep> DispatchSteps => Set<DispatchStep>();
+    public DbSet<DebriefNote> DebriefNotes => Set<DebriefNote>();
     public DbSet<CodeCallLocation> CodeCallLocations => Set<CodeCallLocation>();
     public DbSet<Tenant> Tenants => Set<Tenant>();
     public DbSet<TenantAdmin> TenantAdmins => Set<TenantAdmin>();

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Calendar, Plus, Check, X, AlertTriangle, Edit3, Trash2, Users } from 'lucide-react'
 import { scheduleApi } from '@/services/api'
+import { useDialog } from '@/components/ui/Dialog'
 import { useSignalR } from '@/hooks/useSignalR'
 import { formatDateOnly } from '@/utils/date'
 import type { TimeOff } from '@/types'
@@ -27,6 +28,7 @@ const TYPE_LABELS: Record<string, string> = {
 }
 
 export default function TimeOffPage() {
+  const dialog = useDialog()
   const [requests, setRequests] = useState<TimeOff[]>([])
   const [loading, setLoading] = useState(true)
   const [teamRequests, setTeamRequests] = useState<TimeOff[]>([])
@@ -151,7 +153,14 @@ export default function TimeOffPage() {
   }
 
   async function handleCancel(id: number) {
-    if (!confirm('Are you sure you want to cancel this time-off request?')) return
+    const ok = await dialog.confirm({
+      title: 'Cancel this time-off request?',
+      body: 'The request is withdrawn and your approver will no longer see it.',
+      confirmLabel: 'Cancel request',
+      cancelLabel: 'Keep it',
+      danger: true,
+    })
+    if (!ok) return
     try {
       setError(null)
       await scheduleApi.cancelTimeOff(id)
@@ -164,7 +173,13 @@ export default function TimeOffPage() {
 
   async function handleTeamDecision(request: TimeOff, approve: boolean) {
     const who = request.employee ? `${request.employee.firstName} ${request.employee.lastName}` : 'this employee'
-    const reason = window.prompt(`${who}'s request — ${approve ? 'approve' : 'deny'} (optional reason):`, '') ?? ''
+    const reason = await dialog.prompt({
+      title: `${approve ? 'Approve' : 'Deny'} time off for ${who}`,
+      label: 'Reason (optional)',
+      placeholder: 'Visible to the requester',
+      confirmLabel: approve ? 'Approve' : 'Deny',
+    })
+    if (reason === null) return
     setError(null)
     try {
       if (approve) {

@@ -100,18 +100,34 @@ public class PhoneTreeEventsController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
     }
 
-    /// <summary>Save debrief notes for a resolved incident.</summary>
-    [HttpPut("events/{eventId}/debrief")]
+    /// <summary>
+    /// Append one entry to an incident's debrief log.
+    ///
+    /// POST, not PUT: this adds to the record rather than replacing it. The endpoint that
+    /// overwrote a single debrief field is gone, so there is no longer any request — from
+    /// this app or a hand-rolled one — that can erase what an earlier responder wrote.
+    /// </summary>
+    [HttpPost("events/{eventId}/debrief")]
     [Authorize(Policy = "RequireScheduleWrite")]
-    public async Task<ActionResult<PhoneTreeEvent>> SaveDebriefNotes(int eventId, [FromBody] SaveDebriefNotesRequest request)
+    public async Task<ActionResult<DebriefNote>> AddDebriefNote(int eventId, [FromBody] AddDebriefNoteRequest request)
     {
         try
         {
-            var evt = await _service.SaveDebriefNotesAsync(eventId, request?.Notes);
-            return Ok(evt);
+            var entry = await _service.AddDebriefNoteAsync(eventId, request?.Note, CurrentUserName());
+            return Ok(entry);
         }
         catch (KeyNotFoundException) { return NotFound(); }
+        catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
     }
+
+    /// <summary>
+    /// Display name of the signed-in user, for attributing a debrief entry. Taken from the
+    /// token rather than the request body so an entry cannot be filed under someone else.
+    /// </summary>
+    private string? CurrentUserName() =>
+        User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+        ?? User.FindFirst("name")?.Value
+        ?? User.FindFirst("preferred_username")?.Value;
 
     /// <summary>Record a dispatch pipeline step.</summary>
     [HttpPost("events/{eventId}/dispatch-step")]

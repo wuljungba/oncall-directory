@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/useAuth'
 import Layout from '@/components/Layout'
 import { ToastProvider } from '@/components/Toast'
+import { DialogProvider } from '@/components/ui/Dialog'
 import { SignalRProvider } from '@/hooks/useSignalR'
 import LoginPage from '@/pages/LoginPage'
 import Dashboard from '@/pages/Dashboard'
@@ -36,51 +37,53 @@ export default function App() {
 
   return (
     <ToastProvider>
-      <Routes>
-        {/* Public routes */}
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/login" element={<LoginPage {...auth} />} />
-        {/* Public on-call coverage permalink — no auth required */}
-        <Route path="/on-call/:token" element={<PublicSchedulePage />} />
+      <DialogProvider>
+        <Routes>
+          {/* Public routes */}
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage {...auth} />} />
+          {/* Public on-call coverage permalink — no auth required */}
+          <Route path="/on-call/:token" element={<PublicSchedulePage />} />
 
-        {/* Protected routes */}
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <SignalRProvider>
-                <Layout />
-              </SignalRProvider>
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Dashboard />} />
-          <Route path="schedule" element={<SchedulePage />} />
-          <Route path="directory" element={<DirectoryPage />} />
-          <Route path="code-calls" element={<CommandCenterPage />} />
-          <Route path="phone-trees" element={<PhoneTreePage />} />
-          <Route path="time-off" element={<TimeOffPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="compliance" element={<CompliancePage />} />
-          <Route path="escalation" element={<EscalationPage />} />
-        </Route>
-
-        {/* Admin routes (inside layout, same SignalR context) */}
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute>
-              <AdminRoute>
+          {/* Protected routes */}
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
                 <SignalRProvider>
                   <Layout />
                 </SignalRProvider>
-              </AdminRoute>
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<AdminPage />} />
-        </Route>
-      </Routes>
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<Dashboard />} />
+            <Route path="schedule" element={<SchedulePage />} />
+            <Route path="directory" element={<DirectoryPage />} />
+            <Route path="code-calls" element={<CommandCenterPage />} />
+            <Route path="phone-trees" element={<PhoneTreePage />} />
+            <Route path="time-off" element={<TimeOffPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="compliance" element={<CompliancePage />} />
+            <Route path="escalation" element={<EscalationPage />} />
+          </Route>
+
+          {/* Admin routes (inside layout, same SignalR context) */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <AdminRoute>
+                  <SignalRProvider>
+                    <Layout />
+                  </SignalRProvider>
+                </AdminRoute>
+              </ProtectedRoute>
+            }
+          >
+            <Route index element={<AdminPage />} />
+          </Route>
+        </Routes>
+      </DialogProvider>
     </ToastProvider>
   )
 }

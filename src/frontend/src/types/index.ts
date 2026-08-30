@@ -255,10 +255,21 @@ export interface PhoneTreeEvent {
   status: 'active' | 'completed'
   outcome?: string
   notes?: string
+  /** The single pre-debrief-log note, if this incident predates the log. Read-only. */
   debriefNotes?: string
   participants: PhoneTreeEventParticipant[]
   dispatchSteps?: DispatchStep[]
+  debriefLog?: DebriefNote[]
   phoneTree?: PhoneTree
+}
+
+/** One append-only entry in an incident's debrief log. Never edited, never removed. */
+export interface DebriefNote {
+  id: number
+  phoneTreeEventId: number
+  note: string
+  authorName?: string
+  createdAt: string
 }
 
 export interface CodeCallLocation {

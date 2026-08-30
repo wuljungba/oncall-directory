@@ -886,6 +886,24 @@ using (var scope = app.Services.CreateScope())
                 CREATE INDEX IX_SignInIdentities_LastSeenAt ON dbo.SignInIdentities (LastSeenAt);
             END;
             """,
+            // DebriefNotes (append-only debrief log for a code call). Replaces the single
+            // overwritable PhoneTreeEvents.DebriefNotes column, which is left in place so
+            // notes written before this table still display. Create idempotently.
+            """
+            IF OBJECT_ID(N'dbo.DebriefNotes') IS NULL
+            BEGIN
+                CREATE TABLE dbo.DebriefNotes (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    PhoneTreeEventId int NOT NULL,
+                    Note nvarchar(2000) NOT NULL,
+                    AuthorName nvarchar(200) NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    CONSTRAINT FK_DebriefNotes_Event FOREIGN KEY (PhoneTreeEventId)
+                        REFERENCES dbo.PhoneTreeEvents(Id) ON DELETE CASCADE
+                );
+                CREATE INDEX IX_DebriefNotes_PhoneTreeEventId ON dbo.DebriefNotes (PhoneTreeEventId);
+            END;
+            """,
         })
         {
             try

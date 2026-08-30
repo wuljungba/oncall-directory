@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useDialog } from '@/components/ui/Dialog'
 import {
   Users, Building2, RefreshCw, Shield, Plus, Search, X, Save, Trash2,
   CheckCircle, AlertTriangle, Calendar, Phone, Building,
@@ -270,6 +271,7 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
   canPickTenant: boolean
   activeTenantId: number | null
 }) {
+  const dialog = useDialog()
   const [employees, setEmployees] = useState<Employee[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(true)
@@ -331,9 +333,13 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
   }
 
   async function handleDeleteEmployee(emp: Employee) {
-    const ok = window.confirm(
-      `Permanently delete ${emp.firstName} ${emp.lastName} (${emp.email})?\n\nThis cannot be undone. If they're referenced by schedules, time-off, or phone trees, deletion will be blocked.`
-    )
+    const ok = await dialog.confirm({
+      title: `Permanently delete ${emp.firstName} ${emp.lastName}?`,
+      body: `${emp.email} — this cannot be undone. If they are referenced by schedules, time-off, or phone trees, the deletion is blocked and you can deactivate them instead.`,
+      confirmLabel: 'Delete permanently',
+      cancelLabel: 'Keep',
+      danger: true,
+    })
     if (!ok) return
     try {
       setError(null)
@@ -1236,6 +1242,7 @@ function TwilioDispatchCard() {
 // ─── TIME OFF APPROVAL ────────────────────────────────────────────────────
 
 function TimeOffApprovalSection() {
+  const dialog = useDialog()
   const [requests, setRequests] = useState<TimeOff[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('pending')
@@ -1259,7 +1266,13 @@ function TimeOffApprovalSection() {
 
   async function handleApprove(req: TimeOff) {
     const who = req.employee ? `${req.employee.firstName} ${req.employee.lastName}` : 'this request'
-    const reason = window.prompt(`${who} — approve (optional reason):`, '') ?? ''
+    const reason = await dialog.prompt({
+      title: `Approve time off for ${who}`,
+      label: 'Reason (optional)',
+      placeholder: 'Visible to the requester',
+      confirmLabel: 'Approve',
+    })
+    if (reason === null) return
     try {
       setError(null)
       await scheduleApi.approveTimeOff(req.id, reason || undefined)
@@ -1271,7 +1284,13 @@ function TimeOffApprovalSection() {
 
   async function handleDeny(req: TimeOff) {
     const who = req.employee ? `${req.employee.firstName} ${req.employee.lastName}` : 'this request'
-    const reason = window.prompt(`${who} — deny (optional reason):`, '') ?? ''
+    const reason = await dialog.prompt({
+      title: `Deny time off for ${who}`,
+      body: 'A reason is optional, but it is the only explanation the requester sees.',
+      label: 'Reason (optional)',
+      confirmLabel: 'Deny',
+    })
+    if (reason === null) return
     try {
       setError(null)
       await scheduleApi.denyTimeOff(req.id, reason || undefined)
