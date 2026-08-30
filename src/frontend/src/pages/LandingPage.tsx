@@ -143,6 +143,12 @@ export default function LandingPage() {
               <a href="#policies" className="text-sm text-gray-400 hover:text-gray-200 transition-colors">Policies</a>
               <a href="#legal" className="text-sm text-gray-400 hover:text-gray-200 transition-colors">Legal</a>
               <Link
+                to="/request-access"
+                className="text-sm text-gray-400 hover:text-gray-200 transition-colors"
+              >
+                Request access
+              </Link>
+              <Link
                 to="/login"
                 className="flex items-center gap-2 px-5 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
               >
@@ -171,6 +177,10 @@ export default function LandingPage() {
                 className="block px-3 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-lg transition-colors">
                 Policies
               </a>
+              <Link to="/request-access" onClick={() => setMobileMenuOpen(false)}
+                className="block px-3 py-2 text-sm text-gray-400 hover:text-gray-200">
+                Request access
+              </Link>
               <Link to="/login" onClick={() => setMobileMenuOpen(false)}
                 className="block px-3 py-2 text-sm text-amber-500 hover:bg-gray-800 rounded-lg transition-colors">
                 Sign In
@@ -215,9 +225,15 @@ export default function LandingPage() {
                 Get Started
                 <ArrowRight className="w-5 h-5" />
               </Link>
+              <Link
+                to="/request-access"
+                className="flex items-center gap-2 px-8 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl text-base font-medium transition-colors"
+              >
+                Request Access
+              </Link>
               <a
                 href="#features"
-                className="flex items-center gap-2 px-8 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl text-base font-medium transition-colors"
+                className="flex items-center gap-2 px-8 py-3 text-base font-medium text-gray-400 hover:text-gray-200 transition-colors"
               >
                 Learn More
               </a>
@@ -323,15 +339,24 @@ export default function LandingPage() {
             Ready to get started?
           </h2>
           <p className="text-gray-400 mb-8 max-w-xl mx-auto">
-            Sign in with your organizational account to begin managing on-call schedules and your phone directory.
+            Sign in with your organizational account to manage on-call schedules and your
+            phone directory. No account yet? Ask an administrator for access.
           </p>
-          <Link
-            to="/login"
-            className="inline-flex items-center gap-2 px-8 py-3 bg-amber-600 hover:bg-amber-700 rounded-xl text-base font-medium transition-all hover:shadow-lg hover:shadow-amber-600/25"
-          >
-            Sign In
-            <ArrowRight className="w-5 h-5" />
-          </Link>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-2 px-8 py-3 bg-amber-600 hover:bg-amber-700 rounded-xl text-base font-medium transition-all hover:shadow-lg hover:shadow-amber-600/25"
+            >
+              Sign In
+              <ArrowRight className="w-5 h-5" />
+            </Link>
+            <Link
+              to="/request-access"
+              className="inline-flex items-center gap-2 px-8 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl text-base font-medium transition-colors"
+            >
+              Request Access
+            </Link>
+          </div>
         </div>
       </section>
 

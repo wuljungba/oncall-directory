@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import type { AuthUser, AuthProviderType } from '@/services/auth'
 
 interface LoginPageProps {
@@ -98,8 +98,18 @@ export default function LoginPage({
             </button>
           </div>
 
-        <p className="text-center text-xs text-gray-600 mt-8">
-          Healthcare-grade on-call scheduling & phone directory
+        {/* Signing in proves who you are and grants nothing until an admin scopes you
+            to a tenant, so someone new could sign in successfully and land nowhere.
+            This is the way to ask. */}
+        <p className="text-center text-sm text-gray-500 mt-8">
+          New here?{' '}
+          <Link to="/request-access" className="text-amber-500 hover:text-amber-400 font-medium">
+            Request access
+          </Link>
+        </p>
+
+        <p className="text-center text-xs text-gray-600 mt-6">
+          Healthcare-grade on-call scheduling &amp; phone directory
         </p>
       </div>
     </div>

@@ -483,6 +483,19 @@ builder.Services.AddRateLimiter(options =>
         opt.PermitLimit = 100;
         opt.Window = TimeSpan.FromMinutes(1);
     });
+    // The access-request form is the only anonymous write a person can reach, so it gets
+    // its own budget rather than sharing the general 100/min: a handful per hour from one
+    // address is plenty for someone asking to be let in, and far too few to farm the
+    // endpoint. Partitioned by IP so one source cannot exhaust everyone else's allowance.
+    options.AddPolicy("AccessRequests", ctx =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromHours(1),
+            }));
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
@@ -524,6 +537,7 @@ builder.Services.AddHostedService<AuditBackgroundService>();
 builder.Services.AddSingleton<IdentityDirectoryService>();
 builder.Services.AddSingleton<IIdentityDirectoryService>(sp => sp.GetRequiredService<IdentityDirectoryService>());
 builder.Services.AddHostedService<IdentityDirectoryBackgroundService>();
+builder.Services.AddScoped<IAccessRequestService, AccessRequestService>();
 builder.Services.AddScoped<IAdDirectorySyncService, AdDirectorySyncService>();
 builder.Services.AddHostedService<AdSyncBackgroundService>();
 builder.Services.AddHostedService<DepartmentSyncService>();
@@ -884,6 +898,28 @@ using (var scope = app.Services.CreateScope())
                     ON dbo.SignInIdentities (Provider, ExternalObjectId);
                 CREATE INDEX IX_SignInIdentities_Email ON dbo.SignInIdentities (Email);
                 CREATE INDEX IX_SignInIdentities_LastSeenAt ON dbo.SignInIdentities (LastSeenAt);
+            END;
+            """,
+            // AccessRequests (people asking to be let in from the public pages).
+            // Added later than the base schema — create idempotently.
+            """
+            IF OBJECT_ID(N'dbo.AccessRequests') IS NULL
+            BEGIN
+                CREATE TABLE dbo.AccessRequests (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    Email nvarchar(320) NOT NULL,
+                    FullName nvarchar(200) NULL,
+                    Organization nvarchar(200) NULL,
+                    RoleRequested nvarchar(200) NULL,
+                    Note nvarchar(1000) NULL,
+                    Status nvarchar(20) NOT NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    ReviewedAt datetime2 NULL,
+                    ReviewedByName nvarchar(200) NULL,
+                    ReviewNote nvarchar(1000) NULL
+                );
+                CREATE INDEX IX_AccessRequests_Status ON dbo.AccessRequests (Status, CreatedAt);
+                CREATE INDEX IX_AccessRequests_Email ON dbo.AccessRequests (Email);
             END;
             """,
             // DebriefNotes (append-only debrief log for a code call). Replaces the single

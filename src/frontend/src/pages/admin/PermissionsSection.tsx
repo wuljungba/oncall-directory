@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CheckCircle, Plus, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
-import { identitiesApi, localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
+import { accessRequestsApi, identitiesApi, localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
 import { useDialog } from '@/components/ui/Dialog'
 import { useAuth } from '@/hooks/useAuth'
-import type { LocalAccount, PermissionGrant, SignInIdentity, Tenant } from '@/types'
+import type { AccessRequest, LocalAccount, PermissionGrant, SignInIdentity, Tenant } from '@/types'
 
 const PERMISSION_OPTIONS: { key: string; label: string }[] = [
   { key: 'Schedule.Read', label: 'On-Call Schedule — Read' },
@@ -123,6 +123,10 @@ export default function PermissionsSection() {
           <CheckCircle className="w-5 h-5 flex-shrink-0" /><span>{message}</span>
         </div>
       )}
+
+      {/* People who asked to be let in from the public pages. Sits above the signed-in
+          list because it is the earlier step: they may not have signed in at all yet. */}
+      <AccessRequestQueue canReview={canAdminFull} />
 
       {/* Signed-in users. Entra/Google tokens carry no roles, so people arrive with no
           access and used to be invisible here — the grant field below is free text, with
@@ -463,6 +467,150 @@ function SignedInUsers({ identities, loading, tenantName, onSelect }: {
           ))}
         </div>
       )}
+    </section>
+  )
+}
+
+// ─── ACCESS REQUEST QUEUE ────────────────────────────────────────────────
+//
+// Approving a request does not grant anything, and the UI says so rather than letting an
+// admin assume otherwise. It marks the request triaged and takes it out of the queue; the
+// access itself is still granted deliberately below, scoped to a tenant. Conflating the
+// two is how someone ends up with more than they were meant to have.
+
+function AccessRequestQueue({ canReview }: { canReview: boolean }) {
+  const dialog = useDialog()
+  const [requests, setRequests] = useState<AccessRequest[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showAll, setShowAll] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<number | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      setRequests(await accessRequestsApi.list(showAll ? 'all' : 'pending'))
+      setError(null)
+    } catch {
+      setError('Could not load access requests.')
+    }
+    setLoading(false)
+  }, [showAll])
+
+  useEffect(() => { load() }, [load])
+
+  async function review(req: AccessRequest, approve: boolean) {
+    const note = await dialog.prompt({
+      title: `${approve ? 'Approve' : 'Deny'} request from ${req.fullName || req.email}`,
+      body: approve
+        ? 'This takes the request out of the queue. It does not grant access — use Grant permissions below to do that, scoped to a tenant.'
+        : 'This marks the request declined and takes it out of the queue.',
+      label: 'Note (optional)',
+      confirmLabel: approve ? 'Approve' : 'Deny',
+    })
+    if (note === null) return
+    setBusyId(req.id)
+    try {
+      if (approve) await accessRequestsApi.approve(req.id, note || undefined)
+      else await accessRequestsApi.deny(req.id, note || undefined)
+      await load()
+      setError(null)
+    } catch {
+      setError(`Could not record that decision on request #${req.id}.`)
+    }
+    setBusyId(null)
+  }
+
+  const pending = requests.filter(r => r.status === 'pending').length
+
+  return (
+    <section className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="font-medium flex items-center gap-2">
+          <UserPlus className="w-5 h-5 text-amber-500" /> Access Requests
+          {pending > 0 && (
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-400">
+              {pending} pending
+            </span>
+          )}
+        </h2>
+        <label className="flex items-center gap-2 text-xs text-gray-400">
+          <input type="checkbox" checked={showAll} onChange={e => setShowAll(e.target.checked)} />
+          Show reviewed
+        </label>
+      </div>
+
+      {error && <p className="text-sm text-red-400">{error}</p>}
+
+      {loading ? (
+        <p className="text-sm text-gray-500">Loading…</p>
+      ) : requests.length === 0 ? (
+        <p className="text-sm text-gray-500">
+          {showAll ? 'No access requests yet.' : 'Nothing waiting.'}
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {requests.map(req => (
+            <li key={req.id} className="rounded-lg bg-gray-800/50 border border-gray-800 px-4 py-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <p className="text-sm text-gray-200">
+                    {req.fullName || 'Name not given'}
+                    <span className="text-gray-500"> · {req.email}</span>
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {[req.organization, req.roleRequested].filter(Boolean).join(' · ') || 'No organization given'}
+                  </p>
+                  {req.note && (
+                    <p className="text-xs text-gray-400 mt-1.5 whitespace-pre-wrap break-words">{req.note}</p>
+                  )}
+                  <p className="text-[10px] text-gray-600 mt-1.5">
+                    {new Date(req.createdAt).toLocaleString()}
+                    {req.status !== 'pending' && (
+                      <> · {req.status} by {req.reviewedByName || 'an admin'}</>
+                    )}
+                  </p>
+                </div>
+
+                {req.status === 'pending' && canReview && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => review(req, true)}
+                      disabled={busyId === req.id}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-green-600 hover:bg-green-700 text-white disabled:opacity-40"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => review(req, false)}
+                      disabled={busyId === req.id}
+                      className="px-2.5 py-1.5 rounded-lg text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 disabled:opacity-40"
+                    >
+                      Deny
+                    </button>
+                  </div>
+                )}
+                {req.status !== 'pending' && (
+                  <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full ${
+                    req.status === 'approved'
+                      ? 'bg-green-600/15 text-green-400'
+                      : 'bg-gray-800 text-gray-500'
+                  }`}>
+                    {req.status}
+                  </span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="text-[11px] text-gray-600">
+        Approving records the decision and clears the queue. It grants nothing — access is
+        assigned below, scoped to a tenant.
+      </p>
     </section>
   )
 }

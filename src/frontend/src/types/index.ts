@@ -401,3 +401,18 @@ export interface PublicCoverage {
   tenant: string
   units: PublicCoveredUnit[]
 }
+
+/** Someone asking to be let in from the public pages. Approving one triages it; it never grants access. */
+export interface AccessRequest {
+  id: number
+  email: string
+  fullName?: string
+  organization?: string
+  roleRequested?: string
+  note?: string
+  status: 'pending' | 'approved' | 'denied'
+  createdAt: string
+  reviewedAt?: string
+  reviewedByName?: string
+  reviewNote?: string
+}

@@ -15,6 +15,7 @@ import SettingsPage from '@/pages/SettingsPage'
 import CompliancePage from '@/pages/CompliancePage'
 import EscalationPage from '@/pages/EscalationPage'
 import LandingPage from '@/pages/LandingPage'
+import RequestAccessPage from '@/pages/RequestAccessPage'
 import PublicSchedulePage from '@/pages/PublicSchedulePage'
 import AdminPage from '@/pages/AdminPage'
 
@@ -42,6 +43,8 @@ export default function App() {
           {/* Public routes */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage {...auth} />} />
+          {/* Public: the way in for someone with no account. Creates a request, not access. */}
+          <Route path="/request-access" element={<RequestAccessPage />} />
           {/* Public on-call coverage permalink — no auth required */}
           <Route path="/on-call/:token" element={<PublicSchedulePage />} />
 

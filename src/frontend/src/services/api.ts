@@ -13,6 +13,7 @@ import type {
   PhoneTree,
   PhoneTreeEvent,
   DebriefNote,
+  AccessRequest,
   PhoneTreeEventParticipant,
   DispatchStep,
   CodeCallLocation,
@@ -431,6 +432,39 @@ export const commandCenterApi = {
   // an entry — a code call debrief is a record, so it only grows.
   addDebriefNote: (eventId: number, note: string) =>
     fetchApi<DebriefNote>(`/phone-trees/events/${eventId}/debrief`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+}
+
+// ── Access Requests ──
+// submit() is the one call in this client that runs without a signed-in user. fetchApi
+// simply omits the Authorization header when there is no token, so no special path is
+// needed — but note that everything else here requires an admin.
+export const accessRequestsApi = {
+  submit: (body: {
+    email: string
+    fullName?: string
+    organization?: string
+    roleRequested?: string
+    note?: string
+  }) =>
+    fetchApi<{ message: string }>('/access-requests', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  // The admin side lives under /admin/... on purpose: JwtValidationMiddleware applies
+  // its scope and tenant checks by path prefix, and the prefix the anonymous submit uses
+  // cannot be in that list.
+  list: (status?: string) =>
+    fetchApi<AccessRequest[]>(`/admin/access-requests${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+  approve: (id: number, note?: string) =>
+    fetchApi<AccessRequest>(`/admin/access-requests/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    }),
+  deny: (id: number, note?: string) =>
+    fetchApi<AccessRequest>(`/admin/access-requests/${id}/deny`, {
       method: 'POST',
       body: JSON.stringify({ note }),
     }),

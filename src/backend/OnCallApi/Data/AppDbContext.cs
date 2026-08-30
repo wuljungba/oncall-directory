@@ -32,6 +32,7 @@ public class AppDbContext : DbContext
     public DbSet<PermissionGrant> PermissionGrants => Set<PermissionGrant>();
     public DbSet<PublicShare> PublicShares => Set<PublicShare>();
     public DbSet<SignInIdentity> SignInIdentities => Set<SignInIdentity>();
+    public DbSet<AccessRequest> AccessRequests => Set<AccessRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
