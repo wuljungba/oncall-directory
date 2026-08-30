@@ -596,12 +596,24 @@ public class ScheduleService : IScheduleService
         return timeOff;
     }
 
-    public async Task<List<TimeOff>> GetAllTimeOffAsync(string? statusFilter = null)
+    /// <param name="tenantIds">
+    /// When supplied, restricts the result to requests raised by employees of those
+    /// tenants. Null means no restriction, which is only correct for a super admin.
+    /// </param>
+    public async Task<List<TimeOff>> GetAllTimeOffAsync(
+        string? statusFilter = null, IReadOnlyCollection<int>? tenantIds = null)
     {
         var query = _db.TimeOffs
             .Include(t => t.Employee)
             .Include(t => t.ApprovedBy)
             .AsQueryable();
+
+        if (tenantIds != null)
+        {
+            query = query.Where(t => t.Employee != null
+                && t.Employee.TenantId.HasValue
+                && tenantIds.Contains(t.Employee.TenantId.Value));
+        }
 
         if (!string.IsNullOrEmpty(statusFilter))
             query = query.Where(t => t.Status == statusFilter);

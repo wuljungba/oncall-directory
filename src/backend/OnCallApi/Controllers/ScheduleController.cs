@@ -330,12 +330,23 @@ public class ScheduleController : ControllerBase
         return await _scheduleService.GetPendingTimeOffForManagerAsync(managerId.Value);
     }
 
-    /// <summary>Get all time-off requests (admin view with optional status filter).</summary>
+    /// <summary>
+    /// Time-off requests for the admin view, narrowed to what the caller administers.
+    ///
+    /// This required Admin.Full and returned every tenant's requests unfiltered, so the
+    /// Admin -> Time Off tab -- which is shown to scoped admins too -- answered 403 for
+    /// them every time. A tenant admin now sees their own tenants' requests and nobody
+    /// else's; a super admin still sees everything.
+    /// </summary>
     [HttpGet("time-off/all")]
-    [Authorize(Policy = "RequireAdminFull")]
+    [Authorize(Policy = "RequireAdminFullOrScoped")]
     public async Task<ActionResult<List<TimeOff>>> GetAllTimeOff([FromQuery] string? status)
     {
-        return await _scheduleService.GetAllTimeOffAsync(status);
+        if (_tenantContext.IsSuperAdmin(User))
+            return await _scheduleService.GetAllTimeOffAsync(status);
+
+        var allowed = await _tenantContext.GetAuthorizedTenantIdsAsync(User);
+        return await _scheduleService.GetAllTimeOffAsync(status, allowed);
     }
 
     /// <summary>

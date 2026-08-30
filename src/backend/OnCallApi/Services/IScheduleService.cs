@@ -28,7 +28,8 @@ public interface IScheduleService
     Task<TimeOff> ApproveTimeOffAsync(int id, Guid? approvedById, string? reason = null);
     Task<TimeOff> DenyTimeOffAsync(int id, Guid? approvedById, string? reason = null);
     Task<List<TimeOff>> GetPendingTimeOffForManagerAsync(Guid managerEmployeeId);
-    Task<List<TimeOff>> GetAllTimeOffAsync(string? statusFilter = null);
+    Task<List<TimeOff>> GetAllTimeOffAsync(
+        string? statusFilter = null, IReadOnlyCollection<int>? tenantIds = null);
     Task<Schedule> UpdateScheduleAsync(Schedule schedule);
     Task DeleteScheduleAsync(int id);
     Task<List<Shift>> GenerateShiftsAsync(int scheduleId, int weeks);
