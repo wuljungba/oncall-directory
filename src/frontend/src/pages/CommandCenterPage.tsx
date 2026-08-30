@@ -48,7 +48,6 @@ export default function CommandCenterPage() {
   const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [debriefNotes, setDebriefNotes] = useState<Record<number, string>>({})
-  const debriefTimersRef = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
   const { lastEvent } = useSignalR()
   const prevEventRef = useRef<string | null>(null)
   const logRef = useRef<HTMLDivElement>(null)
@@ -172,9 +171,8 @@ export default function CommandCenterPage() {
   const filteredResolved = resolvedIncidents.filter(inc => matchesSearch(inc, search) && (showArchived || !isArchived(inc)))
 
   const saveDebriefNote = useCallback(async (eventId: number, notes: string) => {
-    try {
-      await commandCenterApi.saveDebriefNotes(eventId, notes)
-    } catch { /* ignore */ }
+    await commandCenterApi.saveDebriefNotes(eventId, notes)
+    setDebriefNotes(prev => ({ ...prev, [eventId]: notes }))
   }, [])
 
   function fmt(s?: string) {
@@ -238,14 +236,38 @@ function matchesSearch(inc: PhoneTreeEvent, q: string) {
   return `${inc.id} ${inc.location || ''} ${code} ${inc.requestedByName || ''} ${inc.initiatedByName || ''} ${trigName(inc)} ${inc.notifiedByName || ''} ${inc.outcome || ''}`.toLowerCase().includes(s)
 }
 
+/**
+ * A dispatch step's state, for the chip that represents it.
+ *
+ * 'skipped' had no case here and fell through to 'active', so a channel that was switched
+ * off rendered exactly like one mid-page -- amber and pulsing, indefinitely. A code call
+ * that reached nobody was therefore indistinguishable from one in progress.
+ */
 function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
     if (evt.status === 'completed') return 'done'
     const step = evt.dispatchSteps?.find(s => s.stepKey === stepKey)
     if (!step) return stepKey === 'created' ? 'done' : 'pending'
     if (step.status === 'completed') return 'done'
     if (step.status === 'failed') return 'failed'
+    if (step.status === 'skipped') return 'skipped'
     return 'active'
   }
+
+/** The server's explanation for a step, e.g. why a channel was skipped. */
+function stepDetail(evt: PhoneTreeEvent, stepKey: string) {
+  return evt.dispatchSteps?.find(s => s.stepKey === stepKey)?.detail
+}
+
+/**
+ * The failure the operator most needs and could not see: dispatch that contacted nobody.
+ * The server records it on the steps; nothing rendered it.
+ */
+function dispatchReachedNobody(evt: PhoneTreeEvent) {
+  const steps = evt.dispatchSteps ?? []
+  const channels = steps.filter(s => s.stepKey !== 'created' && s.stepKey !== 'acknowledged')
+  if (channels.length === 0) return false
+  return channels.every(s => s.status === 'skipped' || s.status === 'failed')
+}
 
   return (
     <div className="space-y-6">
@@ -318,19 +340,37 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                   <div className="flex flex-wrap gap-1.5 mt-3">
                     {PIPELINE_STEPS.map(step => {
                       const status = getStepStatus(inc, step.key)
+                      const detail = stepDetail(inc, step.key)
                       return (
-                        <span key={step.key} className={`inline-flex items-center gap-1 font-mono text-[10px] px-2 py-1 rounded-md border ${
+                        <span key={step.key}
+                          title={detail || undefined}
+                          className={`inline-flex items-center gap-1 font-mono text-[10px] px-2 py-1 rounded-md border ${
                           status === 'done' ? 'bg-green-600/20 text-green-500 border-green-600/30' :
                           status === 'failed' ? 'bg-red-600/20 text-red-500 border-red-600/30' :
+                          status === 'skipped' ? 'bg-gray-800/60 text-gray-500 border-gray-700 line-through decoration-gray-600' :
                           status === 'active' ? 'bg-yellow-600/20 text-yellow-500 border-yellow-600/30 animate-pulse' :
                           'bg-gray-800 text-gray-600 border-gray-700'
                         }`}>
                           <span className="w-1.5 h-1.5 rounded-full bg-current" />
                           {step.label}
+                          {status === 'skipped' && <span className="not-italic no-underline"> off</span>}
                         </span>
                       )
                     })}
                   </div>
+
+                  {/* The server already decided this and said so on the steps. Rendering it
+                      is the difference between an operator escalating by phone and waiting
+                      on a page that was never sent. */}
+                  {dispatchReachedNobody(inc) && (
+                    <div className="flex items-start gap-2 mt-3 text-xs text-red-300 bg-red-600/10 border border-red-600/40 rounded-lg px-3 py-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>
+                        <strong>Nobody was contacted.</strong> Every dispatch channel was off
+                        or failed. Escalate by phone now — this incident has not paged anyone.
+                      </span>
+                    </div>
+                  )}
                   {/* Actions */}
                   <div className="flex gap-2 mt-3">
                     {inc.status === 'active' && (
@@ -357,8 +397,10 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
             <span className="font-mono text-xs bg-gray-800 px-2 py-0.5 rounded-full text-gray-500">live</span>
           </div>
           <div ref={logRef} className="p-4 font-mono text-xs max-h-[500px] overflow-y-auto space-y-1">
+            {/* This read "All paging channels nominal" -- a fixed string, not a check of
+                anything, reassuring during exactly the failure it could not see. */}
             {logEntries.length === 0 ? (
-              <div className="text-gray-600 py-8 text-center">Awaiting activation. All paging channels nominal.</div>
+              <div className="text-gray-600 py-8 text-center">Awaiting activation.</div>
             ) : (
               logEntries.map((entry, i) => (
                 <div key={i} className="flex gap-2 text-gray-400 py-1 border-b border-gray-800/50">
@@ -482,19 +524,10 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                       {/* The note had a Delete button pressed against it. Incident records
                           are the audit trail for who was paged, so that is gone entirely. */}
                       <td className="px-5 py-4">
-                        <input
-                          type="text"
-                          placeholder="What happened, and what changed?"
-                          value={debriefNotes[inc.id] || ''}
-                          onChange={e => {
-                            const val = e.target.value
-                            setDebriefNotes(prev => ({ ...prev, [inc.id]: val }))
-                            if (debriefTimersRef.current[inc.id]) clearTimeout(debriefTimersRef.current[inc.id])
-                            debriefTimersRef.current[inc.id] = setTimeout(() => {
-                              saveDebriefNote(inc.id, val)
-                            }, 800)
-                          }}
-                          className="w-full min-w-[13rem] bg-gray-800/70 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-amber-600"
+                        <DebriefNoteCell
+                          eventId={inc.id}
+                          saved={debriefNotes[inc.id] || ''}
+                          onSave={saveDebriefNote}
                         />
                       </td>
                     </tr>
@@ -515,6 +548,70 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
           onCreateCodeType={handleCreateCodeType}
           onClose={() => setShowActivateModal(false)}
         />
+      )}
+    </div>
+  )
+}
+
+// ─── DEBRIEF NOTE ────────────────────────────────────────────────────────
+//
+// The note used to save itself 800ms after the last keystroke, and failures were
+// swallowed. That made an incident's written record depend on a timer nobody could see,
+// and let a half-typed sentence become the saved version.
+//
+// Saving is now deliberate, and a note cannot be emptied: a debrief is part of the
+// incident's record, so Save stays disabled on blank text. Existing text can still be
+// corrected and extended.
+
+function DebriefNoteCell({ eventId, saved, onSave }: {
+  eventId: number
+  saved: string
+  onSave: (eventId: number, notes: string) => Promise<void>
+}) {
+  const [draft, setDraft] = useState(saved)
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+
+  // Re-sync if the row reloads with a newer note than the one being edited.
+  useEffect(() => { setDraft(saved); setState('idle') }, [saved])
+
+  const trimmed = draft.trim()
+  const dirty = trimmed !== saved.trim()
+  const canSave = dirty && trimmed.length > 0
+
+  async function handleSave() {
+    if (!canSave) return
+    setState('saving')
+    try {
+      await onSave(eventId, trimmed)
+      setState('saved')
+    } catch {
+      setState('error')
+    }
+  }
+
+  return (
+    <div className="min-w-[15rem]">
+      <div className="flex items-start gap-1.5">
+        <textarea
+          rows={2}
+          value={draft}
+          onChange={e => { setDraft(e.target.value); setState('idle') }}
+          placeholder="What happened, and what changed?"
+          className="flex-1 bg-gray-800/70 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-amber-600 resize-y"
+        />
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={!canSave || state === 'saving'}
+          className="shrink-0 px-2.5 py-1.5 rounded-lg text-xs bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          {state === 'saving' ? '…' : 'Save'}
+        </button>
+      </div>
+      {state === 'saved' && <p className="text-[10px] text-green-500 mt-1">Saved</p>}
+      {state === 'error' && <p className="text-[10px] text-red-400 mt-1">Could not save. Try again.</p>}
+      {state === 'idle' && dirty && trimmed.length === 0 && saved.trim().length > 0 && (
+        <p className="text-[10px] text-gray-500 mt-1">A debrief note cannot be emptied.</p>
       )}
     </div>
   )
