@@ -18,13 +18,30 @@ public class IntegrationsController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>Trigger an immediate AD sync.</summary>
+    /// <summary>
+    /// Trigger an immediate AD sync.
+    ///
+    /// This used to call a Graph read and return its count, writing nothing — so it
+    /// reported "synced: 3" while the directory stayed exactly as it was. It now runs the
+    /// same sync the timer does, and reports what was actually written, including any
+    /// users that could not be stored and why.
+    /// </summary>
     [HttpPost("sync/ad")]
     [Authorize(Policy = "RequireAdminFull")]
-    public async Task<ActionResult> SyncActiveDirectory()
+    public async Task<ActionResult> SyncActiveDirectory(
+        [FromServices] IAdDirectorySyncService sync, CancellationToken ct)
     {
-        var users = await _graphApi.SyncUsersAsync();
-        return Ok(new { synced = users.Count });
+        // Full sync rather than delta: someone pressing this wants the directory
+        // reconciled now, not the increment since the last scheduled run.
+        var result = await sync.SyncAsync(null, ct);
+        return Ok(new
+        {
+            fetched = result.Fetched,
+            created = result.Created,
+            updated = result.Updated,
+            deactivated = result.Deactivated,
+            skipped = result.Skipped,
+        });
     }
 
     /// <summary>Send a test Teams notification to a user.</summary>

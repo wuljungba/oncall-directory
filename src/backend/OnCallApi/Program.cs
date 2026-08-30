@@ -524,6 +524,7 @@ builder.Services.AddHostedService<AuditBackgroundService>();
 builder.Services.AddSingleton<IdentityDirectoryService>();
 builder.Services.AddSingleton<IIdentityDirectoryService>(sp => sp.GetRequiredService<IdentityDirectoryService>());
 builder.Services.AddHostedService<IdentityDirectoryBackgroundService>();
+builder.Services.AddScoped<IAdDirectorySyncService, AdDirectorySyncService>();
 builder.Services.AddHostedService<AdSyncBackgroundService>();
 builder.Services.AddHostedService<DepartmentSyncService>();
 builder.Services.AddHostedService<PresenceSyncService>();

@@ -1,14 +1,17 @@
-using Microsoft.EntityFrameworkCore;
-using OnCallApi.Data;
 using OnCallApi.Models;
 
 namespace OnCallApi.Services;
 
+/// <summary>
+/// Runs the AD directory sync on a timer. The sync itself lives in
+/// <see cref="AdDirectorySyncService"/> so the manual trigger runs exactly the same code —
+/// it previously had its own path that read from Graph and wrote nothing.
+/// </summary>
 public class AdSyncBackgroundService : BackgroundService
 {
     private readonly IServiceProvider _services;
     private readonly ILogger<AdSyncBackgroundService> _logger;
-    private int _intervalMinutes;
+    private readonly int _intervalMinutes;
 
     public AdSyncBackgroundService(IServiceProvider services, IConfiguration config, ILogger<AdSyncBackgroundService> logger)
     {
@@ -28,137 +31,41 @@ public class AdSyncBackgroundService : BackgroundService
         }
 
         // Run initial sync immediately
-        await SyncUsersDeltaAsync(null, stoppingToken);
+        await RunOnceAsync(null, stoppingToken);
 
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_intervalMinutes));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            string? deltaToken = null;
+            string? deltaToken;
             using (var scope = _services.CreateScope())
             {
-                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-                var setting = await db.AppSettings
-                    .FirstOrDefaultAsync(s => s.Key == "AdDeltaToken", stoppingToken);
-                deltaToken = setting?.Value;
+                var sync = scope.ServiceProvider.GetRequiredService<IAdDirectorySyncService>();
+                deltaToken = await sync.GetStoredDeltaTokenAsync(stoppingToken);
             }
 
-            await SyncUsersDeltaAsync(deltaToken, stoppingToken);
+            await RunOnceAsync(deltaToken, stoppingToken);
         }
     }
 
-    private async Task SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct)
+    private async Task RunOnceAsync(string? deltaToken, CancellationToken ct)
     {
         try
         {
             using var scope = _services.CreateScope();
-            var graphApi = scope.ServiceProvider.GetRequiredService<IGraphApiService>();
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-
-            // Use delta query for efficiency: first call returns all users,
-            // subsequent calls with delta token return only changes
-            var (users, newDeltaToken) = await graphApi.SyncUsersDeltaAsync(deltaToken, ct);
-
-            if (users.Count == 0 && deltaToken != null)
-            {
-                // No changes since last sync — just update the token
-                _logger.LogInformation("AD delta sync: no changes");
-                await StoreDeltaTokenAsync(db, newDeltaToken, ct);
-                return;
-            }
-
-            var adObjectIds = users.Select(u => u.AzureAdObjectId).ToHashSet();
-
-            // Update existing, add new
-            foreach (var user in users)
-            {
-                var existing = await db.Employees
-                    .FirstOrDefaultAsync(e => e.AzureAdObjectId == user.AzureAdObjectId, ct);
-
-                if (existing != null)
-                {
-                    existing.FirstName = user.FirstName;
-                    existing.LastName = user.LastName;
-                    existing.Title = user.Title;
-                    existing.Email = user.Email;
-                    existing.OfficePhone = user.OfficePhone;
-                    existing.MobilePhone = user.MobilePhone;
-                    existing.OfficeLocation = user.OfficeLocation;
-                    existing.Source = "Ad";
-                    existing.LastSyncedAt = DateTime.UtcNow;
-                }
-                else
-                {
-                    user.Source = "Ad";
-                    user.LastSyncedAt = DateTime.UtcNow;
-                    db.Employees.Add(user);
-                }
-            }
-
-            // Deactivate AD-managed employees that disappeared from AD.
-            //
-            // Only records explicitly marked Source="Ad" (i.e. users this AD sync has itself
-            // created/confirmed) are eligible. Locally-created records — CSV imports, manual
-            // adds, and synthetic csv-import-* ids — are never deactivated by AD sync, no
-            // matter what value their AzureAdObjectId happens to carry. This is what keeps a
-            // CSV import from silently vanishing 15 minutes later.
-            var activeUsers = await db.Employees
-                .Where(e => e.IsActive)
-                .ToListAsync(ct);
-
-            var toDeactivate = SelectEmployeesToDeactivate(activeUsers, adObjectIds);
-
-            foreach (var active in toDeactivate)
-            {
-                active.IsActive = false;
-                active.UpdatedAt = DateTime.UtcNow;
-            }
-
-            await db.SaveChangesAsync(ct);
-
-            // Store the delta token for next sync
-            if (newDeltaToken != null)
-            {
-                await StoreDeltaTokenAsync(db, newDeltaToken, ct);
-            }
-
-            _logger.LogInformation("AD delta sync completed: {Count} users processed", users.Count);
+            var sync = scope.ServiceProvider.GetRequiredService<IAdDirectorySyncService>();
+            await sync.SyncAsync(deltaToken, ct);
         }
         catch (Exception ex)
         {
+            // A scheduled run has nobody to report to, so this stays a log. What it must not
+            // do is hide a whole batch failing over one unusable record — the sync now skips
+            // those individually and names them, rather than rolling everything back here.
             _logger.LogError(ex, "AD delta sync cycle failed");
         }
     }
 
-    private static async Task StoreDeltaTokenAsync(AppDbContext db, string? deltaToken, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(deltaToken)) return;
-
-        var setting = await db.AppSettings
-            .FirstOrDefaultAsync(s => s.Key == "AdDeltaToken", ct);
-        if (setting != null)
-        {
-            setting.Value = deltaToken;
-        }
-        else
-        {
-            db.AppSettings.Add(new Models.AppSetting
-            {
-                Key = "AdDeltaToken",
-                Value = deltaToken,
-                Description = "Azure AD Graph API delta token for incremental user sync"
-            });
-        }
-        await db.SaveChangesAsync(ct);
-    }
-
-    /// <summary>
-    /// Pure rule behind AD deactivation: only records tagged <see cref="Employee.Source"/>
-    /// == "Ad" and no longer present in AD are selected. Local/CsvImport/unsourced records
-    /// are never deactivated, regardless of their <see cref="Employee.AzureAdObjectId"/>.
-    /// Kept internal/static so the invariant is unit-testable.
-    /// </summary>
-    internal static List<Employee> SelectEmployeesToDeactivate(IEnumerable<Employee> activeEmployees, HashSet<string> adObjectIds) =>
-        activeEmployees
-            .Where(e => e.Source == "Ad" && !adObjectIds.Contains(e.AzureAdObjectId))
-            .ToList();
+    /// <inheritdoc cref="AdDirectorySyncService.SelectEmployeesToDeactivate"/>
+    internal static List<Employee> SelectEmployeesToDeactivate(
+        IEnumerable<Employee> activeEmployees, HashSet<string> adObjectIds) =>
+        AdDirectorySyncService.SelectEmployeesToDeactivate(activeEmployees, adObjectIds);
 }
