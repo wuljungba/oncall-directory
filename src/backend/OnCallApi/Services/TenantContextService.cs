@@ -125,16 +125,18 @@ public class TenantContextService : ITenantContextService
             if (string.IsNullOrEmpty(azureAdObjectId))
                 return null;
 
-            // Get the highest role (SuperAdmin > DepartmentAdmin)
+            // There is one tenant-admin role. The two that preceded it ranked against
+            // each other here, but conferred identical permissions, so the ranking decided
+            // nothing -- any recognised row means tenant admin.
             var roles = await _db.TenantAdmins
                 .Where(a => a.AzureAdObjectId == azureAdObjectId)
                 .Select(a => a.Role)
                 .Distinct()
                 .ToListAsync();
 
-            var highestRole = roles.Contains("SuperAdmin") ? "SuperAdmin"
-                            : roles.Contains("DepartmentAdmin") ? "DepartmentAdmin"
-                            : null;
+            var highestRole = roles.Any(OnCallApi.Authorization.TenantAdminRoles.IsTenantAdmin)
+                ? OnCallApi.Authorization.TenantAdminRoles.Default
+                : null;
 
             if (httpContext != null)
                 httpContext.Items[TenantRoleCacheKey] = highestRole;

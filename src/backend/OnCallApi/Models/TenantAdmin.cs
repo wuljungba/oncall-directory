@@ -20,11 +20,18 @@ public class TenantAdmin
 
     /// <summary>
     /// The admin role within this tenant.
-    /// "DepartmentAdmin" — can manage the tenant's departments, employees, time off, etc.
-    /// "SuperAdmin" — full access within this tenant (reserved for future use).
+    /// "TenantAdmin" — administers this tenant: its departments, employees, schedules,
+    /// time off, and starting a code call.
+    ///
+    /// There were two values, "DepartmentAdmin" and "SuperAdmin", and nothing ever
+    /// authorised on the difference — both granted exactly the same permissions. Offering
+    /// the choice implied a restriction that did not exist, so the roles are now one.
+    /// The old values are still accepted wherever they are read, so existing rows keep
+    /// working without a migration.
     /// </summary>
     [MaxLength(50)]
-    public string Role { get; set; } = "DepartmentAdmin";
+    public string Role { get; set; } = OnCallApi.Authorization.TenantAdminRoles.Default;
+
 
     /// <summary>True if this assignment was created by Azure AD group sync, false if manual.</summary>
     public bool IsAutoAssigned { get; set; }

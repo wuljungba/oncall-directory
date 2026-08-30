@@ -138,8 +138,8 @@ public class TenantClaimsMiddleware
             // Add tenant-scoped claim: "TenantId:{id}" with value "DepartmentAdmin" or "SuperAdmin"
             identity.AddClaim(new Claim($"TenantId:{admin.TenantId}", admin.Role));
 
-            // Grant scoped admin permissions if they're a DepartmentAdmin
-            if (admin.Role == "DepartmentAdmin" || admin.Role == "SuperAdmin")
+            // Any recognised tenant-admin role, current or legacy, grants the same set.
+            if (OnCallApi.Authorization.TenantAdminRoles.IsTenantAdmin(admin.Role))
             {
                 foreach (var perm in Permissions.ScopedAdminPermissions)
                 {

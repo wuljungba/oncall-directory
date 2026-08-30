@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using OnCallApi.Authorization;
 using OnCallApi.Data;
 using OnCallApi.Models;
 
@@ -47,14 +48,14 @@ public class TenantAdminsController : ControllerBase
             return Conflict(new { error = "This user is already assigned as an admin for this tenant." });
 
         // Validate role
-        if (request.Role != "DepartmentAdmin" && request.Role != "SuperAdmin")
-            return BadRequest(new { error = "Role must be 'DepartmentAdmin' or 'SuperAdmin'." });
+        if (!TenantAdminRoles.IsTenantAdmin(request.Role))
+            return BadRequest(new { error = $"Role must be '{TenantAdminRoles.Default}'." });
 
         var admin = new TenantAdmin
         {
             TenantId = tenantId,
             AzureAdObjectId = request.AzureAdObjectId,
-            Role = request.Role,
+            Role = TenantAdminRoles.Default,
             IsAutoAssigned = false,
             CreatedAt = DateTime.UtcNow,
         };
@@ -77,9 +78,9 @@ public class TenantAdminsController : ControllerBase
 
         if (request.Role != null)
         {
-            if (request.Role != "DepartmentAdmin" && request.Role != "SuperAdmin")
-                return BadRequest(new { error = "Role must be 'DepartmentAdmin' or 'SuperAdmin'." });
-            admin.Role = request.Role;
+            if (!TenantAdminRoles.IsTenantAdmin(request.Role))
+                return BadRequest(new { error = $"Role must be '{TenantAdminRoles.Default}'." });
+            admin.Role = TenantAdminRoles.Default;
         }
 
         await _db.SaveChangesAsync();

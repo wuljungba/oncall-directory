@@ -1564,10 +1564,8 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                           <div key={admin.id} className="flex items-center justify-between py-1.5 px-3 bg-gray-800/50 rounded-lg">
                             <div className="flex items-center gap-2">
                               <span className="text-xs font-mono text-gray-400">{admin.azureAdObjectId}</span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${
-                                admin.role === 'SuperAdmin' ? 'bg-purple-600/20 text-purple-500' : 'bg-blue-600/20 text-blue-500'
-                              }`}>
-                                {admin.role}
+                              <span className="text-xs px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-500">
+                                Tenant Admin
                               </span>
                               {admin.isAutoAssigned && (
                                 <span className="text-xs text-gray-600">(auto)</span>
@@ -1635,7 +1633,7 @@ function NewSubscriptionModal({ onClose, onCreated }: {
   const [description, setDescription] = useState('')
   const [contactEmail, setContactEmail] = useState('')
   const [adminOid, setAdminOid] = useState('')
-  const [adminRole, setAdminRole] = useState('DepartmentAdmin')
+  const adminRole = 'TenantAdmin'
   const [deptName, setDeptName] = useState('General')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1715,11 +1713,11 @@ function NewSubscriptionModal({ onClose, onCreated }: {
               </div>
               <div>
                 <label className="block text-sm text-gray-500 mb-1">Role</label>
-                <select value={adminRole} onChange={e => setAdminRole(e.target.value)}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
-                  <option value="DepartmentAdmin">Department Admin</option>
-                  <option value="SuperAdmin">Scoped Super Admin (this subscription only)</option>
-                </select>
+                <p className="text-sm px-4 py-2 bg-gray-800/60 border border-gray-800 rounded-lg">Tenant Admin</p>
+                <p className="text-xs text-gray-600 mt-1">
+                  Administers this subscription only: its schedules, directory, departments
+                  and time off, and can start a code call.
+                </p>
               </div>
             </div>
           </div>
@@ -1834,7 +1832,7 @@ function AssignAdminModal({ tenantId, tenantName, onAssign, onClose }: {
   onClose: () => void
 }) {
   const [azureAdObjectId, setAzureAdObjectId] = useState('')
-  const [role, setRole] = useState('DepartmentAdmin')
+  const role = 'TenantAdmin'
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -1974,14 +1972,11 @@ function AssignAdminModal({ tenantId, tenantName, onAssign, onClose }: {
           )}
           <div>
             <label className="block text-sm text-gray-500 mb-1">Role</label>
-            <select value={role} onChange={e => setRole(e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600">
-              <option value="DepartmentAdmin">Department Admin</option>
-              <option value="SuperAdmin">Scoped Super Admin</option>
-            </select>
+            <p className="text-sm px-4 py-2 bg-gray-800/60 border border-gray-800 rounded-lg">Tenant Admin</p>
             <p className="text-xs text-gray-600 mt-1">
-              Both are limited to {tenantName} and currently carry the same permissions:
-              schedules, directory, and starting a code call.
+              Limited to {tenantName}: its schedules, directory, departments and time off.
+              <strong className="text-gray-500"> Includes starting a code call</strong>, which
+              pages real clinicians.
             </p>
           </div>
           <div className="flex justify-end gap-2 pt-2">
