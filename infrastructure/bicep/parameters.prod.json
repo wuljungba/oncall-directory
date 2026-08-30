@@ -1,0 +1,44 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "prod"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "entraTenantId": {
+      "value": "e9577a81-c4d6-4124-984f-78f3c0efcaf4"
+    },
+    "entraClientId": {
+      "value": "6569f3cb-47a1-4826-9f35-16e7d4bf3a52"
+    },
+    "entraDomain": {
+      "value": "yisaland24gmail.onmicrosoft.com"
+    },
+    "entraAudience": {
+      "value": "api://6569f3cb-47a1-4826-9f35-16e7d4bf3a52"
+    },
+    "graphTenantId": {
+      "value": "e9577a81-c4d6-4124-984f-78f3c0efcaf4"
+    },
+    "graphClientId": {
+      "value": "406309ef-0376-4358-9499-aa176e4080aa"
+    },
+    "googleClientId": {
+      "value": "445006464104-pcq13k9lkmcol1k5hqktu8arcrv49c5n.apps.googleusercontent.com"
+    },
+    "superAdminEmails": {
+      "value": [
+        "oncalladmin@yisaland24gmail.onmicrosoft.com"
+      ]
+    },
+    "superAdminObjectIds": {
+      "value": []
+    },
+    "twilioEnabled": {
+      "value": false
+    }
+  }
+}

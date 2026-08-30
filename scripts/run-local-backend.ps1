@@ -17,10 +17,10 @@ Set-Location (Join-Path $PSScriptRoot '..\src\backend\OnCallApi')
 # ── Real authentication ────────────────────────────────────────────────────────
 $env:DevAuth__Enabled = 'false'
 
-$env:AzureAd__TenantId = '24b3700e-7053-4498-a4e6-b8ebf85dc38c'
-$env:AzureAd__ClientId = '96955ba3-c70c-4205-8637-a4b34301480a'
+$env:AzureAd__TenantId = 'e9577a81-c4d6-4124-984f-78f3c0efcaf4'
+$env:AzureAd__ClientId = '6569f3cb-47a1-4826-9f35-16e7d4bf3a52'
 $env:AzureAd__Domain   = 'yisadivinyahoo.onmicrosoft.com'
-$env:AzureAd__Audience = 'api://96955ba3-c70c-4205-8637-a4b34301480a'
+$env:AzureAd__Audience = 'api://6569f3cb-47a1-4826-9f35-16e7d4bf3a52'
 
 $env:Authentication__Google__ClientId = '445006464104-pcq13k9lkmcol1k5hqktu8arcrv49c5n.apps.googleusercontent.com'
 

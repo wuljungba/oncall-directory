@@ -27,10 +27,10 @@ export DevAuth__Enabled=false
 
 # Tenant "yisadivinyahoo.onmicrosoft.com" and the "OnCall API" app registration.
 # http://localhost:5173 is already a registered SPA redirect URI on this app.
-export AzureAd__TenantId=24b3700e-7053-4498-a4e6-b8ebf85dc38c
-export AzureAd__ClientId=96955ba3-c70c-4205-8637-a4b34301480a
+export AzureAd__TenantId=e9577a81-c4d6-4124-984f-78f3c0efcaf4
+export AzureAd__ClientId=6569f3cb-47a1-4826-9f35-16e7d4bf3a52
 export AzureAd__Domain=yisadivinyahoo.onmicrosoft.com
-export AzureAd__Audience=api://96955ba3-c70c-4205-8637-a4b34301480a
+export AzureAd__Audience=api://6569f3cb-47a1-4826-9f35-16e7d4bf3a52
 
 export Authentication__Google__ClientId=445006464104-pcq13k9lkmcol1k5hqktu8arcrv49c5n.apps.googleusercontent.com
 

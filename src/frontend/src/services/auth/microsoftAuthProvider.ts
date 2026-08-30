@@ -8,14 +8,17 @@ import {
 const MSAL_CONFIG = {
   auth: {
     clientId: import.meta.env.VITE_AZURE_CLIENT_ID || 'your-spa-client-id',
-    // Tenant-specific authority. The "OnCall API" app is single-tenant
-    // (AzureADMyOrg), and its admins are B2B guests of the hosting tenant.
-    // The multi-tenant "organizations" authority fails for guest (B2B)
-    // sign-in (routes to login.microsoftonline.com/login.srf), so scope the
-    // authority to the app's own tenant where the guest account lives.
+    // Multi-tenant authority. The "OnCall API" app is AzureADMultipleOrgs, so each
+    // customer hospital signs in with its own Entra tenant after a one-time admin
+    // consent. Pinning this to a tenant GUID would lock every other organisation out.
+    //
+    // It *was* pinned, because the admin used to be a B2B guest and the "organizations"
+    // authority routed guest sign-in to login.srf and failed. The admin is a native
+    // member of the app's own tenant now, so that workaround is no longer needed.
+    // VITE_AZURE_AUTHORITY overrides this; the literal is the fallback only.
     authority:
       import.meta.env.VITE_AZURE_AUTHORITY
-      || 'https://login.microsoftonline.com/24b3700e-7053-4498-a4e6-b8ebf85dc38c',
+      || 'https://login.microsoftonline.com/organizations',
     redirectUri: window.location.origin,
   },
   cache: {

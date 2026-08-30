@@ -63,7 +63,7 @@ var sqlDbName = 'sqldb-oncall-${environmentName}'
 var kvName = 'kv-${take(environmentName, 4)}-${uniqueString(subscription().subscriptionId)}'
 var aiName = 'ai-oncall-${environmentName}'
 var logName = 'log-oncall-${environmentName}'
-var stName = 'stoncall${environmentName}'
+var stName = 'st${take(environmentName, 4)}${uniqueString(subscription().subscriptionId)}'
 var connectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};TrustServerCertificate=False;Encrypt=True;'
 var defaultCorsOrigin = !empty(corsOrigin) ? corsOrigin : 'https://${appName}.azurewebsites.net'
 
@@ -127,7 +127,9 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   location: location
   properties: {
     sku: { name: 'PerGB2018' }
-    retentionInDays: 90
+    // Diagnostics only, and priced by ingestion. The HIPAA audit trail is kept
+    // in SQL for 2190 days and is unaffected by this.
+    retentionInDays: 30
   }
 }
 
@@ -141,7 +143,7 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// ── Azure SQL Database (General Purpose Serverless) ──
+// ── Azure SQL Database (Standard, DTU) ──
 resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
   name: sqlServerName
   location: location
@@ -166,14 +168,12 @@ resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   name: sqlDbName
   location: location
   sku: {
-    name: 'GP_S_Gen5'
-    tier: 'GeneralPurpose'
-    capacity: 2
+    name: 'S0'
+    tier: 'Standard'
   }
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
-    maxSizeBytes: 536870912000 // 500 GB
-    autoPauseDelay: environmentName == 'production' ? -1 : 60
+    maxSizeBytes: 268435456000 // 250 GB - Standard tier maximum
     requestedBackupStorageRedundancy: 'Geo'
   }
 }
@@ -243,8 +243,8 @@ resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'plan-oncall-${environmentName}'
   location: location
   sku: {
-    name: 'S1'
-    tier: 'Standard'
+    name: 'P0v3'
+    tier: 'PremiumV3'
     capacity: 1
   }
 }
