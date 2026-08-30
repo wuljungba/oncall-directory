@@ -269,9 +269,12 @@ public class BulkImportFormatTests
         saved.OfficePhone.Should().Be("+12025550134"); // normalised from (202) 555-0134
         saved.OfficeLocation.Should().Be("Floor 3 - West Wing");
 
-        // "Department" names a department rather than numbering it, so it is ignored
-        // rather than failing the row — Salary and Employee ID likewise.
-        saved.DepartmentId.Should().BeNull();
+        // "Department" names a department rather than numbering it. It is now resolved
+        // against the departments the import may file against, so staff no longer arrive
+        // with no department and fall out of every department-scoped on-call lookup.
+        // Salary and Employee ID are still unrecognised, and still ignored.
+        var cardiology = await db.Departments.SingleAsync(d => d.Name == "Cardiology");
+        saved.DepartmentId.Should().Be(cardiology.Id);
     }
 
     [Fact]

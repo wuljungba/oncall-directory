@@ -33,7 +33,9 @@ public class ImportController : ControllerBase
             await file.CopyToAsync(memoryStream);
             memoryStream.Position = 0;
             _logger.LogInformation("Starting employee validation: {FileName}, {Size} bytes", file.FileName, file.Length);
-            var result = await _importService.ValidateEmployeesAsync(memoryStream);
+            var isSuperAdminCheck = _tenants.IsSuperAdmin(User);
+            var validateScope = isSuperAdminCheck ? null : await _tenants.GetAuthorizedTenantIdsAsync(User);
+            var result = await _importService.ValidateEmployeesAsync(memoryStream, null, validateScope);
             _logger.LogInformation("Validation result: {TotalRows} rows, {Errors} errors", result.TotalRows, result.Errors.Count);
             return Ok(result);
         }

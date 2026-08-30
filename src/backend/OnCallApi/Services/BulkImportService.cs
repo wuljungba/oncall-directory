@@ -26,10 +26,12 @@ public class BulkImportService
     // ── Employee Import ──
 
     /// <summary>Validates a CSV of employee data without importing.</summary>
-    public async Task<ImportResult> ValidateEmployeesAsync(Stream csvStream)
+    public async Task<ImportResult> ValidateEmployeesAsync(
+        Stream csvStream, int? tenantId = null, List<int>? allowedTenantIds = null)
     {
         var (records, errors) = await ParseCsvAsync(csvStream, ParseEmployeeRow);
         CheckDuplicateEmails(records, errors);
+        await ResolveDepartmentNamesAsync(records, tenantId, allowedTenantIds, errors);
         await ValidateDepartmentIdsAsync(records, errors);
         return Result(records.Count, 0, errors);
     }
@@ -52,6 +54,7 @@ public class BulkImportService
 
         // Pre-import integrity checks
         CheckDuplicateEmails(records, errors);
+        await ResolveDepartmentNamesAsync(records, tenantId, allowedTenantIds, errors);
         await ValidateDepartmentIdsAsync(records, errors);
         await CheckForeignTenantEmailsAsync(records, allowedTenantIds, errors);
         if (errors.Count > 0)
@@ -77,7 +80,8 @@ public class BulkImportService
                     if (row.PresentColumns.Contains("officePhone")) existing.OfficePhone = row.OfficePhone;
                     if (row.PresentColumns.Contains("mobilePhone")) existing.MobilePhone = row.MobilePhone;
                     if (row.PresentColumns.Contains("officeLocation")) existing.OfficeLocation = row.OfficeLocation;
-                    if (row.PresentColumns.Contains("departmentId")) existing.DepartmentId = row.DepartmentId;
+                    if (row.PresentColumns.Contains("departmentId") || row.PresentColumns.Contains("department"))
+                        existing.DepartmentId = row.DepartmentId;
                     // TenantId is deliberately NOT reassigned. It used to be set to the
                     // importer's tenant, which meant uploading a file containing another
                     // customer's employee email silently moved that person into your
@@ -279,13 +283,15 @@ public class BulkImportService
     /// ignored, so "First Name", "first_name" and "FIRSTNAME" all reach firstName without
     /// an entry here. Only genuine synonyms are listed.
     ///
-    /// Deliberately absent: "Department". Every export names a department rather than
-    /// numbering it, and this importer wants a departmentId, so mapping it would turn a
-    /// perfectly good file into one error per row. Unmapped columns are ignored instead,
-    /// and department is set afterwards from the directory.
+    /// "Department" carries a name, not an id -- every real export writes "Cardiology"
+    /// rather than 7. It used to be ignored, so staff imported cleanly and arrived with no
+    /// department at all, which left them invisible to every department-scoped on-call
+    /// lookup. The name is now resolved against the departments the importer may use.
     /// </summary>
     private static readonly Dictionary<string, string> HeaderAliases = new(StringComparer.OrdinalIgnoreCase)
     {
+        ["departmentname"] = "department",
+        ["dept"] = "department",
         ["givenname"] = "firstName",
         ["forename"] = "firstName",
         ["surname"] = "lastName",
@@ -372,6 +378,60 @@ public class BulkImportService
 
         foreach (var email in duplicateEmails)
             errors.Add($"Duplicate email found in CSV: '{email}' appears more than once.");
+    }
+
+    /// <summary>
+    /// Resolves the department column's names to ids, within the departments this import
+    /// may file against.
+    ///
+    /// Unknown names fail the import rather than importing the person without a
+    /// department: a typo would otherwise put someone in the directory but outside every
+    /// department-scoped on-call lookup, which reads as "missing" long after the import
+    /// reported success. Names are never created -- departments drive on-call routing, and
+    /// a misspelling would quietly split one department into two.
+    /// </summary>
+    private async Task ResolveDepartmentNamesAsync(
+        List<object> records, int? tenantId, List<int>? allowedTenantIds, List<string> errors)
+    {
+        var named = records.OfType<EmployeeRow>()
+            .Where(r => !string.IsNullOrWhiteSpace(r.DepartmentName))
+            .ToList();
+        if (named.Count == 0) return;
+
+        var query = _db.Departments.AsQueryable();
+        if (tenantId.HasValue)
+            query = query.Where(d => d.TenantId == tenantId.Value);
+        else if (allowedTenantIds is { Count: > 0 })
+            query = query.Where(d => d.TenantId.HasValue && allowedTenantIds.Contains(d.TenantId.Value));
+
+        var departments = await query.Select(d => new { d.Id, d.Name }).ToListAsync();
+
+        // Compared the way people type them: casing and spacing vary between exports.
+        static string Key(string name) =>
+            new string(name.Where(c => !char.IsWhiteSpace(c)).ToArray()).ToLowerInvariant();
+
+        var byName = new Dictionary<string, int>();
+        foreach (var d in departments)
+            byName[Key(d.Name)] = d.Id;
+
+        var unknown = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in named)
+        {
+            if (byName.TryGetValue(Key(row.DepartmentName!), out var id))
+                row.DepartmentId = id;
+            else
+                unknown.Add(row.DepartmentName!);
+        }
+
+        if (unknown.Count == 0) return;
+
+        var available = departments.Count == 0
+            ? "There are no departments to import into yet — create them first."
+            : "Available: " + string.Join(", ", departments.OrderBy(d => d.Name).Select(d => d.Name));
+
+        errors.Add(
+            $"These department names were not recognised: {string.Join(", ", unknown)}. {available}");
     }
 
     /// <summary>Validates that referenced department IDs exist in the database.</summary>
@@ -545,6 +605,8 @@ public class BulkImportService
                 return (null, $"departmentId '{deptIdStr}' is not a valid integer.");
         }
 
+        var departmentName = row.GetValueOrDefault("department")?.Trim();
+
         return (new EmployeeRow
         {
             AzureAdObjectId = azureAdId,
@@ -556,6 +618,7 @@ public class BulkImportService
             MobilePhone = string.IsNullOrWhiteSpace(mobilePhone) ? null : mobilePhone,
             OfficeLocation = row.GetValueOrDefault("officeLocation")?.Trim(),
             DepartmentId = departmentId,
+            DepartmentName = string.IsNullOrWhiteSpace(departmentName) ? null : departmentName,
             PresentColumns = new HashSet<string>(row.Keys, StringComparer.OrdinalIgnoreCase),
         }, null);
     }
@@ -599,7 +662,13 @@ public class BulkImportService
         public string? OfficePhone { get; init; }
         public string? MobilePhone { get; init; }
         public string? OfficeLocation { get; init; }
-        public int? DepartmentId { get; init; }
+        public int? DepartmentId { get; set; }
+
+        /// <summary>
+        /// The department column's text, before it is resolved to an id. Held separately
+        /// so an unresolved name is reported as such rather than silently dropped.
+        /// </summary>
+        public string? DepartmentName { get; init; }
 
         /// <summary>
         /// The column names this row's file actually supplied.
