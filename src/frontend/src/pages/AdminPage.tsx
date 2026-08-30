@@ -20,16 +20,26 @@ export default function AdminPage() {
   const { activeTenantId, setActiveTenantId, tenantIds, isAdmin, canTenantManage, canAdminScoped } = useAuth()
   const [tenants, setTenants] = useState<Tenant[]>([])
 
-  // Load tenant list for the tenant selector
+  // Load the tenant list for the selector and the scope badge.
+  //
+  // This used to fabricate `Tenant ${id}` for scoped admins instead of fetching, so a
+  // sub-admin saw a made-up label in place of their subscription's real name -- always,
+  // whatever it was actually called. GET /tenants scopes itself to the caller's
+  // authorized tenants, so the real names are available to them too; the fabricated
+  // list predates that and is now only a last resort.
   useEffect(() => {
-    if (canTenantManage || (canAdminScoped && tenantIds.length > 1)) {
-      tenantsApi.getAll().then(setTenants).catch(() => {})
-    } else {
-      // Build tenant list from tenantIds/tenantRoles for scoped admins
-      const list = tenantIds.map(id => ({ id, name: `Tenant ${id}`, isActive: true } as Tenant))
-      setTenants(list)
-    }
-  }, [canTenantManage, canAdminScoped, tenantIds])
+    let cancelled = false
+    tenantsApi.getAll()
+      .then(list => { if (!cancelled) setTenants(list) })
+      .catch(() => {
+        // Only when the lookup genuinely failed. The label then names the id it is
+        // showing, rather than presenting a placeholder as though it were a name.
+        if (!cancelled) {
+          setTenants(tenantIds.map(id => ({ id, name: `Tenant ${id}`, isActive: true } as Tenant)))
+        }
+      })
+    return () => { cancelled = true }
+  }, [tenantIds])
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
