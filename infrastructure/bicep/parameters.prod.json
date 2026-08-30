@@ -36,7 +36,10 @@
       ]
     },
     "superAdminObjectIds": {
-      "value": []
+      "value": [
+        "d73548fa-fb22-4eeb-97fc-c63152417d52",
+        "f78c4708-3f4b-4bf0-a5f5-e87777c148d6"
+      ]
     },
     "twilioEnabled": {
       "value": false
