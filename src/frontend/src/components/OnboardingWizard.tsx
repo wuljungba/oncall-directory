@@ -202,7 +202,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-2xl mx-4 shadow-2xl">
+      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto shadow-2xl">
         {/* Header */}
         <div className="px-8 py-6 border-b border-gray-800">
           <h1 className="text-2xl font-bold text-amber-500">Welcome to OnCall</h1>

@@ -72,7 +72,7 @@ export function SendSmsModal({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 shadow-xl"
+        className="w-full max-w-md rounded-xl bg-gray-900 border border-gray-700 shadow-xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between p-4 border-b border-gray-800">

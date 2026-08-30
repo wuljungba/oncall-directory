@@ -45,7 +45,6 @@ export default function CommandCenterPage() {
   const [logEntries, setLogEntries] = useState<{ time: string; tag: string; text: string }[]>([])
   const [clock, setClock] = useState('')
   const [completing, setCompleting] = useState<number | null>(null)
-  const [deletingId, setDeletingId] = useState<number | null>(null)
   const [search, setSearch] = useState('')
   const [showArchived, setShowArchived] = useState(false)
   const [debriefNotes, setDebriefNotes] = useState<Record<number, string>>({})
@@ -170,17 +169,6 @@ export default function CommandCenterPage() {
     setCompleting(null)
   }
 
-  async function handleDeleteEvent(eventId: number) {
-    if (!window.confirm('Permanently delete this incident from history?')) return
-    setDeletingId(eventId)
-    try {
-      await phoneTreesApi.deleteEvent(eventId)
-      addLogEntry('info', `Incident #${eventId} deleted from history`)
-      await loadData()
-    } catch { /* ignore */ }
-    setDeletingId(null)
-  }
-
   const filteredResolved = resolvedIncidents.filter(inc => matchesSearch(inc, search) && (showArchived || !isArchived(inc)))
 
   const saveDebriefNote = useCallback(async (eventId: number, notes: string) => {
@@ -190,7 +178,42 @@ export default function CommandCenterPage() {
   }, [])
 
   function fmt(s?: string) {
-  return s ? new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'
+  return s
+    ? new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—'
+}
+
+/** How long the incident ran, for the line under its start time. */
+function durationLabel(inc: PhoneTreeEvent) {
+  if (!inc.endedAt) return 'ongoing'
+  const ms = new Date(inc.endedAt).getTime() - new Date(inc.startedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return ''
+  const mins = Math.round(ms / 60000)
+  return mins < 1 ? 'under a minute' : mins === 1 ? '1 minute' : `${mins} minutes`
+}
+
+/** Seconds to acknowledgement, as m:ss. */
+function responseLabel(seconds?: number) {
+  if (!seconds && seconds !== 0) return null
+  const m = Math.floor(seconds / 60)
+  const sec = String(seconds % 60).padStart(2, '0')
+  return `${m}:${sec}`
+}
+
+/**
+ * A colour per code, so a row is identifiable before it is read. Codes a tenant defines
+ * itself fall through to the neutral accent rather than borrowing another code's meaning.
+ */
+function codeAccent(treeType?: string) {
+  switch (treeType) {
+    case 'code-blue': return 'bg-blue-500'
+    case 'code-red': return 'bg-red-500'
+    case 'code-green': return 'bg-green-500'
+    case 'code-silver': return 'bg-slate-400'
+    case 'code-grey': return 'bg-gray-400'
+    case 'code-pink': return 'bg-pink-400'
+    default: return 'bg-amber-500'
+  }
 }
 
 /** Operator who triggered the code — pinned signed-in name, else resolved employee name. */
@@ -320,13 +343,6 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                         {completing === inc.id ? 'Resolving...' : 'Mark Resolved'}
                       </button>
                     )}
-                    <button
-                      onClick={() => handleDeleteEvent(inc.id)}
-                      disabled={deletingId === inc.id}
-                      className="text-xs px-3 py-1.5 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded-lg transition-colors disabled:opacity-50"
-                    >
-                      Delete
-                    </button>
                   </div>
                 </div>
               ))
@@ -383,46 +399,92 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-gray-500 uppercase tracking-wider">
+              <tr className="text-left text-[10px] text-gray-500 uppercase tracking-wider border-b border-gray-800">
                 <th className="px-5 py-3 font-medium">Incident</th>
                 <th className="px-5 py-3 font-medium">Location</th>
-                <th className="px-5 py-3 font-medium">Code</th>
-                <th className="px-5 py-3 font-medium">Reported / Triggered</th>
-                <th className="px-5 py-3 font-medium">Time</th>
-                <th className="px-5 py-3 font-medium">Response Time</th>
+                <th className="px-5 py-3 font-medium">People</th>
+                <th className="px-5 py-3 font-medium">Window</th>
+                <th className="px-5 py-3 font-medium text-right">Response</th>
                 <th className="px-5 py-3 font-medium">Outcome</th>
-                <th className="px-5 py-3 font-medium">Notes</th>
+                <th className="px-5 py-3 font-medium">Debrief note</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-800">
+            <tbody className="divide-y divide-gray-800/70">
               {filteredResolved.length === 0 ? (
-                <tr><td colSpan={8} className="text-center text-gray-600 py-10 text-sm">
+                <tr><td colSpan={7} className="text-center text-gray-600 py-10 text-sm">
                   {resolvedIncidents.length === 0 ? 'No incidents yet.' : 'No incidents match. Try clearing search or showing archived.'}
                 </td></tr>
               ) : (
-                filteredResolved.map(inc => (
-                  <tr key={inc.id}>
-                    <td className="px-5 py-3 text-gray-300">#{inc.id} — {inc.phoneTree?.name || 'Code Call'}</td>
-                    <td className="px-5 py-3 text-gray-500">{inc.location || '—'}</td>
-                    <td className="px-5 py-3 text-gray-500">{inc.phoneTree?.treeType || '—'}</td>
-                    <td className="px-5 py-3 text-gray-400">
-                      {inc.requestedByName ? <span>Reported by <span className="text-gray-200">{inc.requestedByName}</span></span> : null}
-                      {inc.requestedByName && trigName(inc) ? <span className="text-gray-600"> · </span> : null}
-                      {trigName(inc) ? <span>Triggered by <span className="text-gray-200">{trigName(inc)}</span></span> : null}
-                      {inc.notifiedByName ? <span className="text-gray-600"> · </span> : null}
-                      {inc.notifiedByName ? <span>Notified: <span className="text-gray-200">{inc.notifiedByName}</span></span> : null}
-                      {!inc.requestedByName && !trigName(inc) && !inc.notifiedByName ? '—' : ''}
-                    </td>
-                    <td className="px-5 py-3 text-gray-300 font-mono">{fmt(inc.startedAt)}{inc.endedAt ? ` – ${fmt(inc.endedAt)}` : ''}</td>
-                    <td className="px-5 py-3 text-gray-300 font-mono">
-                      {inc.responseTimeSeconds ? `${Math.floor(inc.responseTimeSeconds / 60)}m ${inc.responseTimeSeconds % 60}s` : '—'}
-                    </td>
-                    <td className="px-5 py-3 text-gray-500">{inc.outcome || '—'}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-1">
+                filteredResolved.map(inc => {
+                  const response = responseLabel(inc.responseTimeSeconds)
+                  return (
+                    <tr key={inc.id} className="hover:bg-gray-800/30 transition-colors align-top">
+                      {/* Identity: the colour and the code name carry it, so the raw
+                          treeType slug that used to sit in its own column is gone. */}
+                      <td className="px-5 py-4">
+                        <div className="flex items-start gap-2.5">
+                          <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${codeAccent(inc.phoneTree?.treeType)}`} />
+                          <div className="min-w-0">
+                            <p className="text-sm text-gray-200 leading-tight">{inc.phoneTree?.name || 'Code Call'}</p>
+                            <p className="text-[11px] text-gray-600 font-mono tabular-nums mt-0.5">#{inc.id}</p>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="px-5 py-4 text-sm text-gray-400">{inc.location || '—'}</td>
+
+                      {/* Was one run-on sentence; each role now reads on its own line. */}
+                      <td className="px-5 py-4">
+                        {!inc.requestedByName && !trigName(inc) && !inc.notifiedByName ? (
+                          <span className="text-sm text-gray-600">—</span>
+                        ) : (
+                          <div className="space-y-1">
+                            {inc.requestedByName && (
+                              <p className="text-xs"><span className="text-gray-600">Reported </span><span className="text-gray-300">{inc.requestedByName}</span></p>
+                            )}
+                            {trigName(inc) && (
+                              <p className="text-xs"><span className="text-gray-600">Triggered </span><span className="text-gray-300">{trigName(inc)}</span></p>
+                            )}
+                            {inc.notifiedByName && (
+                              <p className="text-xs"><span className="text-gray-600">Notified </span><span className="text-gray-300">{inc.notifiedByName}</span></p>
+                            )}
+                          </div>
+                        )}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        <p className="text-sm text-gray-300 font-mono tabular-nums whitespace-nowrap">
+                          {fmt(inc.startedAt)}{inc.endedAt ? ` → ${fmt(inc.endedAt)}` : ''}
+                        </p>
+                        <p className="text-[11px] text-gray-600 mt-0.5">{durationLabel(inc)}</p>
+                      </td>
+
+                      <td className="px-5 py-4 text-right">
+                        {response ? (
+                          <span className="inline-block text-xs font-mono tabular-nums px-2 py-1 rounded bg-gray-800 text-gray-300">
+                            {response}
+                          </span>
+                        ) : <span className="text-sm text-gray-600">—</span>}
+                      </td>
+
+                      <td className="px-5 py-4">
+                        {inc.outcome ? (
+                          <span className="inline-block text-[11px] px-2 py-1 rounded-full bg-green-600/15 text-green-400">
+                            {inc.outcome}
+                          </span>
+                        ) : (
+                          <span className="inline-block text-[11px] px-2 py-1 rounded-full bg-gray-800 text-gray-500">
+                            Not recorded
+                          </span>
+                        )}
+                      </td>
+
+                      {/* The note had a Delete button pressed against it. Incident records
+                          are the audit trail for who was paged, so that is gone entirely. */}
+                      <td className="px-5 py-4">
                         <input
                           type="text"
-                          placeholder="Add debrief note..."
+                          placeholder="What happened, and what changed?"
                           value={debriefNotes[inc.id] || ''}
                           onChange={e => {
                             const val = e.target.value
@@ -432,20 +494,12 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
                               saveDebriefNote(inc.id, val)
                             }, 800)
                           }}
-                          className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-600"
+                          className="w-full min-w-[13rem] bg-gray-800/70 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-200 placeholder:text-gray-600 focus:outline-none focus:border-amber-600"
                         />
-                        <button
-                          onClick={() => handleDeleteEvent(inc.id)}
-                          disabled={deletingId === inc.id}
-                          title="Delete from history"
-                          className="shrink-0 px-2 py-1 bg-red-600/10 hover:bg-red-600/20 text-red-400 rounded text-xs transition-colors disabled:opacity-50"
-                        >
-                          {deletingId === inc.id ? '…' : 'Delete'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                    </tr>
+                  )
+                })
               )}
             </tbody>
           </table>
@@ -580,7 +634,7 @@ function ActivateCodeModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
-      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4" onClick={e => e.stopPropagation()}>
+      <div className="bg-gray-900 border border-gray-800 rounded-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-800">
           <div>
             <h2 className="text-lg font-medium">Activate Emergency Code</h2>
