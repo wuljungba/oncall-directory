@@ -36,6 +36,37 @@ function formatElapsed(start: string, end?: string | null): string {
   return `${m}:${rem.toString().padStart(2, '0')}`
 }
 
+/**
+ * Who was involved in raising a code, for the pipeline log.
+ *
+ * Two different people, and the log has to keep them apart. The triggerer is the
+ * signed-in account that pressed Activate, taken from the token. The reporter is the
+ * free-text name of whoever called it in, which the operator types. Either can be
+ * missing, and an unknown name is said to be unknown rather than left blank — during a
+ * review, a silent gap and a recorded "not captured" are not the same finding.
+ */
+function peopleLine(inc: PhoneTreeEvent) {
+  const parts: string[] = []
+  const triggered = (inc.initiatedByName
+    || (inc.initiatedBy ? `${inc.initiatedBy.firstName} ${inc.initiatedBy.lastName}` : '')).trim()
+  parts.push(`triggered by ${triggered || 'an unidentified account'}`)
+  const reported = inc.requestedByName?.trim()
+  if (reported) parts.push(`reported by ${reported}`)
+  return parts.join(' · ')
+}
+
+function createdLine(inc: PhoneTreeEvent) {
+  const code = inc.phoneTree?.name || inc.phoneTree?.treeType || 'code'
+  const where = inc.location?.trim() || 'no location given'
+  return `Incident #${inc.id} created — ${code} @ ${where} — ${peopleLine(inc)}`
+}
+
+function resolvedLine(inc: PhoneTreeEvent) {
+  const notified = inc.notifiedByName?.trim()
+  return `Incident #${inc.id} resolved — ${peopleLine(inc)} — `
+    + (notified ? `notified: ${notified}` : 'nobody recorded as notified')
+}
+
 export default function CommandCenterPage() {
   const [activeIncidents, setActiveIncidents] = useState<PhoneTreeEvent[]>([])
   const [resolvedIncidents, setResolvedIncidents] = useState<PhoneTreeEvent[]>([])
@@ -43,7 +74,7 @@ export default function CommandCenterPage() {
   const [locations, setLocations] = useState<CodeCallLocation[]>([])
   const [loading, setLoading] = useState(true)
   const [showActivateModal, setShowActivateModal] = useState(false)
-  const [logEntries, setLogEntries] = useState<{ time: string; tag: string; text: string }[]>([])
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([])
   const [clock, setClock] = useState('')
   const [completing, setCompleting] = useState<number | null>(null)
   const [search, setSearch] = useState('')
@@ -69,25 +100,7 @@ export default function CommandCenterPage() {
     return () => clearInterval(id)
   }, [])
 
-  useEffect(() => { loadData() }, [])
-
-  // SignalR live updates
-  useEffect(() => {
-    if (!lastEvent) return
-    const eventKey = `${lastEvent.type}-${JSON.stringify(lastEvent.payload)}`
-    if (eventKey === prevEventRef.current) return
-    prevEventRef.current = eventKey
-    if (['IncidentCreated', 'IncidentUpdated', 'IncidentResolved', 'DispatchStepCompleted'].includes(lastEvent.type)) {
-      loadData()
-      if (lastEvent.type === 'DispatchStepCompleted') {
-        // Mirrors the anonymous broadcast shape from CodeCallDispatchService.BroadcastStepUpdate.
-        const p = lastEvent.payload as { stepKey: string; status: string; detail?: string }
-        addLogEntry('dispatch', `Step "${p.stepKey}" ${p.status} — ${p.detail || ''}`)
-      }
-    }
-  }, [lastEvent])
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     try {
       const [active, resolved, trees, locs] = await Promise.all([
         commandCenterApi.getActive(),
@@ -105,13 +118,73 @@ export default function CommandCenterPage() {
       const log: Record<number, DebriefNote[]> = {}
       resolved.forEach((inc: PhoneTreeEvent) => { log[inc.id] = inc.debriefLog ?? [] })
       setDebriefLog(log)
+
+      // Backfill the console from what the server holds, so a refresh mid-incident does
+      // not leave an operator staring at "Awaiting activation." while a code is running.
+      // Oldest first, since each entry is prepended; the keys match the live broadcasts,
+      // so nothing already on screen is repeated.
+      const seed = [...active, ...resolved].sort(
+        (a: PhoneTreeEvent, b: PhoneTreeEvent) =>
+          new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime())
+      seed.forEach((inc: PhoneTreeEvent) => {
+        addLogEntry('dispatch', createdLine(inc), `IncidentCreated-${inc.id}`, inc.startedAt)
+        if (inc.status === 'completed') {
+          addLogEntry('info', resolvedLine(inc), `IncidentResolved-${inc.id}`, inc.endedAt)
+        }
+      })
     } catch { /* ignore */ }
     setLoading(false)
-  }
+  }, [])
 
-  function addLogEntry(tag: string, text: string) {
-    const time = new Date().toLocaleTimeString('en-US', { hour12: false })
-    setLogEntries(prev => [{ time, tag, text }, ...prev].slice(0, 100))
+  useEffect(() => { loadData() }, [loadData])
+
+  // SignalR live updates
+  useEffect(() => {
+    if (!lastEvent) return
+    const eventKey = `${lastEvent.type}-${JSON.stringify(lastEvent.payload)}`
+    if (eventKey === prevEventRef.current) return
+    prevEventRef.current = eventKey
+    if (['IncidentCreated', 'IncidentUpdated', 'IncidentResolved', 'DispatchStepCompleted'].includes(lastEvent.type)) {
+      loadData()
+      if (lastEvent.type === 'DispatchStepCompleted') {
+        // Mirrors the anonymous broadcast shape from CodeCallDispatchService.BroadcastStepUpdate.
+        const p = lastEvent.payload as { stepKey: string; status: string; detail?: string }
+        addLogEntry('dispatch', `Step "${p.stepKey}" ${p.status} — ${p.detail || ''}`)
+      }
+      // A code raised at another station used to reach this console as a row of dispatch
+      // steps with nothing saying what had been raised or by whom. The broadcast carries
+      // the whole incident, so log who triggered it and who called it in.
+      if (lastEvent.type === 'IncidentCreated' || lastEvent.type === 'IncidentResolved') {
+        const inc = lastEvent.payload as PhoneTreeEvent
+        if (inc?.id) {
+          addLogEntry(
+            lastEvent.type === 'IncidentCreated' ? 'dispatch' : 'info',
+            lastEvent.type === 'IncidentCreated' ? createdLine(inc) : resolvedLine(inc),
+            `${lastEvent.type}-${inc.id}`,
+          )
+        }
+      }
+    }
+  }, [lastEvent, loadData])
+
+
+  /**
+   * Appends a line to the pipeline log.
+   *
+   * `key` identifies the real-world event rather than the line, so the same incident
+   * cannot be logged twice. It is written both by the operator who raised it and by the
+   * SignalR broadcast that follows, and both paths are wanted: the broadcast is what puts
+   * another operator's code in this console, and the local write is what still logs it
+   * when the hub is down.
+   */
+  function addLogEntry(tag: string, text: string, key?: string, at?: string) {
+    const time = at
+      ? new Date(at).toLocaleTimeString('en-US', { hour12: false })
+      : new Date().toLocaleTimeString('en-US', { hour12: false })
+    setLogEntries(prev => {
+      if (key && prev.some(e => e.key === key)) return prev
+      return [{ time, tag, text, key }, ...prev].slice(0, 200)
+    })
   }
 
   /**
@@ -147,7 +220,7 @@ export default function CommandCenterPage() {
         requestedByName: requestedByName.trim() || undefined,
         confirm: true,
       })
-      addLogEntry('dispatch', `Incident #${evt.id} created — ${codeType} @ ${location}${requestedByName.trim() ? ` — reported by ${requestedByName.trim()}` : ''}`)
+      addLogEntry('dispatch', createdLine(evt), `IncidentCreated-${evt.id}`)
       setShowActivateModal(false)
     } catch (err) {
       addLogEntry('info', `Failed to create incident: ${err}`)
@@ -170,7 +243,7 @@ export default function CommandCenterPage() {
     setCompleting(eventId)
     try {
       await commandCenterApi.resolveEvent(eventId, { notifiedByName: notified || undefined })
-      addLogEntry('info', `Incident #${eventId} marked resolved${notified.trim() ? ` — notified: ${notified.trim()}` : ''}`)
+      addLogEntry('info', `Incident #${eventId} marked resolved${notified.trim() ? ` — notified: ${notified.trim()}` : ''}`, `IncidentResolved-${eventId}`)
       // Reload rather than relying on the IncidentResolved SignalR broadcast: if the hub
       // is not connected the incident stays in the Active column and the resolve looks
       // like it silently did nothing, even though the server completed it.
@@ -234,6 +307,14 @@ function trigName(inc: PhoneTreeEvent) {
   if (inc.initiatedByName) return inc.initiatedByName
   if (inc.initiatedBy) return `${inc.initiatedBy.firstName} ${inc.initiatedBy.lastName}`.trim()
   return ''
+}
+
+interface LogEntry {
+  time: string
+  tag: string
+  text: string
+  /** Identifies the underlying event, so the same incident is never logged twice. */
+  key?: string
 }
 
 function isArchived(inc: PhoneTreeEvent) {

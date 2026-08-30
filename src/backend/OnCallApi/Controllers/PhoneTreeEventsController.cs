@@ -203,6 +203,15 @@ public class PhoneTreeEventsController : ControllerBase
         // Enqueue the dispatch job; it is processed by the dispatch background service
         await _dispatch.DispatchIncidentAsync(created.Id, treeType);
 
+        // Raising a code is the safety-critical act on this path, so who did it is recorded
+        // in the server log as well as on the event. The signed-in account only — the
+        // reporter's name is free text an operator typed and may name a patient, so it
+        // stays in the database record and off the log stream.
+        _logger.LogInformation(
+            "Code call {EventId} ({TreeType}) raised on tree {TreeId} by {InitiatedBy} (employee {EmployeeId})",
+            created.Id, treeType, treeId,
+            created.InitiatedByName ?? "an unidentified account", created.InitiatedById);
+
         await _broadcast.ToTenantAsync(
             await _broadcast.TenantForEventAsync(created.Id), "IncidentCreated", created, safetyCritical: true);
         return CreatedAtAction(nameof(GetEvent), new { eventId = created.Id }, created);
