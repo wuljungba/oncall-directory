@@ -280,6 +280,7 @@
   .badge.verified { color: var(--verified); background: var(--verified-soft); }
   .badge.partial  { color: var(--caution);  background: var(--caution-soft); }
   .badge.untested { color: var(--critical); background: var(--critical-soft); }
+  .badge.broken   { color: var(--critical); background: var(--critical-soft); }
 
   /* ---- Callouts ---- */
   .callout {
@@ -376,7 +377,7 @@
 
   <div class="draft">
     <span class="tag">Draft</span>
-    <p><strong>Not yet ready to be the official onboarding document.</strong> Sections marked <em>Verified</em> were confirmed by driving the running application on 27 August 2026. The limitations in section&nbsp;7 are real defects a new user will hit. Promote this once that section is empty.</p>
+    <p><strong>Not yet ready to be the official onboarding document.</strong> Sections marked <em>Verified</em> were confirmed by driving the running application, most recently in a full feature pass on 28 August 2026. The limitations in section&nbsp;7 are real defects a new user will hit, and the first four are safety-critical. Promote this once that section is empty.</p>
   </div>
 
   <nav class="toc" aria-label="Contents">
@@ -499,7 +500,7 @@ npm run dev</code></pre>
 
       <h3>Dashboard <span class="badge verified">Verified</span></h3>
       <p>The landing page: <strong>Currently On Call</strong>, <strong>Departments Covering</strong>, <strong>Directory Entries</strong>, your own upcoming coverage, and shortcuts.</p>
-      <p><strong>Expected outcome:</strong> counts reflect real data. With no shifts scheduled it reads <em>“No one is currently on call”</em> — correct, not an error. If your account has no linked employee profile it says so; see limitation&nbsp;4.</p>
+      <p><strong>Expected outcome:</strong> counts reflect real data. With no shifts scheduled it reads <em>“No one is currently on call”</em> — correct, not an error. If your account has no linked employee profile it says so; see limitation&nbsp;7.</p>
 
       <h3>Phone Directory <span class="badge verified">Verified</span></h3>
       <p>The staff contact list, and the most-used page in the app.</p>
@@ -532,7 +533,9 @@ officePhone,mobilePhone,officeLocation,departmentId</code></pre>
         <li>Messy phone formats are fine — <code>(202) 555-0134</code>, <code>202-555-0134</code>, <code>+1 202 555 0134</code>. A number too short to dial is refused rather than stored, because an undialable number in the directory is worse than an empty field.</li>
         <li><strong>Everyday headings work too.</strong> Matching ignores case, spaces, underscores and hyphens, and understands common synonyms, so <em>First Name</em>, <em>Work Email</em>, <em>Job Title</em>, <em>Work Phone</em>, <em>Cell</em> and <em>Work Location</em> all land correctly.</li>
         <li><strong>Columns it does not recognise are ignored</strong>, not rejected — an export carrying Salary, Manager and Address imports the fields that matter and drops the rest.</li>
-        <li>A file that is not a spreadsheet at all gives <strong>one sentence naming the fix</strong>, rather than one error per line. Error lists are capped at 25, with the true total reported alongside.</li>
+        <li>Error lists are capped at 25, with the true total reported alongside.</li>
+        <li><strong>A file that is not a spreadsheet still produces one error per line.</strong> An earlier draft of this guide claimed a single explanatory sentence instead; that is not what happens. Plain text reports a column-count mismatch, and a PDF reports a missing name on every line. The message will not tell you the file type is the problem — if you see an error on every row, check the file before checking the data.</li>
+        <li><strong>Email addresses are not validated on import</strong>, although they are when you add one person by hand. A row reading <code>NOT-AN-EMAIL</code> imports cleanly and the record is created (limitation&nbsp;18).</li>
       </ul>
       <p><strong>Download Template</strong> remains the surest starting point, but an HR export now usually imports as-is. A 30-row hospital export headed <em>First Name / Work Email / Work Phone</em>, saved as <code>.xlsx</code> but named <code>.csv</code>, imports 30 of 30 with no errors.</p>
 
@@ -541,34 +544,57 @@ officePhone,mobilePhone,officeLocation,departmentId</code></pre>
         <p>Exports name a department (“Cardiology”); the importer wants the numeric <code>departmentId</code>. Rather than fail every row, the column is ignored — so staff import cleanly but arrive <strong>with no department set</strong>, and department-scoped on-call lookups will not find them until it is filled in.</p>
       </div>
 
-      <h3>On-Call Schedule <span class="badge partial">API verified</span></h3>
+      <h3>On-Call Schedule <span class="badge verified">Verified</span></h3>
       <p>Create schedules per department, generate rotations, assign shifts, handle swaps.</p>
-      <p><strong>Expected outcome:</strong> creating a schedule requires a department. Generating shifts produces a rotation with a <strong>primary</strong> clinician on call at every hour, overnight included. A swap must be approved before it takes effect. Schedules export as <code>.ics</code> for Outlook or Google Calendar.</p>
+      <p><strong>Expected outcome:</strong> generating shifts produces a rotation with a <strong>primary</strong> clinician on call at every hour, overnight included. A fortnight generated across three clinicians gave 28 shifts covering all 336 hours with no gap and no overlap. A swap must be approved before it takes effect, and ownership transfers only on approval.</p>
+      <p>Two details the wording used to gloss. A schedule <em>requires</em> a department in the sense that it crashes without one — a missing or unknown <code>departmentId</code> returns a 500 from an unhandled database error rather than a validation message (limitation&nbsp;19). And <code>.ics</code> export is generated <strong>in the browser</strong>; there is no calendar endpoint on the server, so it cannot be driven by an integration.</p>
 
-      <h3>Command Center <span class="badge untested">Not exercised</span></h3>
+      <h3>Command Center <span class="badge untested">Do not trust the screen</span></h3>
       <p>The live emergency view: active incidents, dispatch progress, and who has acknowledged.</p>
       <div class="callout danger">
-        <span class="label">Why this was not tested</span>
-        <p>Starting a code call <strong>pages real clinicians by SMS and voice</strong>. Verify this feature only with dispatch channels disabled.</p>
+        <span class="label">This screen misreports a failed code call</span>
+        <p>The <em>backend</em> handles a failed dispatch correctly. With no channel configured it marks the incident failed, leaves it unacknowledged, and records “DISPATCH FAILED — no dispatch channel is configured, so nobody was contacted. Escalate by phone now.”</p>
+        <p><strong>None of that reaches the operator.</strong> The four dead channels are drawn as pulsing amber pills — the same treatment used for a page in progress — and they pulse indefinitely. The failure text is never rendered anywhere in the page. Below them the pipeline log shows a fixed line reading “Awaiting activation. All paging channels nominal.”</p>
+        <p>So a code call reaching nobody looks like a code call in progress, with an explicit reassurance that paging is healthy. <strong>Until limitation&nbsp;1 is fixed, confirm every code call by phone.</strong> Do not use this screen as evidence that anyone was reached.</p>
+      </div>
+      <div class="callout caution">
+        <span class="label">How to exercise it safely</span>
+        <p>Starting a code call <strong>pages real clinicians by SMS and voice</strong>. The dispatch pipeline was tested on 28 August 2026 with all five channels force-disabled and Twilio credentials blanked, which is the only safe way to drive it. Consent gate, acknowledge, debrief, participants, resolve and idempotency all behaved correctly. <strong>The channel-success paths remain untested</strong> — nothing here confirms that a real page is delivered.</p>
       </div>
 
-      <h3>Phone Trees <span class="badge partial">Renders</span></h3>
-      <p>Escalation chains for emergencies: an ordered list of people to reach, each with a timeout before the next is tried. Reachable only at <code>/dashboard/phone-trees</code> — there is no sidebar link (limitation&nbsp;3).</p>
+      <h3>Phone Trees <span class="badge verified">Verified</span></h3>
+      <p>Escalation chains for emergencies: an ordered list of people to reach, each with a timeout before the next is tried. Reachable only at <code>/dashboard/phone-trees</code> — there is no sidebar link (limitation&nbsp;5).</p>
+      <p><strong>Expected outcome:</strong> the full editor works. Creating, renaming and deleting a tree, and adding, editing and reordering the people in it, all behave correctly end to end. Reordering two nodes swaps their positions and persists.</p>
+      <div class="callout danger">
+        <span class="label">The trees that ship are empty</span>
+        <p>All seven seeded emergency trees — Code Blue, Red, Green, Silver, Grey and Pink — contain <strong>no people at all</strong>, and belong to <strong>no department</strong>. Opening Code Blue says so plainly: <em>“No nodes configured.”</em></p>
+        <p>Both halves matter. An empty tree has nobody to escalate to. A tree with no department cannot be matched to a hospital, so its code calls produce <strong>no live updates on Command Center at all</strong> — and the New Code form has no department field, so trees created here inherit the same fault. Build your trees with a department set, and put people in them, before relying on either screen (limitations&nbsp;2 and&nbsp;3).</p>
+      </div>
 
-      <h3>Time Off <span class="badge partial">API verified</span></h3>
+      <h3>Time Off <span class="badge partial">Verified, with a gap</span></h3>
       <p>Request time off; approve or deny as a manager.</p>
-      <p><strong>Expected outcome:</strong> you cannot approve your own request, but your manager can. Approving twice, denying after approval, or editing an approved request are each refused with an accurate message.</p>
+      <p><strong>Expected outcome:</strong> approving twice, denying after approval, or editing an approved request are each refused with an accurate message. All of those hold.</p>
+      <div class="callout caution">
+        <span class="label">Administrators can approve their own time off</span>
+        <p>This guide previously said you cannot approve your own request. That is true for ordinary users — a viewer and a scheduler are both refused — but <strong>any administrator, including a tenant sub-admin, can approve their own request</strong>, and the record then names them as their own approver. If you rely on separation of duties for duty-hour or payroll audit, this is the gap (limitation&nbsp;17).</p>
+      </div>
 
       <h3>Compliance <span class="badge verified">Verified</span></h3>
       <p>Duty-hour rules — maximum hours per period, minimum rest between shifts, maximum consecutive days — and the violations found against them.</p>
-      <p><strong>Expected outcome:</strong> the violations table lists breaches with employee, rule and date. <strong>Export</strong> downloads a CSV. The page occasionally returns a server error on load; reloading clears it (limitation&nbsp;5).</p>
+      <p><strong>Expected outcome:</strong> the violations table lists breaches with employee, rule and date. <strong>Export</strong> downloads a CSV. The page occasionally returns a server error on load; reloading clears it (limitation&nbsp;8). The cause is contention: twelve simultaneous requests all succeed, sixty produce ten failures, because the page writes data while being read.</p>
 
-      <h3>Escalation <span class="badge partial">Renders</span></h3>
-      <p>Policies governing what happens when an on-call clinician does not acknowledge in time. Reachable only at <code>/dashboard/escalation</code> — no sidebar link.</p>
+      <h3>Escalation <span class="badge verified">Verified</span></h3>
+      <p>Policies governing what happens when an on-call clinician does not acknowledge in time. Reachable only at <code>/dashboard/escalation</code> — no sidebar link (limitation&nbsp;5).</p>
+      <p><strong>Expected outcome:</strong> creating, editing and deleting a policy all work, and the Event Log records what the escalation engine did. The engine runs: test policies generated 40 events. <strong>Every one of them recorded a failed notification</strong>, which is the visible consequence of the dispatch channels being unconfigured — escalation decides who to reach next, but the reaching itself still depends on a working channel.</p>
+      <p>The form guards its own inputs, but the API behind it does not: a negative or zero response time is accepted if sent directly (limitation&nbsp;11).</p>
 
       <h3>Settings <span class="badge verified">Verified</span></h3>
       <p>Microsoft 365 integration status, notification toggles, schedule defaults, and the <strong>HIPAA session timeout</strong> (default 15 minutes).</p>
-      <p>The timeout is enforced in two places: the browser warns <em>“Still there?”</em> about a minute before signing you out, and the server independently caps token lifetime to the same value, so a captured token cannot outlive the policy.</p>
+      <p>The browser warns <em>“Still there?”</em> about a minute before signing you out.</p>
+      <div class="callout caution">
+        <span class="label">The server-side cap covers local accounts only</span>
+        <p>This guide previously said the server independently caps token lifetime, so a captured token cannot outlive the policy. That cap exists — but only where the application mints the token itself, which means <strong>local accounts</strong>. Microsoft Entra and Google set their own token lifetimes, and nothing here shortens them. For those providers the session timeout is a browser-side policy, not a server-enforced one. Treat that as a real difference when writing up HIPAA session controls.</p>
+      </div>
 
       <h3>Admin <span class="badge verified">Verified</span></h3>
       <div class="scroller">
@@ -590,9 +616,13 @@ officePhone,mobilePhone,officeLocation,departmentId</code></pre>
         </table>
       </div>
 
-      <h3>Public schedule links <span class="badge partial">API verified</span></h3>
+      <h3>Public schedule links <span class="badge broken">Broken</span></h3>
       <p>A shareable read-only coverage link at <code>/on-call/{token}</code>, created under <strong>Admin → Public Schedule</strong>.</p>
-      <p><strong>Expected outcome:</strong> coverage counts only — <strong>no names, phone numbers or email addresses</strong>. Unknown, disabled and expired tokens all return an identical response, so a link cannot be probed to discover valid ones.</p>
+      <div class="callout danger">
+        <span class="label">This feature does not work at all</span>
+        <p><strong>Every valid link returns a server error</strong>, with or without shifts behind it. The visitor sees “Link unavailable.” Creating and disabling links works; only viewing one fails, which is why it went unnoticed. The fault is in how the query is written rather than in any data, so <strong>it fails on Azure SQL exactly as it does locally</strong> — this is not a local-only problem (limitation&nbsp;16).</p>
+        <p>It also defeats the privacy guarantee this guide used to claim. A valid token errors while an invalid one returns a clean not-found, so the two are trivially distinguishable and a link <em>can</em> be probed. The intended behaviour — coverage counts only, with <strong>no names, phone numbers or email addresses</strong>, and identical responses for unknown, disabled and expired tokens — is correctly written and will hold once the error is fixed. Do not hand out a share link until then.</p>
+      </div>
     </section>
 
     <section id="permissions">
@@ -604,41 +634,60 @@ officePhone,mobilePhone,officeLocation,departmentId</code></pre>
           <tbody>
             <tr><td><code>Schedule.Read</code> / <code>Write</code></td><td>View / edit schedules and shifts</td></tr>
             <tr><td><code>Directory.Read</code> / <code>Write</code></td><td>View / edit the phone directory</td></tr>
-            <tr><td><code>CodeCall.Write</code></td><td><strong>Start a live code call.</strong> This pages real clinicians</td></tr>
+            <tr><td><code>CodeCall.Write</code></td><td>Manage code-call locations and direct messaging. <strong>Despite the name, this is not what guards starting a code call</strong> — see below</td></tr>
             <tr><td><code>Admin.Scoped</code></td><td>Administer your own tenant</td></tr>
             <tr><td><code>Admin.Full</code></td><td>Administer every tenant</td></tr>
             <tr><td><code>Tenant.Manage</code></td><td>Create tenants and assign tenant administrators</td></tr>
           </tbody>
         </table>
       </div>
-      <p><code>Admin.Full</code>, <code>Admin.Scoped</code> and <code>Tenant.Manage</code> <strong>cannot</strong> be handed out through the permissions UI, by design. They come only from the configured super-admin list or an explicit tenant-admin assignment.</p>
+      <p><code>Admin.Full</code>, <code>Admin.Scoped</code> and <code>Tenant.Manage</code> <strong>cannot</strong> be handed out through the permissions UI, by design. They come only from the configured super-admin list or an explicit tenant-admin assignment. This holds under test: asking for <code>Schedule.Write</code> and <code>Admin.Full</code> together quietly grants only <code>Schedule.Write</code>.</p>
+      <div class="callout danger">
+        <span class="label">Starting a code call is authorised by Schedule.Write</span>
+        <p>The endpoint that actually dispatches a code call checks <strong><code>Schedule.Write</code></strong>, not <code>CodeCall.Write</code>. So <strong>anyone who can edit a schedule can page real clinicians.</strong></p>
+        <p>This undoes a safeguard elsewhere. Permissions granted automatically through Entra group membership deliberately exclude <code>CodeCall.Write</code>, on the stated reasoning that paging clinicians should never be acquired as a side effect of being added to a directory group. But that same automatic set <em>includes</em> <code>Schedule.Write</code> — which is the permission dispatch really checks. Until this is reconciled, treat <code>Schedule.Write</code> as carrying the authority to page (limitation&nbsp;4).</p>
+      </div>
     </section>
 
     <section id="limits">
       <h2>7 · Known limitations</h2>
-      <p>These need resolving before this document becomes official. They are numbered so they can be referenced directly.</p>
+      <p>These need resolving before this document becomes official. They are numbered so they can be referenced directly, and the numbering changed on 28 August 2026 when the safety-critical group was added at the top — references elsewhere in this guide have been updated to match.</p>
+
+      <h4>Safety-critical</h4>
+      <ol class="limits">
+        <li><strong>Command Center presents a failed code call as one in progress.</strong> When dispatch reaches nobody, the backend records the failure correctly and the screen shows none of it: dead channels pulse amber as though paging, indefinitely, above a fixed line reading “All paging channels nominal.” The failure text is never rendered. An operator has no way to tell a working code call from one that contacted no one. <strong>Until this is fixed, confirm every code call by phone.</strong></li>
+        <li><strong>Every seeded emergency phone tree is empty.</strong> All seven — Code Blue, Red, Green, Silver, Grey, Pink — contain no people, so there is nobody to escalate to.</li>
+        <li><strong>Every seeded emergency phone tree has no department, which silences live updates.</strong> Real-time incident updates are matched to a hospital through the tree’s department. With none set, the update is correctly withheld rather than risk crossing tenants — so Command Center receives nothing for exactly the trees an emergency would use. The New Code form has no department field, so trees created in the app inherit the fault. Compounds limitation&nbsp;1: no updates arrive, and their absence is drawn as paging in progress.</li>
+        <li><strong>Starting a code call is authorised by <code>Schedule.Write</code>, not <code>CodeCall.Write</code>.</strong> Anyone who can edit a schedule can page real clinicians — including anyone granted that permission automatically through Entra group membership, which is the exact route the withholding of <code>CodeCall.Write</code> was meant to close.</li>
+      </ol>
 
       <h4>Blocking for a new user</h4>
-      <ol class="limits">
-<li><strong>Phone Trees and Escalation have no sidebar link.</strong> Two whole features are reachable only by typing the URL.</li>
+      <ol class="limits" start="5">
+        <li><strong>Phone Trees and Escalation have no sidebar link.</strong> Two whole features are reachable only by typing the URL.</li>
         <li><strong>Imported staff arrive with no department.</strong> Exports name departments rather than numbering them, so the column is ignored and each person must be assigned afterwards. Until then they are missing from department-scoped on-call lookups.</li>
       </ol>
 
       <h4>Functional gaps</h4>
-      <ol class="limits" start="3">
-        <li><strong>Accounts created through the app cannot act as themselves.</strong> An employee added without an Entra object id cannot acknowledge a shift, request time off, or request a swap.</li>
+      <ol class="limits" start="7">
+        <li><strong>Accounts created through the app cannot act as themselves.</strong> An employee added without an Entra object id cannot acknowledge a shift, request time off, or request a swap. On the Time Off page this surfaces as an unhandled error in the browser console rather than an explanation on screen.</li>
         <li><strong>Compliance intermittently errors on load.</strong> Reloading clears it. Concurrent requests race on the same rows, because the page writes data during a page view.</li>
         <li><strong>Timestamps with a non-UTC offset are stored incorrectly</strong>, off by the server's offset. The web app is unaffected because it always sends UTC; an EHR or mobile integration would not be.</li>
         <li><strong>Presence sync cannot be switched off</strong> and retries a misconfigured Microsoft Graph endpoint every minute, which has stalled the API under load.</li>
-        <li><strong>Escalation policies accept nonsensical values</strong> — a negative response time causes every unacknowledged shift to escalate immediately.</li>
+        <li><strong>Escalation policies and phone-tree nodes accept nonsensical values</strong> — a negative response time causes every unacknowledged shift to escalate immediately, and a node timeout can be set negative or zero. The web app blocks all of these; the API accepts them.</li>
         <li><strong>Bulk import writes no per-record audit entry</strong>, which is thin against a six-year HIPAA retention requirement.</li>
         <li><strong>The two tenant-admin roles are identical.</strong> <em>Department Admin</em> and <em>Scoped Super Admin</em> both confer the same permissions, including the right to start a code call; the role is recorded and displayed but nothing authorises on the difference. Do not rely on Department Admin as a restriction.</li>
         <li><strong>Settings are not tenant-scoped</strong> — one tenant's setting keys are visible to another.</li>
         <li><strong>Reversed and overlapping date ranges are accepted by the API.</strong> The web app blocks these client-side.</li>
+        <li><strong>Public schedule links return a server error for every valid token.</strong> The feature is unusable, and because a valid token errors while an invalid one returns a clean not-found, a link can be probed — defeating the privacy guarantee the feature exists to provide. The fault is in the query, so it affects Azure SQL as well as local development.</li>
+        <li><strong>Any administrator can approve their own time off</strong>, including a tenant sub-admin, and is recorded as their own approver. Ordinary users are correctly refused.</li>
+        <li><strong>Bulk import does not validate email addresses</strong>, although adding one person by hand does. Invalid addresses enter the directory silently.</li>
+        <li><strong>Creating a schedule without a valid department crashes</strong> with a server error instead of returning a validation message.</li>
+        <li><strong>Editing an escalation policy overwrites its creation date</strong>, destroying record provenance on every edit — thin against a six-year retention requirement.</li>
+        <li><strong>A shift swap with no replacement can still be approved.</strong> The shift is marked swapped while its owner is unchanged. Coverage is not lost, but the state is misleading.</li>
       </ol>
 
       <h4>Not built yet</h4>
-      <ol class="limits" start="12">
+      <ol class="limits" start="22">
         <li><strong>Multi-file spreadsheet merge</strong> — uploading several files, auto-matching columns and de-duplicating people is designed but not implemented.</li>
         <li><strong>No self-service signup.</strong> A new organization cannot create itself; an existing administrator must create the tenant and grant access. This is deliberate.</li>
       </ol>
@@ -655,9 +704,13 @@ officePhone,mobilePhone,officeLocation,departmentId</code></pre>
             <tr><td>“Can’t reach the server”</td><td>The backend is not running, or not on port 5000. This message now appears only for a genuine connection failure</td></tr>
             <tr><td>“Your session wasn’t accepted”</td><td>The API answered and refused the token — not an outage. Either the session expired (sign in again) or the API validates a different application or tenant than you signed in to. Check <code>AzureAd:ClientId</code> against <code>VITE_AZURE_CLIENT_ID</code>, and the log for <code>IDX10214</code></td></tr>
             <tr><td>Amber DEVELOPMENT AUTH banner</td><td>The backend is not checking credentials. Expected locally; must never appear in a deployed environment</td></tr>
+            <tr><td>A code call shows channels pulsing, but nobody responds</td><td><strong>Assume nobody was contacted and escalate by phone.</strong> Pulsing amber means “paging” <em>and</em> “this channel is switched off” — the screen cannot distinguish them (limitation&nbsp;1). Check the server log for “DISPATCH FAILED” to confirm</td></tr>
+            <tr><td>Command Center shows no updates during a code call</td><td>The phone tree has no department, so live updates are withheld. Set a department on the tree (limitation&nbsp;3)</td></tr>
+            <tr><td>A code tree has nobody to call</td><td>Expected of all seven seeded trees — they ship empty. Add people before relying on them (limitation&nbsp;2)</td></tr>
+            <tr><td>“Link unavailable” on a public schedule link</td><td>Every valid share link currently fails this way. The feature is broken, not the link — do not hand these out yet (limitation&nbsp;16)</td></tr>
             <tr><td>“Offline” badge in the header</td><td>The real-time connection is not established. The app still works, but live updates will not arrive</td></tr>
             <tr><td>Backend refuses to start, citing DevAuth</td><td>Intentional. <code>DevAuth:Enabled</code> is set outside development, which would disable all authentication</td></tr>
-            <tr><td>Import fails with “firstName and lastName are required” on every row</td><td>Those columns really are empty, or the headings are named something the aliases do not cover. Spreadsheets renamed <code>.csv</code> are no longer a cause. Compare against Download Template</td></tr>
+            <tr><td>Import fails with “firstName and lastName are required” on every row</td><td>Those columns really are empty, the headings are named something the aliases do not cover, or <strong>the file is not a spreadsheet at all</strong> — a PDF or text file produces exactly this, one error per line, without saying so. Spreadsheets renamed <code>.csv</code> are no longer a cause. Check the file type first, then compare against Download Template</td></tr>
             <tr><td>A sub-admin sees “Failed to load permission grants”</td><td>Fixed. The grants had loaded; the tenant-name lookup was what failed, and the error named the wrong call</td></tr>
             <tr><td>Appointing an admin appears to work but grants nothing</td><td>The object id did not match the user. Pick the person from the list in the Assign Admin dialog instead of pasting an id — for a Google account it is <code>google-&lt;sub&gt;</code>, never the email address</td></tr>
           </tbody>
@@ -668,15 +721,31 @@ officePhone,mobilePhone,officeLocation,departmentId</code></pre>
     <section id="status">
       <h2>9 · Verification status</h2>
       <p>Verified on 27 August 2026 against the running application, and updated 28 August 2026: all ten pages render without console errors; the development-auth banner displays correctly at desktop and mobile widths with no horizontal overflow; template download, the import dialog, employee creation, duplicate-email rejection, input validation and phone normalization all behave as described here.</p>
-      <p>Backend behaviour for schedules, time-off, compliance, escalation, tenants and public share links was verified through the API rather than the browser. The Command Center dispatch path was deliberately not exercised, because it pages real people.</p>
+      <p>Backend behaviour for schedules, time-off, compliance, escalation, tenants and public share links was verified through the API rather than the browser.</p>
       <p>Test suites at time of writing: backend <strong>334 passing</strong>, frontend <strong>32 passing</strong>.</p>
-      <p>Re-verified on 28 August 2026 after the authentication and import changes: real Microsoft and Google sign-in both reach <code>/api/auth/me</code> successfully; a request carrying only the dev-role cookie returns 401; a 30-row <code>.xlsx</code> HR export named <code>.csv</code> imports 30 of 30; and a tenant sub-admin loads Users &amp; Permissions without error. Command Center dispatch remains deliberately unexercised, because it pages real people.</p>
+      <p>Re-verified on 28 August 2026 after the authentication and import changes: real Microsoft and Google sign-in both reach <code>/api/auth/me</code> successfully; a request carrying only the dev-role cookie returns 401; a 30-row <code>.xlsx</code> HR export named <code>.csv</code> imports 30 of 30; and a tenant sub-admin loads Users &amp; Permissions without error.</p>
+
+      <h3>The 28 August feature pass</h3>
+      <p>Every feature in section&nbsp;5 was re-tested on an isolated stack — a second backend with its own copy of the database, driven through a browser — so the running application was never disturbed. <strong>All five dispatch channels were force-disabled and the Twilio credentials blanked; no page was sent to anyone.</strong></p>
+      <p>The pass corrected ten claims in this guide. Two features were <em>better</em> than recorded: Phone Trees and Escalation both have complete, working editors, not the bare rendering previously noted. Three were worse: public schedule links do not work at all, administrators can approve their own time off, and Command Center misreports a failed dispatch. Twelve defects were recorded in total, four of them safety-critical and now listed first in section&nbsp;7.</p>
+
+      <h3>What has still never been tested</h3>
+      <p>Stated plainly, because a guide that implies more coverage than exists is worse than one that admits the gap:</p>
+      <ul>
+        <li><strong>A real code call with a live channel.</strong> Delivery, acknowledgement callbacks and SIP fallback have never been exercised. Nothing in this guide confirms a page actually arrives.</li>
+        <li><strong>Real Entra and Google sign-in through the UI.</strong> Feature testing ran under development auth. Token validation and audience checking are unverified beyond confirming that the live server rejects a development cookie.</li>
+        <li><strong>Multi-tenant isolation.</strong> Testing ran as a full administrator throughout. That a scoped sub-admin is genuinely confined to its own tenant has not been proven.</li>
+        <li><strong>Microsoft 365 integration diagnostics</strong>, deliberately skipped — those endpoints open live Graph and dispatch connections.</li>
+        <li><strong>File downloads.</strong> The <code>.ics</code> export, compliance CSV and import template are generated in the browser; the buttons and the generating code were checked, but no downloaded file was opened.</li>
+        <li><strong>Real-time updates end to end.</strong> The connection showed as offline throughout; the live-update finding in limitation&nbsp;3 comes from server logs, not an observed update.</li>
+        <li><strong>Dashboard counts.</strong> The page renders and calls the right endpoints, but its numbers were never reconciled against the database.</li>
+      </ul>
     </section>
 
   </main>
 
   <footer>
-    <p>Source of truth for this guide lives at <code>docs/user-guide.md</code> in the repository, and should be updated alongside the code it describes.</p>
+    <p>Source of truth for this guide is <code>docs/oncall-field-guide.html</code> in the repository, and should be updated alongside the code it describes. The older <code>docs/user-guide.md</code> predates this document and no longer matches the application.</p>
   </footer>
 
 </div>
