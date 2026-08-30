@@ -1763,6 +1763,7 @@ function TenantFormModal({ tenant, onSave, onClose }: {
   const [name, setName] = useState(tenant?.name || '')
   const [description, setDescription] = useState(tenant?.description || '')
   const [azureAdGroupId, setAzureAdGroupId] = useState(tenant?.azureAdGroupId || '')
+  const [azureAdTenantId, setAzureAdTenantId] = useState(tenant?.azureAdTenantId || '')
   const [contactEmail, setContactEmail] = useState(tenant?.contactEmail || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -1770,6 +1771,13 @@ function TenantFormModal({ tenant, onSave, onClose }: {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!name.trim()) { setError('Tenant name is required.'); return }
+    // Checked here as well as on the server, because the consequence of a typo is silent:
+    // a malformed id simply never matches anyone's token, and the connection looks set up.
+    const directoryId = azureAdTenantId.trim()
+    if (directoryId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(directoryId)) {
+      setError('Directory tenant ID must be an Entra tenant GUID.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -1777,6 +1785,9 @@ function TenantFormModal({ tenant, onSave, onClose }: {
         name: name.trim(),
         description: description.trim() || undefined,
         azureAdGroupId: azureAdGroupId.trim() || undefined,
+        // Sent as '' rather than undefined when cleared, so the server can tell "leave it
+        // alone" from "withdraw the connection".
+        azureAdTenantId: tenant ? directoryId : (directoryId || undefined),
         contactEmail: contactEmail.trim() || undefined,
       } as Partial<Tenant>)
     } catch { setError('Failed to save tenant.') }
@@ -1811,6 +1822,19 @@ function TenantFormModal({ tenant, onSave, onClose }: {
             <input type="text" value={azureAdGroupId} onChange={e => setAzureAdGroupId(e.target.value)}
               placeholder="For auto-assigning sub-admins via group membership"
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+          </div>
+          <div>
+            <label className="block text-sm text-gray-500 mb-1">Directory Tenant ID</label>
+            <input type="text" value={azureAdTenantId} onChange={e => setAzureAdTenantId(e.target.value)}
+              placeholder="00000000-0000-0000-0000-000000000000"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 font-mono" />
+            <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+              The organisation's Entra tenant ID. <span className="text-amber-500">Anyone who
+              signs in from that directory gets read-only access to this subscription</span> —
+              schedules and the phone directory, nothing else. They cannot raise a code call,
+              edit anything, or see other subscriptions. Leave blank to keep access
+              invitation-only; clearing it withdraws access from everyone it covered.
+            </p>
           </div>
           <div>
             <label className="block text-sm text-gray-500 mb-1">Contact Email</label>

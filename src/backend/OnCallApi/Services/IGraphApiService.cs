@@ -5,7 +5,12 @@ namespace OnCallApi.Services;
 public interface IGraphApiService
 {
     Task<List<Employee>> SyncUsersAsync(CancellationToken ct = default);
-    Task<(List<Employee> Users, string? DeltaToken)> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default);
+    Task<GraphUserDelta> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default);
+
+    /// <summary>
+    /// Delta sync against a specific connected directory. A blank tenant id means our own.
+    /// </summary>
+    Task<GraphUserDelta> SyncUsersDeltaAsync(string? entraTenantId, string? deltaToken, CancellationToken ct = default);
     Task<string?> GetUserPresenceAsync(string azureAdObjectId, CancellationToken ct = default);
     Task SendTeamsNotificationAsync(string userId, string title, string message, CancellationToken ct = default);
     /// <summary>
@@ -25,3 +30,13 @@ public interface IGraphApiService
     /// </summary>
     Task<bool> CheckGraphConnectionAsync(CancellationToken ct = default);
 }
+
+/// <summary>
+/// One page of a directory delta read.
+///
+/// <paramref name="Succeeded"/> exists because an empty <paramref name="Users"/> list is
+/// ambiguous on its own: it means either "nothing changed" or "the call failed". The
+/// caller deactivates people who are absent from this list, so it must be able to tell
+/// those apart.
+/// </summary>
+public record GraphUserDelta(List<Employee> Users, string? DeltaToken, bool Succeeded);

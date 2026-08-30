@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Azure.Identity;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
@@ -15,6 +16,12 @@ public class GraphApiService : IGraphApiService
     private readonly ILogger<GraphApiService> _logger;
     private GraphServiceClient? _client;
     private bool _clientInitialized;
+
+    // One client per connected customer directory. Each customer consents to this same
+    // application in their own Entra tenant, which creates a service principal there; the
+    // client id and secret are ours and constant, and only the tenant id varies. Cached
+    // because building a credential per sync cycle would re-do the token dance every time.
+    private readonly ConcurrentDictionary<string, GraphServiceClient> _tenantClients = new();
 
     public GraphApiService(IOptions<GraphApiOptions> options, ILogger<GraphApiService> logger)
     {
@@ -48,6 +55,37 @@ public class GraphApiService : IGraphApiService
             throw;
         }
         return _client;
+    }
+
+    /// <summary>
+    /// Graph client for a specific Entra tenant. Blank, or our own tenant, uses the home
+    /// client so nothing about the existing single-tenant path changes.
+    /// </summary>
+    private GraphServiceClient GetClientForTenant(string? entraTenantId)
+    {
+        if (string.IsNullOrWhiteSpace(entraTenantId)
+            || string.Equals(entraTenantId, _options.Value.TenantId, StringComparison.OrdinalIgnoreCase))
+        {
+            return GetClient();
+        }
+
+        return _tenantClients.GetOrAdd(entraTenantId, tenantId =>
+        {
+            try
+            {
+                var creds = new ClientSecretCredential(
+                    tenantId, _options.Value.ClientId, _options.Value.ClientSecret);
+                _logger.LogInformation("GraphServiceClient initialized for connected directory {TenantId}", tenantId);
+                return new GraphServiceClient(creds, _options.Value.Scopes);
+            }
+            catch (Exception ex)
+            {
+                // Do not cache a broken client: GetOrAdd would keep handing it back and the
+                // customer's directory would stay dead until a restart.
+                _logger.LogError(ex, "Failed to initialize GraphServiceClient for directory {TenantId}", tenantId);
+                throw;
+            }
+        });
     }
 
     public async Task<bool> CheckGraphConnectionAsync(CancellationToken ct = default)
@@ -101,15 +139,20 @@ public class GraphApiService : IGraphApiService
         return employees;
     }
 
-    public async Task<(List<Employee> Users, string? DeltaToken)> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default)
+    public Task<GraphUserDelta> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default) =>
+        SyncUsersDeltaAsync(null, deltaToken, ct);
+
+    public async Task<GraphUserDelta> SyncUsersDeltaAsync(
+        string? entraTenantId, string? deltaToken, CancellationToken ct = default)
     {
         var employees = new List<Employee>();
         string? newDeltaToken = null;
         try
         {
-            var users = await GetClient().Users.Delta.GetAsDeltaGetResponseAsync(cancellationToken: ct);
+            var users = await GetClientForTenant(entraTenantId)
+                .Users.Delta.GetAsDeltaGetResponseAsync(cancellationToken: ct);
 
-            if (users?.Value == null) return (employees, newDeltaToken);
+            if (users?.Value == null) return new GraphUserDelta(employees, newDeltaToken, true);
 
             if (users.OdataDeltaLink != null)
             {
@@ -129,9 +172,14 @@ public class GraphApiService : IGraphApiService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to sync users delta from Azure AD");
+            // Reported, not just logged. This used to return an empty list that was
+            // indistinguishable from "the directory is empty", and the caller treated the
+            // absence of every user as proof that every user had left.
+            _logger.LogError(ex, "Failed to sync users delta from directory {TenantId}",
+                entraTenantId ?? _options.Value.TenantId);
+            return new GraphUserDelta(employees, newDeltaToken, false);
         }
-        return (employees, newDeltaToken);
+        return new GraphUserDelta(employees, newDeltaToken, true);
     }
 
     public async Task<string?> GetUserPresenceAsync(string azureAdObjectId, CancellationToken ct = default)

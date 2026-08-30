@@ -82,6 +82,26 @@ public static class Permissions
     ];
 
     /// <summary>
+    /// Permissions granted to a user whose token's `tid` matches an active tenant's
+    /// <see cref="Models.Tenant.AzureAdTenantId"/> — i.e. someone who works at an
+    /// organization whose directory an administrator has deliberately connected.
+    ///
+    /// Read-only, and deliberately NOT <see cref="AutoAssignedPermissions"/>. That set
+    /// still carries Schedule.Write, Directory.Write and Admin.Scoped, and this claim is
+    /// acquired by nothing more than holding a token from the right directory — no group
+    /// membership, no row, no person approving it. An earlier version of the `tid` path
+    /// granted ScopedAdminPermissions and thereby let every employee in a customer's
+    /// tenant fire a live code call on first sign-in; see TenantClaimsMiddleware.
+    ///
+    /// Anything beyond reading stays an explicit PermissionGrant.
+    /// </summary>
+    public static readonly string[] ConnectedTenantPermissions =
+    [
+        ScheduleRead,
+        DirectoryRead,
+    ];
+
+    /// <summary>
     /// Roles granted to a configured super administrator (see SuperAdminOptions).
     /// Mirrors the dev-mode "admin" role set so real users get identical access.
     /// </summary>

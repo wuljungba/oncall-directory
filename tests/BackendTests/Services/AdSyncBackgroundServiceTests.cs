@@ -33,4 +33,43 @@ public class AdSyncBackgroundServiceTests
         result.Should().ContainSingle();
         result[0].AzureAdObjectId.Should().Be("removed-from-ad");
     }
+
+    [Fact]
+    public void SelectEmployeesToDeactivate_ScopedToOneTenant_LeavesOtherTenantsAlone()
+    {
+        // A directory can only speak for its own tenant. Absence from tenant A's directory
+        // says nothing whatever about tenant B's staff, and before this was scoped, syncing
+        // one customer deactivated every other customer's people.
+        var adObjectIds = new HashSet<string> { "tenant-a-present" };
+
+        var employees = new List<Employee>
+        {
+            new() { Source = "Ad", TenantId = 1, AzureAdObjectId = "tenant-a-present" }, // keep
+            new() { Source = "Ad", TenantId = 1, AzureAdObjectId = "tenant-a-gone" },    // deactivate
+            new() { Source = "Ad", TenantId = 2, AzureAdObjectId = "tenant-b-person" },  // other tenant -> keep
+            new() { Source = "Ad", TenantId = null, AzureAdObjectId = "home-person" },   // home -> keep
+        };
+
+        var result = AdDirectorySyncService.SelectEmployeesToDeactivate(employees, adObjectIds, tenantId: 1);
+
+        result.Should().ContainSingle();
+        result[0].AzureAdObjectId.Should().Be("tenant-a-gone");
+    }
+
+    [Fact]
+    public void SelectEmployeesToDeactivate_HomeDirectory_OnlyTouchesUnownedRecords()
+    {
+        var adObjectIds = new HashSet<string>();
+
+        var employees = new List<Employee>
+        {
+            new() { Source = "Ad", TenantId = null, AzureAdObjectId = "home-gone" },     // deactivate
+            new() { Source = "Ad", TenantId = 7, AzureAdObjectId = "customer-person" },  // keep
+        };
+
+        var result = AdDirectorySyncService.SelectEmployeesToDeactivate(employees, adObjectIds, tenantId: null);
+
+        result.Should().ContainSingle();
+        result[0].AzureAdObjectId.Should().Be("home-gone");
+    }
 }

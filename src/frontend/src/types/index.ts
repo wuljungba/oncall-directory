@@ -5,6 +5,8 @@ export interface Tenant {
   name: string
   description?: string
   azureAdGroupId?: string
+  /** Entra tenant GUID whose users may read this subscription (read-only). */
+  azureAdTenantId?: string
   contactEmail?: string
   isActive: boolean
   createdAt: string

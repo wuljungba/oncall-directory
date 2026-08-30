@@ -31,29 +31,34 @@ public class AdSyncBackgroundService : BackgroundService
         }
 
         // Run initial sync immediately
-        await RunOnceAsync(null, stoppingToken);
+        await RunOnceAsync(stoppingToken);
 
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(_intervalMinutes));
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            string? deltaToken;
-            using (var scope = _services.CreateScope())
-            {
-                var sync = scope.ServiceProvider.GetRequiredService<IAdDirectorySyncService>();
-                deltaToken = await sync.GetStoredDeltaTokenAsync(stoppingToken);
-            }
-
-            await RunOnceAsync(deltaToken, stoppingToken);
+            await RunOnceAsync(stoppingToken);
         }
     }
 
-    private async Task RunOnceAsync(string? deltaToken, CancellationToken ct)
+    /// <summary>
+    /// One cycle across every connected directory. Delta tokens are read per tenant inside
+    /// SyncAllAsync, which is why this no longer fetches one up front — a single token
+    /// could only ever have been right for one directory.
+    /// </summary>
+    private async Task RunOnceAsync(CancellationToken ct)
     {
         try
         {
             using var scope = _services.CreateScope();
             var sync = scope.ServiceProvider.GetRequiredService<IAdDirectorySyncService>();
-            await sync.SyncAsync(deltaToken, ct);
+            var results = await sync.SyncAllAsync(ct);
+
+            foreach (var failed in results.Where(r => !r.Succeeded))
+            {
+                _logger.LogWarning(
+                    "Directory sync did not complete for tenant {TenantId} ({TenantName})",
+                    failed.TenantId, failed.TenantName);
+            }
         }
         catch (Exception ex)
         {

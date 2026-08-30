@@ -49,10 +49,31 @@ public class TenantContextService : ITenantContextService
 
             var azureAdObjectId = GetAzureAdObjectId(user);
             var email = GetEmail(user);
-            if (string.IsNullOrEmpty(azureAdObjectId) && string.IsNullOrEmpty(email))
+            var tid = OnCallApi.Authorization.PrincipalClaims.GetTenantId(user);
+
+            // A connected-directory user may have neither of the two identifiers below —
+            // their access comes from which directory issued the token, not from a row
+            // keyed to them — so the early exit has to account for `tid` as well or the
+            // claim would say "you are in tenant 3" while every query filtered tenant 3 out.
+            if (string.IsNullOrEmpty(azureAdObjectId)
+                && string.IsNullOrEmpty(email)
+                && string.IsNullOrEmpty(tid))
                 return [];
 
             var tenantIds = new List<int>();
+
+            // Tenants whose directory this token came from. Mirrors
+            // TenantClaimsMiddleware.TryScopeFromConnectedTenantAsync; the two must agree,
+            // because that one decides what a user may do and this one decides what they
+            // may see.
+            if (!string.IsNullOrEmpty(tid)
+                && !string.Equals(tid, "common", StringComparison.OrdinalIgnoreCase))
+            {
+                tenantIds.AddRange(await _db.Tenants
+                    .Where(t => t.IsActive && t.AzureAdTenantId == tid)
+                    .Select(t => t.Id)
+                    .ToListAsync());
+            }
 
             if (!string.IsNullOrEmpty(azureAdObjectId))
             {

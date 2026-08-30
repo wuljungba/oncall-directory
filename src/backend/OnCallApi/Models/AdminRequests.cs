@@ -107,6 +107,18 @@ public record CreateTenantRequest(
     [MaxLength(100)]
     string? AzureAdGroupId,
 
+    /// <summary>
+    /// Entra tenant GUID whose users may read this subscription. Setting it is the act of
+    /// approval, so it is validated as a GUID rather than accepted as free text: a typo
+    /// here either silently connects nobody or, matched against another row, the wrong
+    /// directory.
+    /// </summary>
+    [RegularExpression(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        ErrorMessage = "Directory tenant ID must be an Entra tenant GUID.")]
+    [MaxLength(100)]
+    string? AzureAdTenantId,
+
     [EmailAddress]
     [MaxLength(100)]
     string? ContactEmail
@@ -122,6 +134,18 @@ public record UpdateTenantRequest(
 
     [MaxLength(100)]
     string? AzureAdGroupId,
+
+    /// <summary>
+    /// Entra tenant GUID whose users may read this subscription. Setting it is the act of
+    /// approval, so it is validated as a GUID rather than accepted as free text: a typo
+    /// here either silently connects nobody or, matched against another row, the wrong
+    /// directory.
+    /// </summary>
+    [RegularExpression(
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        ErrorMessage = "Directory tenant ID must be an Entra tenant GUID.")]
+    [MaxLength(100)]
+    string? AzureAdTenantId,
 
     [EmailAddress]
     [MaxLength(100)]

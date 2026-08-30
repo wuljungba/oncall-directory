@@ -19,9 +19,14 @@ namespace BackendTests.Services;
 /// auto-create a DepartmentAdmin row and grant <c>ScopedAdminPermissions</c> — which
 /// includes <c>CodeCall.Write</c>. Every employee in the hospital's Entra tenant therefore
 /// became a department admin able to fire a live code call on their first sign-in, with no
-/// invitation and no approval. These tests pin the replacement behaviour: a matching tenant
-/// alone confers nothing, and access comes only from an explicit grant, a tenant-admin
-/// record, an Entra group an administrator mapped, or super-admin configuration.
+/// invitation and no approval.
+///
+/// A matching tenant now confers <c>ConnectedTenantPermissions</c> — Schedule.Read and
+/// Directory.Read, nothing else — because an administrator has to put that Entra tenant
+/// GUID on that subscription, which is the approval. These tests pin the boundary: read
+/// yes, write no, admin no, and no row written on anyone's behalf. Anything beyond reading
+/// still comes only from an explicit grant, a tenant-admin record, a mapped Entra group,
+/// or super-admin configuration.
 /// </summary>
 public class TenantAllowListTests
 {
@@ -72,21 +77,67 @@ public class TenantAllowListTests
     }
 
     [Fact]
-    public async Task MatchingTenantId_ConfersNothing()
+    public async Task MatchingTenantId_GrantsReadOnly_AndNothingElse()
     {
         var db = CreateDbContext();
         var context = CreateContext(ApprovedTenant1Tid, oid: "user-oid-1");
 
         await CreateMiddleware().InvokeAsync(context, db);
 
-        // The whole point: belonging to the hospital's Entra tenant is not authorization.
-        context.User.Claims.Where(c => c.Type.StartsWith("TenantId:")).Should().BeEmpty();
-        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeFalse();
-        context.User.HasClaim(Permissions.ClaimType, Permissions.CodeCallWrite).Should().BeFalse();
-        context.User.HasClaim(Permissions.ClaimType, Permissions.ScheduleRead).Should().BeFalse();
+        // Scoped to the subscription whose directory issued the token, and able to read it.
+        context.User.HasClaim("TenantId:1", TenantClaimsMiddleware.ConnectedTenantRole).Should().BeTrue();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.ScheduleRead).Should().BeTrue();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.DirectoryRead).Should().BeTrue();
 
-        // And no admin record is conjured on their behalf.
+        // The line this must never cross again. CodeCall.Write is the right to page
+        // on-call clinicians for a real emergency; it is not something to acquire by
+        // holding a token from the right directory.
+        context.User.HasClaim(Permissions.ClaimType, Permissions.CodeCallWrite).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.ScheduleWrite).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.DirectoryWrite).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminFull).Should().BeFalse();
+
+        // And no admin record is conjured on their behalf. The claim lasts one request;
+        // a row would outlive the connection that justified it.
         (await db.TenantAdmins.CountAsync()).Should().Be(0);
+    }
+
+    [Fact]
+    public async Task MatchingTenantId_DoesNotReachOtherTenants()
+    {
+        var db = CreateDbContext();
+        var context = CreateContext(ApprovedTenant1Tid, oid: "user-oid-1");
+
+        await CreateMiddleware().InvokeAsync(context, db);
+
+        // Tenant 2 is equally connected, to a different directory. This token is not from it.
+        context.User.Claims.Where(c => c.Type.StartsWith("TenantId:"))
+            .Select(c => c.Type).Should().BeEquivalentTo(["TenantId:1"]);
+    }
+
+    [Fact]
+    public async Task ConnectedDirectory_DoesNotOverrideAnAdminRecord()
+    {
+        // A real appointment in the same tenant must keep its stronger claims rather than
+        // being flattened to read-only by the directory match.
+        var db = CreateDbContext();
+        db.TenantAdmins.Add(new TenantAdmin
+        {
+            TenantId = 1,
+            AzureAdObjectId = "appointed",
+            Role = "DepartmentAdmin",
+            CreatedAt = DateTime.UtcNow,
+        });
+        await db.SaveChangesAsync();
+
+        var context = CreateContext(ApprovedTenant1Tid, oid: "appointed");
+
+        await CreateMiddleware().InvokeAsync(context, db);
+
+        context.User.HasClaim("TenantId:1", "DepartmentAdmin").Should().BeTrue();
+        context.User.HasClaim("TenantId:1", TenantClaimsMiddleware.ConnectedTenantRole).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.CodeCallWrite).Should().BeTrue();
     }
 
     [Fact]
@@ -151,7 +202,11 @@ public class TenantAllowListTests
 
         await CreateMiddleware().InvokeAsync(context, db);
 
-        context.User.Claims.Where(c => c.Type.StartsWith("TenantId:")).Should().BeEmpty();
+        // Their directory is connected, so read-only scoping is expected and correct.
+        // What being in an unmapped group must not do is auto-assign them as an admin.
+        context.User.HasClaim("TenantId:2", TenantClaimsMiddleware.ConnectedTenantRole).Should().BeTrue();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.AdminScoped).Should().BeFalse();
+        context.User.HasClaim(Permissions.ClaimType, Permissions.CodeCallWrite).Should().BeFalse();
         (await db.TenantAdmins.CountAsync()).Should().Be(0);
     }
 

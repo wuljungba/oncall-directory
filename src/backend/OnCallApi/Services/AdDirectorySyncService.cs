@@ -1,4 +1,6 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using OnCallApi.Configuration;
 using OnCallApi.Data;
 using OnCallApi.Models;
 
@@ -15,15 +17,31 @@ public record AdSyncResult(
     int Updated,
     int Deactivated,
     IReadOnlyList<string> Skipped,
-    string? DeltaToken)
+    string? DeltaToken,
+    int? TenantId = null,
+    string? TenantName = null,
+    bool Succeeded = true)
 {
     public bool AnythingWritten => Created > 0 || Updated > 0 || Deactivated > 0;
 }
 
 public interface IAdDirectorySyncService
 {
-    Task<AdSyncResult> SyncAsync(string? deltaToken, CancellationToken ct = default);
-    Task<string?> GetStoredDeltaTokenAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Syncs one directory into one OnCall tenant. A null <paramref name="tenantId"/> is
+    /// the home directory and the employees it owns, which is how this behaved before
+    /// connected directories existed.
+    /// </summary>
+    Task<AdSyncResult> SyncAsync(
+        int? tenantId, string? entraTenantId, string? deltaToken, CancellationToken ct = default);
+
+    Task<string?> GetStoredDeltaTokenAsync(int? tenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Syncs every tenant that has a connected directory, plus the home directory. One
+    /// tenant failing does not stop the others.
+    /// </summary>
+    Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(CancellationToken ct = default);
 }
 
 /// <summary>
@@ -38,30 +56,118 @@ public class AdDirectorySyncService : IAdDirectorySyncService
 {
     private readonly AppDbContext _db;
     private readonly IGraphApiService _graphApi;
+    private readonly IOptions<GraphApiOptions> _graphOptions;
     private readonly ILogger<AdDirectorySyncService> _logger;
 
     public AdDirectorySyncService(
-        AppDbContext db, IGraphApiService graphApi, ILogger<AdDirectorySyncService> logger)
+        AppDbContext db,
+        IGraphApiService graphApi,
+        IOptions<GraphApiOptions> graphOptions,
+        ILogger<AdDirectorySyncService> logger)
     {
         _db = db;
         _graphApi = graphApi;
+        _graphOptions = graphOptions;
         _logger = logger;
     }
 
-    public async Task<string?> GetStoredDeltaTokenAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Delta state is per directory. A single shared token would hand one customer's
+    /// cursor to another customer's directory, which Graph would either reject or, worse,
+    /// answer with a page of changes that belong to someone else.
+    /// </summary>
+    private static string DeltaTokenKey(int? tenantId) =>
+        tenantId.HasValue ? $"AdDeltaToken:{tenantId.Value}" : "AdDeltaToken";
+
+    public async Task<string?> GetStoredDeltaTokenAsync(int? tenantId, CancellationToken ct = default)
     {
-        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == "AdDeltaToken", ct);
+        var key = DeltaTokenKey(tenantId);
+        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
         return setting?.Value;
     }
 
-    public async Task<AdSyncResult> SyncAsync(string? deltaToken, CancellationToken ct = default)
+    public async Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(CancellationToken ct = default)
     {
-        var (users, newDeltaToken) = await _graphApi.SyncUsersDeltaAsync(deltaToken, ct);
+        var results = new List<AdSyncResult>();
+
+        // Same shape TenantSyncService already uses for AzureAdGroupId: find the tenants
+        // that opted in, and work through them one at a time.
+        var connected = await _db.Tenants
+            .Where(t => t.IsActive && t.AzureAdTenantId != null && t.AzureAdTenantId != "")
+            .Select(t => new { t.Id, t.Name, t.AzureAdTenantId })
+            .ToListAsync(ct);
+
+        // The home directory, unless a tenant has claimed it. Syncing it both ways would
+        // create the same people twice — once owned by no tenant and once owned by that
+        // one — and leave two sets of delta state describing one directory.
+        var homeTenantId = _graphOptions.Value.TenantId;
+        var homeIsClaimed = !string.IsNullOrWhiteSpace(homeTenantId)
+            && connected.Any(t => string.Equals(t.AzureAdTenantId, homeTenantId, StringComparison.OrdinalIgnoreCase));
+
+        if (!homeIsClaimed)
+        {
+            try
+            {
+                var homeToken = await GetStoredDeltaTokenAsync(null, ct);
+                results.Add(await SyncAsync(null, null, homeToken, ct));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Directory sync failed for the home directory");
+                results.Add(new AdSyncResult(
+                    0, 0, 0, 0, [$"Sync failed: {ex.Message}"], null, null, null, Succeeded: false));
+            }
+        }
+
+        foreach (var tenant in connected)
+        {
+            try
+            {
+                var token = await GetStoredDeltaTokenAsync(tenant.Id, ct);
+                results.Add(await SyncAsync(tenant.Id, tenant.AzureAdTenantId, token, ct));
+            }
+            catch (Exception ex)
+            {
+                // One customer's directory being unreachable must not stop the rest.
+                _logger.LogError(ex, "Directory sync failed for tenant {TenantId}", tenant.Id);
+                results.Add(new AdSyncResult(
+                    0, 0, 0, 0, [$"Sync failed: {ex.Message}"], null,
+                    tenant.Id, tenant.Name, Succeeded: false));
+            }
+        }
+
+        return results;
+    }
+
+    public async Task<AdSyncResult> SyncAsync(
+        int? tenantId, string? entraTenantId, string? deltaToken, CancellationToken ct = default)
+    {
+        var tenantName = tenantId.HasValue
+            ? (await _db.Tenants.Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct))
+            : null;
+
+        var delta = await _graphApi.SyncUsersDeltaAsync(entraTenantId, deltaToken, ct);
+        var users = delta.Users;
+
+        // A failed read returns no users, which is indistinguishable from a directory in
+        // which everyone has left. Deactivating on that basis would empty the tenant's
+        // staff list because Graph was briefly unreachable, so a failed cycle changes
+        // nothing at all and says so.
+        if (!delta.Succeeded)
+        {
+            _logger.LogWarning(
+                "Directory read failed for tenant {TenantId}; nothing was written and nobody was deactivated",
+                tenantId);
+            return new AdSyncResult(
+                0, 0, 0, 0,
+                ["The directory could not be read, so nothing was changed. Check the connection and try again."],
+                deltaToken, tenantId, tenantName, Succeeded: false);
+        }
 
         if (users.Count == 0 && deltaToken != null)
         {
-            await StoreDeltaTokenAsync(newDeltaToken, ct);
-            return new AdSyncResult(0, 0, 0, 0, [], newDeltaToken);
+            await StoreDeltaTokenAsync(delta.DeltaToken, tenantId, ct);
+            return new AdSyncResult(0, 0, 0, 0, [], delta.DeltaToken, tenantId, tenantName);
         }
 
         var skipped = new List<string>();
@@ -95,6 +201,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
                 existing.OfficeLocation = user.OfficeLocation;
                 existing.Source = "Ad";
                 existing.LastSyncedAt = DateTime.UtcNow;
+                existing.TenantId ??= tenantId;
                 updated++;
                 continue;
             }
@@ -111,13 +218,24 @@ public class AdDirectorySyncService : IAdDirectorySyncService
 
             user.Source = "Ad";
             user.LastSyncedAt = DateTime.UtcNow;
+            // Bind the person to the tenant whose directory they came from. Without this
+            // every synced employee belonged to no tenant, so tenant-scoped queries
+            // filtered them all out and a sync that reported "3 users processed" appeared
+            // to have done nothing at all.
+            user.TenantId = tenantId;
             _db.Employees.Add(user);
             created++;
         }
 
         var adObjectIds = users.Select(u => u.AzureAdObjectId).ToHashSet();
-        var activeUsers = await _db.Employees.Where(e => e.IsActive).ToListAsync(ct);
-        var toDeactivate = SelectEmployeesToDeactivate(activeUsers, adObjectIds);
+
+        // Only this tenant's people are candidates. Estate-wide, syncing one customer
+        // deactivated every other customer's staff, because nobody else's object ids
+        // appear in this directory's response.
+        var activeUsers = await _db.Employees
+            .Where(e => e.IsActive && e.TenantId == tenantId)
+            .ToListAsync(ct);
+        var toDeactivate = SelectEmployeesToDeactivate(activeUsers, adObjectIds, tenantId);
 
         foreach (var active in toDeactivate)
         {
@@ -126,7 +244,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         }
 
         await _db.SaveChangesAsync(ct);
-        await StoreDeltaTokenAsync(newDeltaToken, ct);
+        await StoreDeltaTokenAsync(delta.DeltaToken, tenantId, ct);
 
         if (skipped.Count > 0)
         {
@@ -140,7 +258,8 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             users.Count, created, updated, toDeactivate.Count, skipped.Count);
 
         return new AdSyncResult(
-            users.Count, created, updated, toDeactivate.Count, skipped, newDeltaToken);
+            users.Count, created, updated, toDeactivate.Count, skipped, delta.DeltaToken,
+            tenantId, tenantName);
     }
 
     /// <summary>Names a user without assuming any particular field is populated.</summary>
@@ -152,11 +271,12 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             : "an unnamed directory entry";
     }
 
-    private async Task StoreDeltaTokenAsync(string? deltaToken, CancellationToken ct)
+    private async Task StoreDeltaTokenAsync(string? deltaToken, int? tenantId, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(deltaToken)) return;
 
-        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == "AdDeltaToken", ct);
+        var key = DeltaTokenKey(tenantId);
+        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
         if (setting != null)
         {
             setting.Value = deltaToken;
@@ -165,7 +285,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         {
             _db.AppSettings.Add(new AppSetting
             {
-                Key = "AdDeltaToken",
+                Key = key,
                 Value = deltaToken,
                 Description = "Azure AD Graph API delta token for incremental user sync"
             });
@@ -184,4 +304,13 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         activeEmployees
             .Where(e => e.Source == "Ad" && !adObjectIds.Contains(e.AzureAdObjectId))
             .ToList();
+
+    /// <summary>
+    /// The same rule, restricted to one tenant's people. A directory can only speak for
+    /// its own tenant, so absence from it says nothing about anybody else.
+    /// </summary>
+    internal static List<Employee> SelectEmployeesToDeactivate(
+        IEnumerable<Employee> activeEmployees, HashSet<string> adObjectIds, int? tenantId) =>
+        SelectEmployeesToDeactivate(
+            activeEmployees.Where(e => e.TenantId == tenantId), adObjectIds);
 }

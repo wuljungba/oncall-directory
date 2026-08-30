@@ -32,15 +32,30 @@ public class IntegrationsController : ControllerBase
         [FromServices] IAdDirectorySyncService sync, CancellationToken ct)
     {
         // Full sync rather than delta: someone pressing this wants the directory
-        // reconciled now, not the increment since the last scheduled run.
-        var result = await sync.SyncAsync(null, ct);
+        // reconciled now, not the increment since the last scheduled run. Every connected
+        // directory is covered, so the button means the same thing whether one customer is
+        // connected or ten.
+        var results = await sync.SyncAllAsync(ct);
+
         return Ok(new
         {
-            fetched = result.Fetched,
-            created = result.Created,
-            updated = result.Updated,
-            deactivated = result.Deactivated,
-            skipped = result.Skipped,
+            fetched = results.Sum(r => r.Fetched),
+            created = results.Sum(r => r.Created),
+            updated = results.Sum(r => r.Updated),
+            deactivated = results.Sum(r => r.Deactivated),
+            skipped = results.SelectMany(r => r.Skipped).ToList(),
+            // Reported per tenant as well as in total: "0 created" across ten directories
+            // hides which one of them actually failed.
+            tenants = results.Select(r => new
+            {
+                tenantId = r.TenantId,
+                tenantName = r.TenantName,
+                succeeded = r.Succeeded,
+                fetched = r.Fetched,
+                created = r.Created,
+                updated = r.Updated,
+                deactivated = r.Deactivated,
+            }),
         });
     }
 

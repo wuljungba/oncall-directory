@@ -84,15 +84,22 @@ public class TenantClaimsMiddleware
                                 context.RequestServices.GetRequiredService<ILogger<TenantClaimsMiddleware>>());
                         }
 
-                        // NOTE: matching the token's `tid` alone used to auto-create a
-                        // DepartmentAdmin row and grant ScopedAdminPermissions — which
-                        // includes CodeCall.Write. That made every employee in the
-                        // hospital's Entra tenant a department admin able to fire a live
-                        // code call on first sign-in, with no invitation or approval.
-                        // Access is now explicit: a user is provisioned by an admin from
-                        // Admin -> Users & Permissions, where they appear as soon as they
-                        // sign in. `tid` is still recorded on the identity for context.
-                        _ = tid;
+                        // Connected-directory users. Matching the token's `tid` alone used
+                        // to auto-create a DepartmentAdmin row and grant
+                        // ScopedAdminPermissions — which includes CodeCall.Write. That made
+                        // every employee in the hospital's Entra tenant a department admin
+                        // able to fire a live code call on first sign-in, with no
+                        // invitation or approval.
+                        //
+                        // It now confers Permissions.ConnectedTenantPermissions — read
+                        // only — and writes no row at all. What it grants therefore lasts
+                        // one request and disappears the moment an administrator clears
+                        // Tenant.AzureAdTenantId, where the old behaviour left a standing
+                        // TenantAdmin row behind. Anything beyond reading is still an
+                        // explicit grant from Admin -> Users & Permissions.
+                        await TryScopeFromConnectedTenantAsync(
+                            identity, context.User, tid, db,
+                            context.RequestServices.GetRequiredService<ILogger<TenantClaimsMiddleware>>());
                     }
                 }
 
@@ -152,6 +159,80 @@ public class TenantClaimsMiddleware
             }
         }
     }
+
+    /// <summary>
+    /// Scopes a user into the tenant whose directory their token came from.
+    ///
+    /// The allow-list is <see cref="Models.Tenant.AzureAdTenantId"/>: an administrator has
+    /// to put a specific Entra tenant GUID on a specific subscription, which is the act of
+    /// approval. A null or blank value disables this entirely, so an unconnected
+    /// subscription behaves exactly as it did before.
+    ///
+    /// Three deliberate limits, each of which is what stops this becoming the hole the
+    /// original `tid` matching was:
+    /// <list type="bullet">
+    /// <item>It grants <see cref="Permissions.ConnectedTenantPermissions"/> — read only.</item>
+    /// <item>It writes nothing. No TenantAdmin row, no PermissionGrant, no membership of
+    /// any kind survives the request.</item>
+    /// <item>It yields to anything stronger: if the TenantAdmin or group paths already
+    /// produced a TenantId claim, this does not run at all.</item>
+    /// </list>
+    /// </summary>
+    private static async Task TryScopeFromConnectedTenantAsync(
+        ClaimsIdentity identity,
+        ClaimsPrincipal user,
+        string? tid,
+        AppDbContext db,
+        ILogger logger)
+    {
+        // "common" is the multi-tenant placeholder authority, not a directory. Treating it
+        // as one would match any tenant row that happened to store the literal string.
+        if (string.IsNullOrWhiteSpace(tid) ||
+            string.Equals(tid, "common", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // Anything the admin or group paths granted is strictly stronger than this, and
+        // was granted to this person rather than to everyone in their directory. Leave it.
+        if (user.HasClaim(c => c.Type.StartsWith("TenantId:")) ||
+            identity.HasClaim(c => c.Type.StartsWith("TenantId:")))
+        {
+            return;
+        }
+
+        var connected = await db.Tenants
+            .Where(t => t.IsActive && t.AzureAdTenantId == tid)
+            .Select(t => new { t.Id, t.Name })
+            .ToListAsync();
+
+        if (connected.Count == 0) return;
+
+        foreach (var tenant in connected)
+        {
+            identity.AddClaim(new Claim($"TenantId:{tenant.Id}", ConnectedTenantRole));
+
+            foreach (var perm in Permissions.ConnectedTenantPermissions)
+            {
+                if (!identity.HasClaim(Permissions.ClaimType, perm))
+                {
+                    identity.AddClaim(new Claim(Permissions.ClaimType, perm));
+                }
+            }
+
+            // Worth a log line: this is the one path where someone obtains access without
+            // any administrator acting on them individually.
+            logger.LogInformation(
+                "Scoped a user from connected directory {Tid} into tenant {TenantId} with read-only access",
+                tid, tenant.Id);
+        }
+    }
+
+    /// <summary>
+    /// Value of the TenantId claim for a connected-directory user. Distinct from any
+    /// TenantAdminRoles value on purpose — nothing should ever mistake it for an admin.
+    /// </summary>
+    internal const string ConnectedTenantRole = "ConnectedTenantUser";
 
     private static async Task TryAutoAssignFromGroupsAsync(
         ClaimsPrincipal user,

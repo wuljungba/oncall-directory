@@ -86,6 +86,7 @@ public class TenantsController : ControllerBase
             Name = name,
             Description = request.Description,
             AzureAdGroupId = request.AzureAdGroupId,
+            AzureAdTenantId = NormalizeDirectoryId(request.AzureAdTenantId),
             ContactEmail = request.ContactEmail,
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
@@ -109,6 +110,10 @@ public class TenantsController : ControllerBase
         if (request.Name != null) tenant.Name = request.Name;
         if (request.Description != null) tenant.Description = request.Description;
         if (request.AzureAdGroupId != null) tenant.AzureAdGroupId = request.AzureAdGroupId;
+        // Blank clears the connection, which is how an administrator withdraws it. Because
+        // nothing is stored per user, clearing it revokes everyone's read access at once.
+        if (request.AzureAdTenantId != null)
+            tenant.AzureAdTenantId = NormalizeDirectoryId(request.AzureAdTenantId);
         if (request.ContactEmail != null) tenant.ContactEmail = request.ContactEmail;
         if (request.IsActive.HasValue) tenant.IsActive = request.IsActive.Value;
 
@@ -131,5 +136,16 @@ public class TenantsController : ControllerBase
         _logger.LogInformation("Tenant deactivated: {TenantId}", id);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Stores a connected directory id in one canonical form. Entra reports `tid` in
+    /// lowercase; a GUID pasted from the portal in another case would be compared as text
+    /// and silently never match.
+    /// </summary>
+    private static string? NormalizeDirectoryId(string? value)
+    {
+        var trimmed = value?.Trim();
+        return string.IsNullOrEmpty(trimmed) ? null : trimmed.ToLowerInvariant();
     }
 }
