@@ -1,17 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { AlertTriangle, CheckCircle, Play, X, PhoneCall } from 'lucide-react'
-import { commandCenterApi, phoneTreesApi, codeCallLocationsApi } from '@/services/api'
+import { commandCenterApi, phoneTreesApi, codeCallLocationsApi, departmentsApi } from '@/services/api'
 import { useSignalR } from '@/hooks/useSignalR'
-import type { PhoneTreeEvent, PhoneTree, CodeCallLocation } from '@/types'
+import type { PhoneTreeEvent, PhoneTree, CodeCallLocation, Department } from '@/types'
 
-const CODE_TYPES = [
-  { key: 'code-blue', label: 'Medical Emergency', sub: 'Cardiac/respiratory arrest' },
-  { key: 'code-red', label: 'Fire', sub: 'Smoke / fire detected' },
-  { key: 'code-green', label: 'Evacuation', sub: 'Facility evacuation' },
-  { key: 'code-silver', label: 'Active Threat', sub: 'Armed person / lockdown' },
-  { key: 'code-grey', label: 'Severe Weather', sub: 'Weather emergency' },
-  { key: 'code-pink', label: 'Infant Abduction', sub: 'Nursery / peds security' },
-]
+// Descriptions for the codes most hospitals share. This is no longer the list of codes
+// you may raise -- that comes from the tenant's own phone trees, so a site can define
+// whatever its operation calls for. These only supply familiar wording when the type
+// happens to be one of them.
+const CODE_TYPE_HINTS: Record<string, string> = {
+  'code-blue': 'Cardiac/respiratory arrest',
+  'code-red': 'Smoke / fire detected',
+  'code-green': 'Facility evacuation',
+  'code-silver': 'Armed person / lockdown',
+  'code-grey': 'Weather emergency',
+  'code-pink': 'Nursery / peds security',
+}
 
 // Keys must match the StepKey values emitted by CodeCallDispatchService — a mismatch
 // leaves the step stuck on "pending" forever.
@@ -108,30 +112,29 @@ export default function CommandCenterPage() {
     setLogEntries(prev => [{ time, tag, text }, ...prev].slice(0, 100))
   }
 
-  async function ensurePhoneTree(codeType: string): Promise<PhoneTree | null> {
-    let tree = phoneTrees.find(t => t.treeType === codeType)
-    if (!tree) {
-      const codeDef = CODE_TYPES.find(c => c.key === codeType)
-      try {
-        tree = await phoneTreesApi.create({
-          name: codeDef?.label || codeType,
-          treeType: codeType as PhoneTree['treeType'],
-          procedure: `Standard response procedure for ${codeType}. Customize in Code Call Configuration.`,
-        })
-        setPhoneTrees(prev => [...prev, tree!])
-        addLogEntry('info', `Auto-created phone tree for ${codeDef?.label || codeType}`)
-      } catch (err) {
-        addLogEntry('info', `Failed to create phone tree: ${err}`)
-        return null
-      }
-    }
+  /**
+   * Adds a code type for this tenant. A code IS a phone tree, so defining one here is the
+   * same act as creating the tree, and it needs a department: a tree without one belongs
+   * to no tenant, which makes it invisible to its own author and stops its live updates
+   * being broadcast.
+   */
+  async function handleCreateCodeType(name: string, treeType: string, departmentId: number) {
+    const tree = await phoneTreesApi.create({
+      name, treeType, departmentId,
+      procedure: `Response procedure for ${name}. Add the people to call under Phone Trees.`,
+    })
+    setPhoneTrees(prev => [...prev, tree])
+    addLogEntry('info', `Added code type "${name}"`)
     return tree
   }
 
   async function handleActivate(codeType: string, location: string, notes: string, requestedByName = '') {
-    const tree = await ensurePhoneTree(codeType)
+    // Codes are the tenant's own trees, so the selected one exists. It used to be
+    // manufactured on the spot when missing -- an empty tree, with no department and
+    // nobody in it, created during an emergency and indistinguishable from a real one.
+    const tree = phoneTrees.find(t => t.treeType === codeType)
     if (!tree) {
-      addLogEntry('info', 'Could not activate: no code call configured and auto-creation failed.')
+      addLogEntry('info', `Could not activate: no code call configured for ${codeType}.`)
       return
     }
     try {
@@ -454,8 +457,8 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
         <ActivateCodeModal
           trees={phoneTrees}
           locations={locations.map(l => l.name)}
-          codeTypes={CODE_TYPES}
           onActivate={handleActivate}
+          onCreateCodeType={handleCreateCodeType}
           onClose={() => setShowActivateModal(false)}
         />
       )}
@@ -463,28 +466,109 @@ function getStepStatus(evt: PhoneTreeEvent, stepKey: string) {
   )
 }
 
+// ─── ADD A CODE TYPE ─────────────────────────────────────────────────────
+//
+// A code is a phone tree, so defining one is creating the tree. The department is
+// required rather than optional: a tree with none belongs to no tenant, which makes it
+// invisible to the person who just created it and silences its live updates.
+
+function AddCodeTypeForm({ onCreate }: {
+  onCreate: (name: string, treeType: string, departmentId: number) => Promise<void>
+}) {
+  const [name, setName] = useState('')
+  const [departmentId, setDepartmentId] = useState<number | ''>('')
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    departmentsApi.getAll()
+      .then(d => { if (!cancelled) setDepartments(d) })
+      .catch(() => { /* the required check below explains an empty list */ })
+    return () => { cancelled = true }
+  }, [])
+
+  // "Rapid Response Team" -> "rapid-response-team", trimmed to the column's 20 chars.
+  const treeType = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '').slice(0, 20)
+
+  async function submit() {
+    if (!name.trim()) { setError('Give the code a name.'); return }
+    if (!treeType) { setError('The name needs at least one letter or number.'); return }
+    if (departmentId === '') {
+      setError(departments.length === 0
+        ? 'No departments are available to you, so a code cannot be added yet.'
+        : 'Choose the department that owns this code.')
+      return
+    }
+    setSaving(true); setError(null)
+    try {
+      await onCreate(name.trim(), treeType, Number(departmentId))
+    } catch {
+      setError('Could not add the code. A code with that name may already exist here.')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="mt-3 border border-gray-800 rounded-lg p-4 space-y-3 bg-gray-800/40">
+      {error && (
+        <div className="flex items-center gap-2 text-xs text-red-400">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />{error}
+        </div>
+      )}
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Code name *</label>
+        <input type="text" value={name} onChange={e => setName(e.target.value)}
+          placeholder="e.g. Rapid Response, Code Orange, Security Assist"
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600" />
+        {treeType && <p className="text-[10px] text-gray-600 mt-1 font-mono">id: {treeType}</p>}
+      </div>
+      <div>
+        <label className="block text-xs text-gray-500 mb-1">Department *</label>
+        <select value={departmentId}
+          onChange={e => setDepartmentId(e.target.value === '' ? '' : Number(e.target.value))}
+          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600">
+          <option value="">Select a department</option>
+          {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+        </select>
+      </div>
+      <button type="button" onClick={submit} disabled={saving}
+        className="w-full px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium disabled:opacity-50">
+        {saving ? 'Adding…' : 'Add code type'}
+      </button>
+      <p className="text-[10px] text-gray-600">
+        This creates the code with nobody in it. Add who to call under Phone Trees before
+        relying on it.
+      </p>
+    </div>
+  )
+}
+
 // ─── ACTIVATE CODE MODAL ─────────────────────────────────────────────────
 
 function ActivateCodeModal({
-  trees, locations, codeTypes, onActivate, onClose,
+  trees, locations, onActivate, onCreateCodeType, onClose,
 }: {
   trees: PhoneTree[]
   locations: string[]
-  codeTypes: typeof CODE_TYPES
   onActivate: (codeType: string, location: string, notes: string, requestedByName?: string) => Promise<void>
+  onCreateCodeType: (name: string, treeType: string, departmentId: number) => Promise<PhoneTree>
   onClose: () => void
 }) {
-  const [selectedCode, setSelectedCode] = useState(codeTypes[0].key)
+  const [selectedCode, setSelectedCode] = useState(trees[0]?.treeType ?? '')
+  const [addingCode, setAddingCode] = useState(false)
   const [location, setLocation] = useState(locations[0])
   const [notes, setNotes] = useState('')
   const [requestedByName, setRequestedByName] = useState('')
+  const selectedTree = trees.find(t => t.treeType === selectedCode)
   const [activating, setActivating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const tree = trees.find(t => t.treeType === selectedCode)
-    if (!tree) { setError('No code call configured for this type. Please create one in Code Call Configuration.'); return }
+    if (!tree) { setError('Choose a code to raise, or add one below.'); return }
     setActivating(true)
     setError(null)
     try {
@@ -512,25 +596,71 @@ function ActivateCodeModal({
           )}
 
           <div>
-            <label className="block text-xs text-gray-500 uppercase tracking-wider mb-2">Code Type</label>
-            <div className="grid grid-cols-2 gap-2">
-              {codeTypes.map(ct => (
-                <button
-                  key={ct.key}
-                  type="button"
-                  onClick={() => setSelectedCode(ct.key)}
-                  className={`text-left border rounded-lg p-3 transition-colors ${
-                    selectedCode === ct.key
-                      ? 'bg-red-600/10 border-red-600/50'
-                      : 'bg-gray-800 border-gray-700 hover:border-gray-600'
-                  }`}
-                >
-                  <p className="text-sm font-medium">{ct.label}</p>
-                  <p className="text-[10px] text-gray-500 mt-0.5">{ct.sub}</p>
-                </button>
-              ))}
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs text-gray-500 uppercase tracking-wider">Code Type</label>
+              <button type="button" onClick={() => setAddingCode(v => !v)}
+                className="text-xs text-amber-500 hover:text-amber-400">
+                {addingCode ? 'Cancel' : '+ Add a code type'}
+              </button>
             </div>
+
+            {trees.length === 0 && !addingCode && (
+              <p className="text-xs text-gray-500 bg-gray-800/60 border border-gray-800 rounded-lg px-4 py-3">
+                No codes are defined for this subscription yet. Add one to raise it here —
+                you choose the name, so it can match how your site actually operates.
+              </p>
+            )}
+
+            <div className="grid grid-cols-2 gap-2">
+              {trees.map(t => {
+                const responders = t.nodes?.length ?? 0
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setSelectedCode(t.treeType)}
+                    className={`text-left border rounded-lg p-3 transition-colors ${
+                      selectedCode === t.treeType
+                        ? 'bg-red-600/10 border-red-600/50'
+                        : 'bg-gray-800 border-gray-700 hover:border-gray-600'
+                    }`}
+                  >
+                    <p className="text-sm font-medium">{t.name}</p>
+                    <p className="text-[10px] text-gray-500 mt-0.5">
+                      {CODE_TYPE_HINTS[t.treeType]
+                        ?? (responders > 0 ? `${responders} to call` : 'No one to call yet')}
+                    </p>
+                  </button>
+                )
+              })}
+            </div>
+
+            {addingCode && (
+              <AddCodeTypeForm
+                onCreate={async (name, treeType, departmentId) => {
+                  const created = await onCreateCodeType(name, treeType, departmentId)
+                  setSelectedCode(created.treeType)
+                  setAddingCode(false)
+                }}
+              />
+            )}
           </div>
+
+          {/*
+            A code whose tree has nobody in it dispatches to nobody. Raising it is still
+            allowed -- during an emergency the operator decides, not this dialog -- but it
+            must never look like a working page.
+          */}
+          {selectedTree && (selectedTree.nodes?.length ?? 0) === 0 && (
+            <div className="flex items-start gap-2 text-sm text-red-300 bg-red-600/10 border border-red-600/40 rounded-lg px-4 py-3">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>{selectedTree.name} has no one to call.</strong> Raising it will
+                record the incident and page nobody. Add responders under Phone Trees, and
+                escalate by phone in the meantime.
+              </span>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs text-gray-500 uppercase tracking-wider mb-2">Location</label>

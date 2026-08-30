@@ -120,7 +120,13 @@ export interface TimeOff {
 export interface PhoneTree {
   id: number
   name: string
-  treeType: 'emergency' | 'department' | 'oncall' | 'admin' | 'code-blue' | 'code-red' | 'code-green' | 'code-silver' | 'code-grey' | 'code-pink'
+  /**
+   * Free-form, so a tenant can define codes that fit its own operation rather than only
+   * the six that shipped. The server stores any string up to 20 characters. Common
+   * values: emergency, department, oncall, admin, code-blue, code-red, code-green,
+   * code-silver, code-grey, code-pink.
+   */
+  treeType: string
   departmentId?: number
   department?: Department
   procedure?: string
