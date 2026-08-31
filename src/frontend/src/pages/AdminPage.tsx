@@ -1398,6 +1398,7 @@ function TimeOffApprovalSection() {
 // ─── TENANTS (Business/Facility Management) ────────────────────────────────
 
 function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number | null) => void }) {
+  const [consentCopied, setConsentCopied] = useState<number | null>(null)
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [admins, setAdmins] = useState<Record<number, TenantAdmin[]>>({})
   const [loading, setLoading] = useState(true)
@@ -1481,6 +1482,25 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-amber-600" /></div>
 
+
+  /**
+   * Puts the admin-consent URL on the clipboard for the operator to send on. Consent is
+   * granted by an administrator in the customer's own directory; nothing here can do it
+   * for them, so handing over the exact link is the whole job.
+   */
+  async function copyConsentLink(tenantId: number) {
+    try {
+      const link = await tenantsApi.getDirectoryConsentLink(tenantId)
+      await navigator.clipboard.writeText(link.url)
+      setConsentCopied(tenantId)
+      setTimeout(() => setConsentCopied(null), 2500)
+    } catch (err) {
+      // Never silent: an operator who thinks they copied a link will paste the previous
+      // clipboard contents into an email to a customer.
+      setError(err instanceof Error ? err.message : 'Could not build the consent link.')
+    }
+  }
+
   return (
     <div className="space-y-4">
       {error && (
@@ -1536,6 +1556,21 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                       {tenant.description || 'No description'}
                       {tenant.contactEmail && ` · ${tenant.contactEmail}`}
                     </p>
+                    {tenant.azureAdTenantId && (
+                      <p className="text-xs text-gray-600 mt-1">
+                        <span className="text-amber-600/80">Directory connected</span>
+                        {' · '}
+                        <span className="font-mono">{tenant.azureAdTenantId}</span>
+                        {' · '}
+                        <button
+                          type="button"
+                          onClick={() => copyConsentLink(tenant.id)}
+                          className="text-gray-400 hover:text-amber-500 underline underline-offset-2"
+                        >
+                          {consentCopied === tenant.id ? 'Link copied' : 'Copy consent link'}
+                        </button>
+                      </p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
                     <button

@@ -557,6 +557,11 @@ export const tenantsApi = {
     fetchApi<Tenant>(`/tenants/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deactivate: (id: number) =>
     fetchApi<void>(`/tenants/${id}`, { method: 'DELETE' }),
+  // The link a connected organization's own administrator has to open. Consent happens in
+  // THEIR directory, so this is a link to hand over, not an action we can take.
+  getDirectoryConsentLink: (id: number) =>
+    fetchApi<{ url: string; redirectUri: string; directoryTenantId: string; note: string }>(
+      `/tenants/${id}/directory-consent-link`),
   getAdmins: (tenantId: number) =>
     fetchApi<TenantAdmin[]>(`/tenants/${tenantId}/admins`),
   assignAdmin: (tenantId: number, data: Record<string, unknown>) =>

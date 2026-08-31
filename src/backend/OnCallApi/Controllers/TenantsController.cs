@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using OnCallApi.Configuration;
 using OnCallApi.Data;
 using OnCallApi.Models;
 using OnCallApi.Services;
@@ -21,12 +23,21 @@ public class TenantsController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly ITenantContextService _tenants;
+    private readonly IOptions<GraphApiOptions> _graphOptions;
+    private readonly IConfiguration _config;
     private readonly ILogger<TenantsController> _logger;
 
-    public TenantsController(AppDbContext db, ITenantContextService tenants, ILogger<TenantsController> logger)
+    public TenantsController(
+        AppDbContext db,
+        ITenantContextService tenants,
+        IOptions<GraphApiOptions> graphOptions,
+        IConfiguration config,
+        ILogger<TenantsController> logger)
     {
         _db = db;
         _tenants = tenants;
+        _graphOptions = graphOptions;
+        _config = config;
         _logger = logger;
     }
 
@@ -147,5 +158,57 @@ public class TenantsController : ControllerBase
     {
         var trimmed = value?.Trim();
         return string.IsNullOrEmpty(trimmed) ? null : trimmed.ToLowerInvariant();
+    
+}
+
+    /// <summary>
+    /// The admin-consent link to send a connected organization.
+    ///
+    /// Consent has to be granted by an administrator in THEIR directory — that is what
+    /// creates the service principal this app uses to read their users. There is nothing
+    /// we can do from here to bring it about, so the useful thing is to hand the operator
+    /// the exact link and the exact redirect URI it depends on.
+    /// </summary>
+    [Authorize(Policy = "RequireTenantManage")]
+    [HttpGet("{id}/directory-consent-link")]
+    public async Task<ActionResult> GetDirectoryConsentLink(int id)
+    {
+        var tenant = await _db.Tenants.FindAsync(id);
+        if (tenant == null) return NotFound();
+
+        if (string.IsNullOrWhiteSpace(tenant.AzureAdTenantId))
+        {
+            return BadRequest(new
+            {
+                error = "Set this subscription's Directory Tenant ID before requesting consent.",
+            });
+        }
+
+        var clientId = _graphOptions.Value.ClientId;
+        if (string.IsNullOrWhiteSpace(clientId) || clientId.Contains("your-", StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = "GraphApi:ClientId is not configured, so no consent link can be built.",
+            });
+        }
+
+        var origin = (_config["Cors:Origin"] ?? "").TrimEnd('/');
+        var redirectUri = $"{origin}/admin";
+
+        var url =
+            $"https://login.microsoftonline.com/{Uri.EscapeDataString(tenant.AzureAdTenantId)}/adminconsent"
+            + $"?client_id={Uri.EscapeDataString(clientId)}"
+            + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}";
+
+        return Ok(new
+        {
+            url,
+            redirectUri,
+            directoryTenantId = tenant.AzureAdTenantId,
+            // Stated rather than assumed: consent fails on the final redirect unless this
+            // exact URI is registered on the app registration.
+            note = "This redirect URI must be registered on the OnCall Graph app registration, or consent will fail at the last step.",
+        });
     }
 }
