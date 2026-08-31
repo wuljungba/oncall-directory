@@ -183,7 +183,12 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             // not cost every usable one, so these are skipped and named instead.
             if (string.IsNullOrWhiteSpace(user.Email))
             {
-                skipped.Add($"{Describe(user)} — no email address in Entra, so it cannot be added to the directory.");
+                // Say what to do about it. "No email address" is true but leaves the
+                // administrator guessing, and the usual cause — a guest account, whose UPN
+                // is not a real address — has a specific remedy.
+                skipped.Add(
+                    $"{Describe(user)} — no usable email address in Entra. Set 'mail' or "
+                    + "'otherMails' on the account (guest accounts have no mailbox of their own).");
                 continue;
             }
 

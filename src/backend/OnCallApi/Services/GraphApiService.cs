@@ -393,6 +393,37 @@ public class GraphApiService : IGraphApiService
         return members;
     }
 
+    /// <summary>
+    /// Best available address for a directory user.
+    ///
+    /// Entra leaves `mail` null for any cloud-only account without a mailbox, which is
+    /// most accounts created in the portal. Employee.Email is required and uniquely
+    /// indexed, so a blank cannot be stored and those users were skipped entirely — a
+    /// directory sync that fetched everyone and imported nobody.
+    ///
+    /// The userPrincipalName is the fallback: unique, human-readable, and always present.
+    /// A guest's UPN is not, though — `someone_gmail.com#EXT#@tenant.onmicrosoft.com` is
+    /// directory plumbing rather than a way to reach anyone, and writing it into a contact
+    /// directory would be inventing an address. Guests keep being skipped, and the skip
+    /// message says what to set.
+    ///
+    /// Note this address is an identifier and a displayed contact; it is not how anyone is
+    /// paged. Code calls go out over SMS and the paging channels, keyed on phone numbers.
+    /// </summary>
+    internal static string ResolveEmail(User user)
+    {
+        if (!string.IsNullOrWhiteSpace(user.Mail)) return user.Mail.Trim();
+
+        var other = user.OtherMails?.FirstOrDefault(m => !string.IsNullOrWhiteSpace(m));
+        if (!string.IsNullOrWhiteSpace(other)) return other.Trim();
+
+        var upn = user.UserPrincipalName?.Trim();
+        if (string.IsNullOrWhiteSpace(upn)) return string.Empty;
+        if (upn.Contains("#EXT#", StringComparison.OrdinalIgnoreCase)) return string.Empty;
+
+        return upn;
+    }
+
     private static Employee MapGraphUserToEmployee(User user)
     {
         return new Employee
@@ -401,7 +432,7 @@ public class GraphApiService : IGraphApiService
             FirstName = user.GivenName ?? string.Empty,
             LastName = user.Surname ?? string.Empty,
             Title = user.JobTitle,
-            Email = user.Mail ?? string.Empty,
+            Email = ResolveEmail(user),
             // Normalize to E.164 on ingestion — AD/Graph numbers are rarely stored
             // in canonical E.164 (spaces, dashes, parens; often missing the country code).
             OfficePhone = PhoneValidation.NormalizeToE164(user.BusinessPhones?.FirstOrDefault()),
