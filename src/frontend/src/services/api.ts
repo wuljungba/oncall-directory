@@ -243,6 +243,27 @@ export const complianceApi = {
     fetchApi<number>(`/compliance/hours/${employeeId}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
 }
 
+/**
+ * Fetches a file from an authenticated endpoint.
+ *
+ * A plain <a href> cannot be used for these: the endpoint needs the same bearer token as
+ * every other call, so the browser's own request arrives unauthenticated and 401s. The
+ * caller gets a Blob to hand to downloadBlob.
+ */
+export async function authenticatedBlob(endpoint: string): Promise<Blob> {
+  const accessToken = await getAuthToken()
+
+  const res = await fetch(`${API_BASE}${endpoint}`, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status, await readErrorMessage(res, `API error: ${res.status}`))
+  }
+
+  return res.blob()
+}
+
 // ── Bulk Import ──
 async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
   const accessToken = await getAuthToken()
@@ -266,6 +287,48 @@ async function uploadFile<T>(endpoint: string, file: File): Promise<T> {
   return res.json()
 }
 
+/** One column of an uploaded sheet, and the field it has been mapped to. */
+export interface ImportColumnMapping {
+  column: string
+  /** The canonical field name, or '' to ignore this column. */
+  field: string
+}
+
+export interface ImportSheetPreview {
+  name: string
+  index: number
+  rowCount: number
+  included: boolean
+  columns: ImportColumnMapping[]
+  sampleRows: Record<string, string>[]
+}
+
+export interface ImportRowPreview {
+  id: number
+  sheetName: string
+  sourceRow: number
+  included: boolean
+  errorReason?: string
+  reviewReason?: string
+  resolution: 'create' | 'merge' | 'skip'
+  matchedOn?: string
+}
+
+/** What a commit would do, under the mapping as it currently stands. */
+export interface ImportJobPreview {
+  jobId: number
+  fileName: string
+  status: string
+  sheetCount: number
+  totalRows: number
+  sheets: ImportSheetPreview[]
+  rows: ImportRowPreview[]
+  readyCount: number
+  errorCount: number
+  reviewCount: number
+  mergeCount: number
+}
+
 export const importApi = {
   validateEmployees: (file: File) => uploadFile<ImportResult>('/import/validate/employees', file),
   importEmployees: (file: File, tenantId?: number) =>
@@ -274,6 +337,38 @@ export const importApi = {
     uploadFile<ImportResult>(`/import/validate/schedule/${scheduleId}`, file),
   importShifts: (scheduleId: number, file: File) =>
     uploadFile<ImportResult>(`/import/schedule/${scheduleId}`, file),
+
+  // ── Staged multi-sheet import ──
+
+  createJob: (file: File, tenantId?: number) =>
+    uploadFile<ImportJobPreview>(`/import/jobs${tenantId ? `?tenantId=${tenantId}` : ''}`, file),
+
+  getJob: (jobId: number) => fetchApi<ImportJobPreview>(`/import/jobs/${jobId}`),
+
+  updateMapping: (
+    jobId: number,
+    body: {
+      sheetName: string
+      columns: Record<string, string>
+      applyToAllSheets?: boolean
+      excludedSheets?: string[]
+    },
+  ) =>
+    fetchApi<ImportJobPreview>(`/import/jobs/${jobId}/mapping`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
+  setRowResolution: (jobId: number, rowId: number, resolution: 'create' | 'merge' | 'skip') =>
+    fetchApi<ImportJobPreview>(`/import/jobs/${jobId}/rows/${rowId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ resolution }),
+    }),
+
+  commitJob: (jobId: number) =>
+    fetchApi<ImportResult>(`/import/jobs/${jobId}/commit`, { method: 'POST' }),
+
+  errorReportUrl: (jobId: number) => `/import/jobs/${jobId}/errors`,
 }
 
 // ── Settings ──

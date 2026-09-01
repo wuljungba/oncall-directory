@@ -75,61 +75,12 @@ public class BulkImportService
 
                 if (existing != null)
                 {
-                    // Only columns the file actually carried are written. Absent columns
-                    // are left alone rather than nulled -- see EmployeeRow.PresentColumns.
-                    existing.FirstName = row.FirstName;
-                    existing.LastName = row.LastName;
-                    // Guarded like every other optional column: now that email can be
-                    // absent, an unguarded write let a narrower follow-up file erase the
-                    // address of everyone it listed while reporting complete success.
-                    if (row.PresentColumns.Contains("email")) existing.Email = row.Email;
-                    if (row.PresentColumns.Contains("contactType")) existing.ContactType = row.ContactType;
-                    if (row.PresentColumns.Contains("displayName")) existing.DisplayName = row.DisplayName;
-                    if (row.PresentColumns.Contains("extension")) existing.Extension = row.Extension;
-                    if (row.PresentColumns.Contains("credentials") || row.PresentColumns.Contains("name"))
-                        existing.Credentials = row.Credentials;
-                    if (row.PresentColumns.Contains("title")) existing.Title = row.Title;
-                    if (row.PresentColumns.Contains("officePhone")) existing.OfficePhone = row.OfficePhone;
-                    if (row.PresentColumns.Contains("mobilePhone")) existing.MobilePhone = row.MobilePhone;
-                    if (row.PresentColumns.Contains("officeLocation")) existing.OfficeLocation = row.OfficeLocation;
-                    if (row.PresentColumns.Contains("departmentId") || row.PresentColumns.Contains("department"))
-                        existing.DepartmentId = row.DepartmentId;
-                    DialPlan.ApplyExtensionPrefix(existing, extensionPrefix);
-                    // TenantId is deliberately NOT reassigned. It used to be set to the
-                    // importer's tenant, which meant uploading a file containing another
-                    // customer's employee email silently moved that person into your
-                    // directory and overwrote their name, title and phone numbers.
-                    existing.UpdatedAt = DateTime.UtcNow;
+                    ApplyRowToEmployee(row, existing, extensionPrefix);
                     _logger.LogDebug("Imported employee {AzureAdObjectId}", row.AzureAdObjectId);
                 }
                 else
                 {
-                    var created = new Employee
-                    {
-                        AzureAdObjectId = row.AzureAdObjectId,
-                        FirstName = row.FirstName,
-                        LastName = row.LastName,
-                        ContactType = row.ContactType,
-                        DisplayName = row.DisplayName,
-                        Extension = row.Extension,
-                        Credentials = row.Credentials,
-                        Title = row.Title,
-                        Email = row.Email,
-                        OfficePhone = row.OfficePhone,
-                        MobilePhone = row.MobilePhone,
-                        OfficeLocation = row.OfficeLocation,
-                        DepartmentId = row.DepartmentId,
-                        TenantId = tenantId,
-                        Source = "CsvImport",
-                        LastSyncedAt = DateTime.UtcNow,
-                    };
-
-                    // A row that gave only "x3434" gets a dialable number when the
-                    // subscription has a dial plan, and keeps just the extension when it
-                    // does not. See DialPlan for why nothing is invented.
-                    DialPlan.ApplyExtensionPrefix(created, extensionPrefix);
-
-                    _db.Employees.Add(created);
+                    _db.Employees.Add(NewEmployeeFromRow(row, tenantId, extensionPrefix));
                     _logger.LogDebug("Created employee {EmployeeName}", row.AzureAdObjectId);
                 }
                 imported++;
@@ -388,7 +339,7 @@ public class BulkImportService
     /// "email". Matching those literally failed every row with "firstName and lastName are
     /// required" — a message about the data, for a header problem.
     /// </summary>
-    private static string CanonicalHeader(string header)
+    internal static string CanonicalHeader(string header)
     {
         var compact = new string(header
             .Where(c => !char.IsWhiteSpace(c) && c != '_' && c != '-')
@@ -604,6 +555,78 @@ public class BulkImportService
         return existing;
     }
 
+    // ── Writing a row into the directory ──
+
+    /// <summary>
+    /// Updates an existing directory entry from an imported row.
+    ///
+    /// Only columns the file actually carried are written. A missing column and a
+    /// deliberately blank cell both parse to null, so writing every field unconditionally
+    /// let a narrower follow-up file erase title, phone, department and email for
+    /// everyone it listed -- while reporting complete success.
+    ///
+    /// Shared with the staged multi-sheet import so the two paths cannot drift: a field
+    /// added to one and forgotten in the other is invisible until someone's number goes
+    /// missing.
+    /// </summary>
+    internal static void ApplyRowToEmployee(EmployeeRow row, Employee existing, string? extensionPrefix)
+    {
+        existing.FirstName = row.FirstName;
+        existing.LastName = row.LastName;
+
+        if (row.PresentColumns.Contains("email")) existing.Email = row.Email;
+        if (row.PresentColumns.Contains("contactType")) existing.ContactType = row.ContactType;
+        if (row.PresentColumns.Contains("displayName")) existing.DisplayName = row.DisplayName;
+        if (row.PresentColumns.Contains("extension")) existing.Extension = row.Extension;
+        if (row.PresentColumns.Contains("credentials") || row.PresentColumns.Contains("name"))
+            existing.Credentials = row.Credentials;
+        if (row.PresentColumns.Contains("title")) existing.Title = row.Title;
+        if (row.PresentColumns.Contains("officePhone")) existing.OfficePhone = row.OfficePhone;
+        if (row.PresentColumns.Contains("mobilePhone")) existing.MobilePhone = row.MobilePhone;
+        if (row.PresentColumns.Contains("officeLocation")) existing.OfficeLocation = row.OfficeLocation;
+        if (row.PresentColumns.Contains("departmentId") || row.PresentColumns.Contains("department"))
+            existing.DepartmentId = row.DepartmentId;
+
+        DialPlan.ApplyExtensionPrefix(existing, extensionPrefix);
+
+        // TenantId is deliberately NOT reassigned. It used to be set to the importer's
+        // tenant, which meant uploading a file containing another customer's employee
+        // email silently moved that person into your directory and overwrote their name,
+        // title and phone numbers.
+        existing.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>Builds a new directory entry from an imported row.</summary>
+    internal static Employee NewEmployeeFromRow(EmployeeRow row, int? tenantId, string? extensionPrefix)
+    {
+        var created = new Employee
+        {
+            AzureAdObjectId = row.AzureAdObjectId,
+            FirstName = row.FirstName,
+            LastName = row.LastName,
+            ContactType = row.ContactType,
+            DisplayName = row.DisplayName,
+            Extension = row.Extension,
+            Credentials = row.Credentials,
+            Title = row.Title,
+            Email = row.Email,
+            OfficePhone = row.OfficePhone,
+            MobilePhone = row.MobilePhone,
+            OfficeLocation = row.OfficeLocation,
+            DepartmentId = row.DepartmentId,
+            TenantId = tenantId,
+            Source = "CsvImport",
+            LastSyncedAt = DateTime.UtcNow,
+        };
+
+        // A row that gave only "x3434" gets a dialable number when the subscription has a
+        // dial plan, and keeps just the extension when it does not. See DialPlan for why
+        // nothing is invented.
+        DialPlan.ApplyExtensionPrefix(created, extensionPrefix);
+
+        return created;
+    }
+
     // ── Row Parsers ──
 
     private static readonly Regex E164Regex = new(@"^\+[1-9]\d{1,14}$", RegexOptions.Compiled);
@@ -641,7 +664,7 @@ public class BulkImportService
         : $"{row.FirstName} {row.LastName}".Trim() is { Length: > 0 } name ? name
         : "(unnamed row)";
 
-    private static (EmployeeRow? Record, string? Error) ParseEmployeeRow(Dictionary<string, string> row)
+    internal static (EmployeeRow? Record, string? Error) ParseEmployeeRow(Dictionary<string, string> row)
     {
         var azureAdId = row.GetValueOrDefault("azureAdObjectId", "")?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(azureAdId))
@@ -677,6 +700,10 @@ public class BulkImportService
                     firstName = parsed.FirstName;
                     lastName = parsed.LastName;
                     if (string.IsNullOrWhiteSpace(credentials)) credentials = parsed.Credentials;
+
+                    // Medium confidence still imports, but says why it might be wrong.
+                    if (parsed.Confidence == NameConfidence.Medium)
+                        nameReviewReason = parsed.ReviewReason;
                 }
             }
         }
@@ -736,7 +763,7 @@ public class BulkImportService
         {
             // A name the parser would not commit to is reported as itself, rather than as
             // the missing-column error it used to masquerade as.
-            if (nameReviewReason != null)
+            if (nameReviewReason != null && lastName.Length == 0)
             {
                 return (null, nameReviewReason
                     + " Split it into firstName and lastName columns, or write it as \"Last, First\".");
@@ -774,6 +801,7 @@ public class BulkImportService
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
             Extension = extension,
             Credentials = string.IsNullOrWhiteSpace(credentials) ? null : credentials,
+            ReviewReason = isDepartmentContact ? null : nameReviewReason,
             Title = row.GetValueOrDefault("title")?.Trim(),
             Email = string.IsNullOrWhiteSpace(email) ? null : email,
             OfficePhone = string.IsNullOrWhiteSpace(officePhone) ? null : officePhone,
@@ -814,7 +842,7 @@ public class BulkImportService
 
     // ── Internal Types ──
 
-    private record EmployeeRow
+    internal record EmployeeRow
     {
         public string AzureAdObjectId { get; init; } = string.Empty;
         public string FirstName { get; init; } = string.Empty;
@@ -835,6 +863,13 @@ public class BulkImportService
 
         /// <summary>Post-nominal letters lifted out of a combined name column.</summary>
         public string? Credentials { get; init; }
+
+        /// <summary>
+        /// Why this row deserves a second look even though it parsed -- a name read as
+        /// "first, middle, last" on nothing more than its word count, most often.
+        /// Distinct from an error: the row is importable, it is just not certain.
+        /// </summary>
+        public string? ReviewReason { get; init; }
 
         public string? OfficePhone { get; init; }
         public string? MobilePhone { get; init; }

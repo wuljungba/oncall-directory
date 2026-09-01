@@ -33,18 +33,71 @@ public static class TabularFileReader
     public sealed record TabularDocument(string[] Headers, IReadOnlyList<TabularRow> Rows);
 
     /// <summary>
+    /// One worksheet, named. A workbook of a dozen unit rosters is the ordinary shape of
+    /// an upload here, and the sheet name is usually the only place the unit or service
+    /// line is written down -- so it is carried alongside the rows rather than discarded.
+    /// </summary>
+    /// <param name="HeaderRowNumber">
+    /// The worksheet row the headers were found on, as Excel numbers it, so a preview can
+    /// show which row it decided to read.
+    /// </param>
+    public sealed record SheetDocument(
+        string Name,
+        int Index,
+        string[] Headers,
+        IReadOnlyList<TabularRow> Rows,
+        int HeaderRowNumber)
+    {
+        public TabularDocument AsDocument() => new(Headers, Rows);
+    }
+
+    /// <summary>
     /// Reads <paramref name="stream"/> into headers + rows, or returns a single error
     /// describing why the whole file is unusable. Errors here are whole-file problems;
     /// per-row validation stays with the caller.
     /// </summary>
     public static async Task<(TabularDocument? Document, string? Error)> ReadAsync(Stream stream)
     {
+        var (sheets, error) = await ReadAllSheetsAsync(stream);
+        if (error != null || sheets == null) return (null, error);
+
+        // The first USABLE sheet, which is not always the first sheet: a workbook often
+        // opens on a cover page or an instructions tab with no header row.
+        var first = sheets.FirstOrDefault();
+        return first == null
+            ? (null, NoUsableSheetMessage)
+            : (first.AsDocument(), null);
+    }
+
+    /// <summary>
+    /// Reads every worksheet that has a usable header row.
+    ///
+    /// A staff upload is routinely a workbook with one sheet per unit, floor or service
+    /// line. Only the first was ever read, so eleven of twelve sheets were imported in
+    /// silence -- the import reported success, and nobody could tell from the result that
+    /// most of the file had been ignored.
+    ///
+    /// Sheets with no header row are skipped rather than treated as errors: a cover page
+    /// or a notes tab is normal in a real workbook, and failing the upload over one would
+    /// block a file that is otherwise perfectly good.
+    /// </summary>
+    public static async Task<(IReadOnlyList<SheetDocument>? Sheets, string? Error)> ReadAllSheetsAsync(
+        Stream stream)
+    {
         var (format, error) = await DetectFormatAsync(stream);
         if (error != null) return (null, error);
 
-        return format == FileFormat.Xlsx
-            ? ReadXlsx(stream)
-            : await ReadCsvAsync(stream);
+        if (format == FileFormat.Csv)
+        {
+            var (document, csvError) = await ReadCsvAsync(stream);
+            if (csvError != null || document == null) return (null, csvError);
+
+            // A CSV is one sheet. Naming it keeps every downstream path -- previews,
+            // mappings, error reports -- able to speak about "the sheet" uniformly.
+            return (new[] { new SheetDocument("Sheet 1", 0, document.Headers, document.Rows, 1) }, null);
+        }
+
+        return ReadAllXlsxSheets(stream);
     }
 
     // ── Format detection ──
@@ -186,14 +239,14 @@ public static class TabularFileReader
         "This file looks like a zip archive rather than an Excel workbook. Upload a .xlsx "
         + "workbook or a .csv file.";
 
-    private const string NoHeaderMessage =
-        "The first sheet has no header row. Row 1 must name the columns "
+    private const string NoUsableSheetMessage =
+        "No sheet in this file has a header row. One row must name the columns "
         + "(firstName, lastName, email, and so on).";
 
     private static readonly string TooManyRowsMessage =
         $"This file has more than {MaxDataRows:N0} rows. Split it into smaller files and import them in turn.";
 
-    private static (TabularDocument? Document, string? Error) ReadXlsx(Stream stream)
+    private static (IReadOnlyList<SheetDocument>? Sheets, string? Error) ReadAllXlsxSheets(Stream stream)
     {
         if (stream.CanSeek) stream.Position = 0;
 
@@ -216,41 +269,92 @@ public static class TabularFileReader
             if (workbookPart?.Workbook == null)
                 return (null, NotAWorkbookMessage);
 
-            var sheet = workbookPart.Workbook.Sheets?.Elements<Sheet>().FirstOrDefault();
-            if (sheet?.Id?.Value == null)
+            var sheets = workbookPart.Workbook.Sheets?.Elements<Sheet>().ToList();
+            if (sheets == null || sheets.Count == 0)
                 return (null, "This workbook has no worksheets.");
-
-            if (workbookPart.GetPartById(sheet.Id!.Value!) is not WorksheetPart worksheetPart)
-                return (null, NotAWorkbookMessage);
 
             var strings = workbookPart.SharedStringTablePart?.SharedStringTable;
             var dateStyles = BuildDateStyleSet(workbookPart);
             var epochShift = workbookPart.Workbook?.WorkbookProperties?.Date1904?.Value == true ? 1462 : 0;
 
-            string[]? headers = null;
-            var rows = new List<TabularRow>();
+            var results = new List<SheetDocument>();
 
-            foreach (var row in worksheetPart.Worksheet.Descendants<Row>())
+            // The cap spans the WHOLE upload, not each sheet: twelve sheets of ten
+            // thousand rows is not twelve acceptable files, it is one that will not
+            // finish.
+            var totalRows = 0;
+
+            for (var index = 0; index < sheets.Count; index++)
             {
-                var values = ExpandRow(row, strings, dateStyles, epochShift, headers?.Length);
-                if (values == null) continue; // wholly empty row
+                var sheet = sheets[index];
+                if (sheet.Id?.Value == null) continue;
 
-                if (headers == null)
-                {
-                    headers = values.Select(CleanCell).ToArray();
+                // A hidden sheet is usually a lookup table or a leftover working copy,
+                // not staff. Importing one silently adds people nobody meant to send.
+                var state = sheet.State?.Value;
+                if (state == SheetStateValues.Hidden || state == SheetStateValues.VeryHidden)
                     continue;
-                }
 
-                if (rows.Count >= MaxDataRows) return (null, TooManyRowsMessage);
+                if (workbookPart.GetPartById(sheet.Id!.Value!) is not WorksheetPart worksheetPart)
+                    continue;
 
-                rows.Add(new TabularRow((int)(row.RowIndex?.Value ?? (uint)(rows.Count + 2)), values));
+                var name = sheet.Name?.Value?.Trim();
+                if (string.IsNullOrWhiteSpace(name)) name = $"Sheet {index + 1}";
+
+                var (document, rowsRead, error) =
+                    ReadOneSheet(worksheetPart, strings, dateStyles, epochShift,
+                        name, index, MaxDataRows - totalRows);
+
+                if (error != null) return (null, error);
+                totalRows += rowsRead;
+
+                if (document != null) results.Add(document);
             }
 
-            if (headers == null || headers.All(string.IsNullOrWhiteSpace))
-                return (null, NoHeaderMessage);
-
-            return (new TabularDocument(headers, rows), null);
+            return results.Count == 0
+                ? (null, NoUsableSheetMessage)
+                : (results, null);
         }
+    }
+
+    /// <summary>
+    /// Reads one worksheet, or returns null when it has no header row to read it by.
+    /// </summary>
+    /// <param name="remainingRows">
+    /// How much of the whole-upload row budget is left. Zero or less means the budget is
+    /// spent, which is a whole-file error rather than a quietly truncated sheet.
+    /// </param>
+    private static (SheetDocument? Sheet, int RowsRead, string? Error) ReadOneSheet(
+        WorksheetPart worksheetPart, SharedStringTable? strings, HashSet<uint> dateStyles,
+        int epochShift, string name, int index, int remainingRows)
+    {
+        string[]? headers = null;
+        var headerRowNumber = 1;
+        var rows = new List<TabularRow>();
+
+        foreach (var row in worksheetPart.Worksheet.Descendants<Row>())
+        {
+            var values = ExpandRow(row, strings, dateStyles, epochShift, headers?.Length);
+            if (values == null) continue; // wholly empty row
+
+            if (headers == null)
+            {
+                headers = values.Select(CleanCell).ToArray();
+                headerRowNumber = (int)(row.RowIndex?.Value ?? 1);
+                continue;
+            }
+
+            if (rows.Count >= remainingRows) return (null, 0, TooManyRowsMessage);
+
+            rows.Add(new TabularRow((int)(row.RowIndex?.Value ?? (uint)(rows.Count + 2)), values));
+        }
+
+        // No header, or a header of nothing but blanks: a cover page or a notes tab.
+        // Skipped, not fatal -- see ReadAllSheetsAsync.
+        if (headers == null || headers.All(string.IsNullOrWhiteSpace))
+            return (null, 0, null);
+
+        return (new SheetDocument(name, index, headers, rows, headerRowNumber), rows.Count, null);
     }
 
     /// <summary>

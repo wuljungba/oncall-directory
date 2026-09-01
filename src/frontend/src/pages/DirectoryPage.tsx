@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Search, Phone, Mail, MapPin, ShieldCheck, Upload, Download, MessageSquare, AlertTriangle, X, Save, Pencil, Plus } from 'lucide-react'
-import { directoryApi, importApi, adminApi, departmentsApi, tenantsApi } from '@/services/api'
+import { directoryApi, adminApi, departmentsApi, tenantsApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
-import ImportModal from '@/components/ImportModal'
+import WorkbookImportModal from '@/components/WorkbookImportModal'
 import { downloadCsv } from '@/utils/download'
 import { useToast } from '@/components/Toast'
 import { isValidE164 } from '@/utils/validation'
@@ -357,11 +357,11 @@ export default function DirectoryPage() {
       </div>
 
       {/* Import Modal */}
-      <ImportModal
+      <WorkbookImportModal
         isOpen={showImport}
-        onClose={() => { setShowImport(false); reloadEmployees() }}
-        title="Import Employees"
-        description="Upload a CSV or Excel (.xlsx) file of directory data. Columns: firstName, lastName, email, title, officePhone, mobilePhone, extension, officeLocation, departmentId, and azureAdObjectId (optional — leave blank for manual accounts). Everyday headings such as 'First Name' and 'Work Email' are understood too, and any column not listed here is ignored. Phone numbers are accepted in ordinary form, e.g. (202) 555-0134, and an extension such as 'x3434' is kept in its own field rather than dialled. A single 'name' column is read too — 'Doe, John, MD' and 'Dr. Jane Smith' both work, and a name it cannot read confidently is reported rather than guessed at. For a unit or service line with no mailbox, give it a displayName and a phone number or extension and leave the name and email blank."
+        onClose={() => setShowImport(false)}
+        onCommitted={reloadEmployees}
+        tenantId={importTenantId === '' ? undefined : Number(importTenantId)}
         extra={canPickTenant ? (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Subscription (tenant) to import into</label>
@@ -375,8 +375,6 @@ export default function DirectoryPage() {
             </select>
           </div>
         ) : undefined}
-        onValidate={(file) => importApi.validateEmployees(file)}
-        onImport={(file) => importApi.importEmployees(file, importTenantId === '' ? undefined : Number(importTenantId))}
       />
 
       {/* Add Employee Modal */}

@@ -520,6 +520,7 @@ builder.Services.AddScoped<IScheduleService, ScheduleService>();
 builder.Services.AddScoped<IDirectoryService, DirectoryService>();
 builder.Services.AddScoped<IDutyHourService, DutyHourService>();
 builder.Services.AddScoped<BulkImportService>();
+builder.Services.AddScoped<OnCallApi.Services.Import.ImportJobService>();
 builder.Services.Configure<OnCallApi.Configuration.SchedulingOptions>(
     builder.Configuration.GetSection(OnCallApi.Configuration.SchedulingOptions.SectionName));
 builder.Services.AddScoped<ITenantScope, TenantScope>();
@@ -938,6 +939,55 @@ using (var scope = app.Services.CreateScope())
                         REFERENCES dbo.PhoneTreeEvents(Id) ON DELETE CASCADE
                 );
                 CREATE INDEX IX_DebriefNotes_PhoneTreeEventId ON dbo.DebriefNotes (PhoneTreeEventId);
+            END;
+            """,
+            // ImportJobs / ImportJobRows: an upload held between being read and being
+            // committed, so the mapping can be corrected and the errors seen before
+            // anything reaches the directory. Added later than the base schema.
+            """
+            IF OBJECT_ID(N'dbo.ImportJobs') IS NULL
+            BEGIN
+                CREATE TABLE dbo.ImportJobs (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NULL,
+                    UploadedByName nvarchar(200) NULL,
+                    UploadedByPrincipalId nvarchar(200) NULL,
+                    FileName nvarchar(400) NOT NULL,
+                    Status nvarchar(20) NOT NULL,
+                    MappingJson nvarchar(max) NULL,
+                    ExcludedSheetsJson nvarchar(max) NULL,
+                    SheetCount int NOT NULL,
+                    TotalRows int NOT NULL,
+                    ImportedCount int NOT NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    UpdatedAt datetime2 NOT NULL,
+                    CommittedAt datetime2 NULL,
+                    CONSTRAINT FK_ImportJobs_Tenant FOREIGN KEY (TenantId)
+                        REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
+                );
+                CREATE INDEX IX_ImportJobs_Tenant_Status ON dbo.ImportJobs (TenantId, Status);
+                CREATE INDEX IX_ImportJobs_CreatedAt ON dbo.ImportJobs (CreatedAt);
+            END;
+
+            IF OBJECT_ID(N'dbo.ImportJobRows') IS NULL
+            BEGIN
+                CREATE TABLE dbo.ImportJobRows (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    ImportJobId int NOT NULL,
+                    SheetName nvarchar(200) NOT NULL,
+                    SheetIndex int NOT NULL,
+                    SourceRow int NOT NULL,
+                    RawValuesJson nvarchar(max) NOT NULL,
+                    Included bit NOT NULL,
+                    ErrorReason nvarchar(1000) NULL,
+                    ReviewReason nvarchar(1000) NULL,
+                    Resolution nvarchar(20) NOT NULL,
+                    MatchedEmployeeId uniqueidentifier NULL,
+                    MatchedOn nvarchar(100) NULL,
+                    CONSTRAINT FK_ImportJobRows_Job FOREIGN KEY (ImportJobId)
+                        REFERENCES dbo.ImportJobs(Id) ON DELETE CASCADE
+                );
+                CREATE INDEX IX_ImportJobRows_Job ON dbo.ImportJobRows (ImportJobId, SheetIndex, SourceRow);
             END;
             """,
             // Employees: department/unit contacts. A unit reached by phone ("3North",

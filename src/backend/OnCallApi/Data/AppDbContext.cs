@@ -17,6 +17,8 @@ public class AppDbContext : DbContext
     public DbSet<PhoneTreeNode> PhoneTreeNodes => Set<PhoneTreeNode>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
+    public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
+    public DbSet<ImportJobRow> ImportJobRows => Set<ImportJobRow>();
     public DbSet<DutyHourRule> DutyHourRules => Set<DutyHourRule>();
     public DbSet<DutyHourViolation> DutyHourViolations => Set<DutyHourViolation>();
     public DbSet<EscalationPolicy> EscalationPolicies => Set<EscalationPolicy>();
@@ -282,6 +284,28 @@ public class AppDbContext : DbContext
         });
 
         // ── AppSetting ── (add Tenant relationship)
+        // ── Import staging ──
+        modelBuilder.Entity<ImportJob>(j =>
+        {
+            j.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            j.HasIndex(x => new { x.TenantId, x.Status });
+            j.HasIndex(x => x.CreatedAt);
+        });
+
+        modelBuilder.Entity<ImportJobRow>(r =>
+        {
+            r.HasOne(x => x.ImportJob)
+                .WithMany(x => x.Rows)
+                .HasForeignKey(x => x.ImportJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            r.HasIndex(x => new { x.ImportJobId, x.SheetIndex, x.SourceRow });
+        });
+
         modelBuilder.Entity<AppSetting>(s =>
         {
             s.HasOne(x => x.Tenant)
