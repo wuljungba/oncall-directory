@@ -757,6 +757,29 @@ export const sharesApi = {
     fetchApi<void>(`/admin/shares/${id}`, { method: 'DELETE' }),
 }
 
+/**
+ * Create an account for yourself. Anonymous — no token is sent, and none comes back: the
+ * account is inert until an administrator provisions it, exactly as a first Microsoft or
+ * Google sign-in is.
+ */
+export async function signUpLocal(
+  email: string,
+  password: string,
+  displayName?: string,
+): Promise<LocalAccount> {
+  const res = await fetch(`${API_BASE}/auth/local/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password, displayName }),
+  })
+
+  if (!res.ok) {
+    throw new ApiError(res.status, await readErrorMessage(res, 'Could not create the account.'))
+  }
+
+  return res.json() as Promise<LocalAccount>
+}
+
 // ── Admin: local accounts (email+password users) ──
 export const localAccountsApi = {
   list: (includeInactive = false) =>

@@ -10,6 +10,15 @@ namespace OnCallApi.Models;
 /// Local accounts are created and managed by administrators.
 /// Passwords are hashed using BCrypt.
 /// </summary>
+public static class LocalAccountOrigin
+{
+    /// <summary>Created by an administrator, who has vouched for the person.</summary>
+    public const string Admin = "Admin";
+
+    /// <summary>Created by whoever filled in the signup form. Grants nothing on its own.</summary>
+    public const string SelfSignup = "SelfSignup";
+}
+
 [Index(nameof(Email), IsUnique = true)]
 public class LocalAccount
 {
@@ -40,6 +49,23 @@ public class LocalAccount
     public string RolesJson { get; set; } = "[\"OnCall.Viewer\"]";
 
     public bool IsActive { get; set; } = true;
+
+    /// <summary>
+    /// "Admin" -- created by an administrator, who has vouched for the person -- or
+    /// "SelfSignup", created by whoever filled in the form.
+    ///
+    /// The difference matters: an admin-created account is linked to a directory entry
+    /// and given the staff baseline, because somebody decided it should be. A self-signed
+    /// account gets neither, and an administrator provisions it afterwards.
+    /// </summary>
+    [MaxLength(20)]
+    public string Origin { get; set; } = LocalAccountOrigin.Admin;
+
+    /// <summary>Consecutive failed sign-ins, reset by a successful one.</summary>
+    public int FailedLoginCount { get; set; }
+
+    /// <summary>When set and in the future, sign-in is refused regardless of the password.</summary>
+    public DateTime? LockedOutUntil { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

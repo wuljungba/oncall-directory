@@ -496,6 +496,18 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromHours(1),
             }));
 
+    // Signing up is the second anonymous write a stranger can reach. Its own budget, for
+    // the same reason: enough for a person creating an account, nowhere near enough to
+    // probe which addresses already exist.
+    options.AddPolicy("Signup", ctx =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromHours(1),
+            }));
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
@@ -1005,6 +1017,20 @@ using (var scope = app.Services.CreateScope())
                     CONSTRAINT DF_Employees_ContactType DEFAULT N'Person';
             IF COL_LENGTH(N'dbo.Employees', N'Credentials') IS NULL
                 ALTER TABLE dbo.Employees ADD Credentials nvarchar(100) NULL;
+            """,
+            // LocalAccounts: where an account came from, and its lockout state.
+            // Origin is NOT NULL with a default of 'Admin', which is the truth for every
+            // account that existed before self-signup did -- each one was created by an
+            // administrator.
+            """
+            IF COL_LENGTH(N'dbo.LocalAccounts', N'Origin') IS NULL
+                ALTER TABLE dbo.LocalAccounts ADD Origin nvarchar(20) NOT NULL
+                    CONSTRAINT DF_LocalAccounts_Origin DEFAULT N'Admin';
+            IF COL_LENGTH(N'dbo.LocalAccounts', N'FailedLoginCount') IS NULL
+                ALTER TABLE dbo.LocalAccounts ADD FailedLoginCount int NOT NULL
+                    CONSTRAINT DF_LocalAccounts_FailedLoginCount DEFAULT 0;
+            IF COL_LENGTH(N'dbo.LocalAccounts', N'LockedOutUntil') IS NULL
+                ALTER TABLE dbo.LocalAccounts ADD LockedOutUntil datetime2 NULL;
             """,
             // Employees.Email becomes optional, and its unique index gains a filter.
             //

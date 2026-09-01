@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
+import { signUpLocal } from '@/services/api'
 import type { AuthUser, AuthProviderType } from '@/services/auth'
+
+/** The shortest password accepted. Length over composition — it matches the server. */
+const MIN_PASSWORD_LENGTH = 12
 
 interface LoginPageProps {
   isLoading: boolean
@@ -17,6 +21,16 @@ export default function LoginPage({
   const navigate = useNavigate()
   const [selectedProvider, setSelectedProvider] = useState<AuthProviderType | null>(null)
 
+  // 'sso' is the front door. The email-and-password form is for people who have no
+  // Microsoft or Google account to sign in with, which is why it is not the default.
+  const [mode, setMode] = useState<'sso' | 'password' | 'signup'>('sso')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [signedUp, setSignedUp] = useState(false)
+
   useEffect(() => {
     if (isAuthenticated) navigate('/dashboard', { replace: true })
   }, [isAuthenticated, navigate])
@@ -24,6 +38,45 @@ export default function LoginPage({
   async function handleSsoSignIn(provider: AuthProviderType) {
     setSelectedProvider(provider)
     await signIn(provider)
+  }
+
+  function switchMode(next: 'sso' | 'password' | 'signup') {
+    setMode(next)
+    setError(null)
+    setSignedUp(false)
+  }
+
+  async function handlePasswordSignIn(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      await signIn('local', email.trim(), password)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not sign in.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSignUp(e: React.FormEvent) {
+    e.preventDefault()
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Choose a password of at least ${MIN_PASSWORD_LENGTH} characters.`)
+      return
+    }
+
+    setBusy(true)
+    setError(null)
+    try {
+      await signUpLocal(email.trim(), password, displayName.trim() || undefined)
+      setSignedUp(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create the account.')
+    } finally {
+      setBusy(false)
+    }
   }
 
   if (isLoading) {
@@ -98,11 +151,122 @@ export default function LoginPage({
             </button>
           </div>
 
+        {mode === 'sso' ? (
+          <button
+            onClick={() => switchMode('password')}
+            className="w-full mt-3 text-center text-sm text-gray-500 hover:text-gray-300 transition-colors"
+          >
+            Use an email and password instead
+          </button>
+        ) : (
+          <div className="mt-6 pt-6 border-t border-gray-800">
+            {signedUp ? (
+              <div className="space-y-3 text-center">
+                <p className="text-sm text-green-400">Your account has been created.</p>
+                {/* Said plainly, because the alternative is someone signing in, finding an
+                    empty app, and concluding it is broken. */}
+                <p className="text-sm text-gray-500">
+                  You can sign in now, but an administrator has to give you access before there
+                  is anything to see.{' '}
+                  <Link to="/request-access" className="text-amber-500 hover:text-amber-400">
+                    Ask for access
+                  </Link>{' '}
+                  to get that started.
+                </p>
+                <button
+                  onClick={() => switchMode('password')}
+                  className="text-sm text-amber-500 hover:text-amber-400 font-medium"
+                >
+                  Sign in
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={mode === 'signup' ? handleSignUp : handlePasswordSignIn} className="space-y-3">
+                {mode === 'signup' && (
+                  <div>
+                    <label htmlFor="login-name" className="block text-xs text-gray-500 mb-1">Your name</label>
+                    <input
+                      id="login-name"
+                      type="text"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-600"
+                    />
+                  </div>
+                )}
+
+                <div>
+                  <label htmlFor="login-email" className="block text-xs text-gray-500 mb-1">Email</label>
+                  <input
+                    id="login-email"
+                    type="email"
+                    required
+                    autoComplete="username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-600"
+                  />
+                </div>
+
+                <div>
+                  <label htmlFor="login-password" className="block text-xs text-gray-500 mb-1">Password</label>
+                  <input
+                    id="login-password"
+                    type="password"
+                    required
+                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-800 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-amber-600"
+                  />
+                  {mode === 'signup' && (
+                    <p className="text-xs text-gray-600 mt-1">
+                      At least {MIN_PASSWORD_LENGTH} characters. A phrase you will remember beats
+                      a short word with symbols in it.
+                    </p>
+                  )}
+                </div>
+
+                {error && (
+                  <p className="text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-2.5">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full px-6 py-3 bg-amber-600 hover:bg-amber-700 rounded-xl font-medium transition-colors disabled:opacity-50"
+                >
+                  {busy
+                    ? (mode === 'signup' ? 'Creating…' : 'Signing in…')
+                    : (mode === 'signup' ? 'Create account' : 'Sign in')}
+                </button>
+
+                <div className="flex items-center justify-between text-xs">
+                  <button
+                    type="button"
+                    onClick={() => switchMode('sso')}
+                    className="text-gray-500 hover:text-gray-300"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchMode(mode === 'signup' ? 'password' : 'signup')}
+                    className="text-amber-500 hover:text-amber-400 font-medium"
+                  >
+                    {mode === 'signup' ? 'I already have an account' : 'Create an account'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        )}
+
         {/* Signing in proves who you are and grants nothing until an admin scopes you
             to a tenant, so someone new could sign in successfully and land nowhere.
             This is the way to ask. */}
         <p className="text-center text-sm text-gray-500 mt-8">
-          New here?{' '}
+          Need access?{' '}
           <Link to="/request-access" className="text-amber-500 hover:text-amber-400 font-medium">
             Request access
           </Link>

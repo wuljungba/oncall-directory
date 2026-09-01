@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OnCallApi.Models;
@@ -46,6 +47,46 @@ public class LocalAuthController : ControllerBase
         }
         catch (InvalidOperationException ex)
         {
+            return Conflict(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Create an account for yourself. Anonymous, rate-limited, and grants nothing.
+    ///
+    /// The application is invite-only by design and stays that way: this creates an
+    /// identity with no roles, no permission grant and no directory link, which an
+    /// administrator then provisions. What it removes is the dead end where somebody with
+    /// no Microsoft or Google account had no way to exist here at all.
+    /// </summary>
+    [HttpPost("signup")]
+    [AllowAnonymous]
+    [EnableRateLimiting("Signup")]
+    public async Task<ActionResult<LocalAccountResponse>> Signup([FromBody] SelfSignupRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+            return BadRequest(new { error = "Email and password are required." });
+
+        if (!new EmailAddressAttribute().IsValid(request.Email) || request.Email.Length > 256)
+            return BadRequest(new { error = "Enter a valid email address of at most 256 characters." });
+
+        // Length over composition rules. A 12-character passphrase is stronger than an
+        // 8-character one carrying a digit and a symbol, and far likelier to be
+        // remembered rather than written on a monitor.
+        if (request.Password.Length < 12 || request.Password.Length > 256)
+            return BadRequest(new { error = "Choose a password of at least 12 characters." });
+
+        try
+        {
+            var account = await _localAccounts.RegisterSelfServeAsync(
+                request.Email, request.Password, request.DisplayName ?? request.Email);
+
+            return Ok(ToResponse(account));
+        }
+        catch (InvalidOperationException ex)
+        {
+            // The service returns one message for every refusal on purpose -- see
+            // RegisterSelfServeAsync. Passing it through unchanged keeps it that way.
             return Conflict(new { error = ex.Message });
         }
     }
@@ -177,6 +218,12 @@ public class LocalAuthController : ControllerBase
 // ── Request / Response types ──
 
 public record RegisterLocalAccountRequest(string Email, string Password, string? DisplayName, string[]? Roles, Guid? EmployeeId = null);
+
+/// <summary>
+/// Body of a self-signup. Every field is caller-supplied and untrusted; notably there is
+/// no Roles or EmployeeId here, so neither can be asked for.
+/// </summary>
+public record SelfSignupRequest(string Email, string Password, string? DisplayName);
 
 public record LoginLocalAccountRequest(string Email, string Password);
 

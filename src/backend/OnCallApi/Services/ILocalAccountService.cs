@@ -7,6 +7,12 @@ public interface ILocalAccountService
     /// <summary>Register a new local account (admin-only).</summary>
     Task<LocalAccount> RegisterAsync(string email, string password, string displayName, string[]? roles = null, Guid? employeeId = null);
 
+    /// <summary>
+    /// Creates an account for someone signing themselves up. Grants nothing.
+    /// See the implementation for why this is a separate method rather than a flag.
+    /// </summary>
+    Task<LocalAccount> RegisterSelfServeAsync(string email, string password, string displayName);
+
     /// <summary>Authenticate a local account by email and password.</summary>
     Task<(LocalAccount? Account, string? Token)> AuthenticateAsync(string email, string password);
 
