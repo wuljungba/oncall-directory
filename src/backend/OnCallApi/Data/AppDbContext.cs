@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AppSetting> AppSettings => Set<AppSetting>();
     public DbSet<ImportJob> ImportJobs => Set<ImportJob>();
+    public DbSet<OrganizationVerification> OrganizationVerifications => Set<OrganizationVerification>();
     public DbSet<ImportJobRow> ImportJobRows => Set<ImportJobRow>();
     public DbSet<DutyHourRule> DutyHourRules => Set<DutyHourRule>();
     public DbSet<DutyHourViolation> DutyHourViolations => Set<DutyHourViolation>();
@@ -284,6 +285,18 @@ public class AppDbContext : DbContext
         });
 
         // ── AppSetting ── (add Tenant relationship)
+        modelBuilder.Entity<OrganizationVerification>(v =>
+        {
+            v.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // One submission per organization: a second one replaces the first rather
+            // than accumulating, so there is never a question of which is current.
+            v.HasIndex(x => x.TenantId).IsUnique();
+        });
+
         // ── Import staging ──
         modelBuilder.Entity<ImportJob>(j =>
         {

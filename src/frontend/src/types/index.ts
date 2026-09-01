@@ -8,6 +8,10 @@ export interface Tenant {
   /** Entra tenant GUID whose users may read this subscription (read-only). */
   azureAdTenantId?: string
   contactEmail?: string
+  /** Hospital | Clinic | PrivatePractice | SkilledNursing | EMS | Other. */
+  organizationType?: string
+  /** Unverified | Pending | Verified | Rejected. Only the healthcare types are gated. */
+  verificationStatus?: string
   isActive: boolean
   createdAt: string
 }
@@ -40,6 +44,33 @@ export interface Department {
  * and no name, email or sign-in identity.
  */
 export type ContactType = 'Person' | 'Department'
+
+/** See the backend's OrganizationVerification. None of this is PHI; it describes a business. */
+export interface OrganizationVerification {
+  id: number
+  tenantId: number
+  legalName: string
+  doingBusinessAs?: string
+  npi?: string
+  addressLine1?: string
+  city?: string
+  state?: string
+  postalCode?: string
+  stateLicenseNumber?: string
+  licenseState?: string
+  ein?: string
+  representativeName?: string
+  representativeTitle?: string
+  representativeEmail?: string
+  submittedByName?: string
+  submittedAt: string
+  /** What the NPI and domain checks said, in a sentence an admin can read. */
+  registryFindings?: string
+  registryCheckedAt?: string
+  decidedAt?: string
+  decidedByName?: string
+  decisionReason?: string
+}
 
 export interface Employee {
   id: string

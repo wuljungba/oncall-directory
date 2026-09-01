@@ -416,9 +416,14 @@ builder.Services.AddAuthorization(options =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
             OnCallApi.Authorization.Permissions.ScheduleRead));
 
+    // The three write policies also require a verified organization. Reads deliberately
+    // do not: an organization waiting on a decision can still see its own directory, and
+    // locking that too would make a pending verification indistinguishable from a broken
+    // account.
     options.AddPolicy("RequireScheduleWrite", policy =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
-            OnCallApi.Authorization.Permissions.ScheduleWrite));
+                OnCallApi.Authorization.Permissions.ScheduleWrite)
+            .AddRequirements(new OnCallApi.Authorization.TenantVerifiedRequirement()));
 
     options.AddPolicy("RequireDirectoryRead", policy =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
@@ -426,7 +431,8 @@ builder.Services.AddAuthorization(options =>
 
     options.AddPolicy("RequireDirectoryWrite", policy =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
-            OnCallApi.Authorization.Permissions.DirectoryWrite));
+                OnCallApi.Authorization.Permissions.DirectoryWrite)
+            .AddRequirements(new OnCallApi.Authorization.TenantVerifiedRequirement()));
 
     options.AddPolicy("RequireAdminFull", policy =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
@@ -434,7 +440,8 @@ builder.Services.AddAuthorization(options =>
 
     options.AddPolicy("RequireCodeCallWrite", policy =>
         policy.RequireClaim(OnCallApi.Authorization.Permissions.ClaimType,
-            OnCallApi.Authorization.Permissions.CodeCallWrite));
+                OnCallApi.Authorization.Permissions.CodeCallWrite)
+            .AddRequirements(new OnCallApi.Authorization.TenantVerifiedRequirement()));
 
     // ── Multi-tenant policies ──
     options.AddPolicy("RequireAdminScoped", policy =>
@@ -533,6 +540,10 @@ builder.Services.AddScoped<IDirectoryService, DirectoryService>();
 builder.Services.AddScoped<IDutyHourService, DutyHourService>();
 builder.Services.AddScoped<BulkImportService>();
 builder.Services.AddScoped<OnCallApi.Services.Import.ImportJobService>();
+builder.Services.AddScoped<OnCallApi.Services.INppesRegistryClient, OnCallApi.Services.NppesRegistryClient>();
+builder.Services.AddScoped<OnCallApi.Services.OrganizationVerificationService>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler,
+    OnCallApi.Authorization.TenantVerifiedHandler>();
 builder.Services.Configure<OnCallApi.Configuration.SchedulingOptions>(
     builder.Configuration.GetSection(OnCallApi.Configuration.SchedulingOptions.SectionName));
 builder.Services.AddScoped<ITenantScope, TenantScope>();
@@ -1031,6 +1042,55 @@ using (var scope = app.Services.CreateScope())
                     CONSTRAINT DF_LocalAccounts_FailedLoginCount DEFAULT 0;
             IF COL_LENGTH(N'dbo.LocalAccounts', N'LockedOutUntil') IS NULL
                 ALTER TABLE dbo.LocalAccounts ADD LockedOutUntil datetime2 NULL;
+            """,
+            // Tenants.VerificationStatus / OrganizationType.
+            //
+            // The DEFAULT is 'Verified', and that is the whole point. Every organization
+            // that existed before this check did was already operating; adding the column
+            // as 'Unverified' would turn every live customer read-only on deploy -- no
+            // schedules, no code calls -- the moment this shipped. Only rows created
+            // afterwards start unverified.
+            """
+            IF COL_LENGTH(N'dbo.Tenants', N'VerificationStatus') IS NULL
+                ALTER TABLE dbo.Tenants ADD VerificationStatus nvarchar(20) NOT NULL
+                    CONSTRAINT DF_Tenants_VerificationStatus DEFAULT N'Verified';
+            IF COL_LENGTH(N'dbo.Tenants', N'OrganizationType') IS NULL
+                ALTER TABLE dbo.Tenants ADD OrganizationType nvarchar(40) NULL;
+            """,
+            // OrganizationVerifications: what an organization claims to be, and what came
+            // back when it was checked. Added later than the base schema.
+            """
+            IF OBJECT_ID(N'dbo.OrganizationVerifications') IS NULL
+            BEGIN
+                CREATE TABLE dbo.OrganizationVerifications (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NOT NULL,
+                    LegalName nvarchar(300) NOT NULL,
+                    DoingBusinessAs nvarchar(300) NULL,
+                    Npi nvarchar(10) NULL,
+                    AddressLine1 nvarchar(300) NULL,
+                    City nvarchar(120) NULL,
+                    State nvarchar(60) NULL,
+                    PostalCode nvarchar(20) NULL,
+                    StateLicenseNumber nvarchar(100) NULL,
+                    LicenseState nvarchar(60) NULL,
+                    Ein nvarchar(20) NULL,
+                    RepresentativeName nvarchar(200) NULL,
+                    RepresentativeTitle nvarchar(200) NULL,
+                    RepresentativeEmail nvarchar(320) NULL,
+                    SubmittedByName nvarchar(200) NULL,
+                    SubmittedAt datetime2 NOT NULL,
+                    RegistryFindings nvarchar(2000) NULL,
+                    RegistryCheckedAt datetime2 NULL,
+                    DecidedAt datetime2 NULL,
+                    DecidedByName nvarchar(200) NULL,
+                    DecisionReason nvarchar(1000) NULL,
+                    CONSTRAINT FK_OrganizationVerifications_Tenant FOREIGN KEY (TenantId)
+                        REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
+                );
+                CREATE UNIQUE INDEX uq_OrganizationVerifications_Tenant
+                    ON dbo.OrganizationVerifications (TenantId);
+            END;
             """,
             // Employees.Email becomes optional, and its unique index gains a filter.
             //

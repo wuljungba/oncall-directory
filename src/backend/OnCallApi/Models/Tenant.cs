@@ -35,6 +35,24 @@ public class Tenant
     [MaxLength(100)]
     public string? ContactEmail { get; set; }
 
+    /// <summary>
+    /// What kind of organization this is. Only the healthcare kinds enter verification --
+    /// see <see cref="Models.OrganizationType"/>.
+    /// </summary>
+    [MaxLength(40)]
+    public string? OrganizationType { get; set; }
+
+    /// <summary>
+    /// Whether this organization has been verified, and therefore whether it may write.
+    ///
+    /// Defaults to Verified, and the schema backport adds the column with that default
+    /// too. Every organization that existed before this check did was already operating,
+    /// and a deployment that turned them all read-only would take away schedules and code
+    /// calls from live customers. Only rows created after the gate ships start Unverified.
+    /// </summary>
+    [MaxLength(20)]
+    public string VerificationStatus { get; set; } = Models.VerificationStatus.Verified;
+
     public bool IsActive { get; set; } = true;
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 

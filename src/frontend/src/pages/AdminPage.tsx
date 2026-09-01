@@ -13,8 +13,9 @@ import PermissionsSection from './admin/PermissionsSection'
 import SharedSchedulesSection from './admin/SharedSchedulesSection'
 import OnboardingHealthSection from './admin/OnboardingHealthSection'
 import OnCallAuditSection from './admin/OnCallAuditSection'
+import VerificationSection from './admin/VerificationSection'
 
-type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares' | 'onboarding' | 'audit'
+type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares' | 'onboarding' | 'audit' | 'verification'
 
 export default function AdminPage() {
   const [tab, setTab] = useState<Tab>('overview')
@@ -63,6 +64,7 @@ export default function AdminPage() {
     tabs.push({ key: 'tenants', label: 'Subscriptions' })
     tabs.push({ key: 'onboarding', label: 'Onboarding' })
     tabs.push({ key: 'audit', label: 'On-Call Audit' })
+    tabs.push({ key: 'verification', label: 'Verification' })
   }
 
   // Get the current tenant name for display
@@ -126,6 +128,7 @@ export default function AdminPage() {
       {tab === 'shares' && <SharedSchedulesSection />}
       {tab === 'onboarding' && <OnboardingHealthSection />}
       {tab === 'audit' && <OnCallAuditSection />}
+      {tab === 'verification' && <VerificationSection />}
     </div>
   )
 }

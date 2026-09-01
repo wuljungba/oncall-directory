@@ -28,6 +28,7 @@ import type {
   OnCallReportRow,
   ConnectionStatus,
   SignInIdentity,
+  OrganizationVerification,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -778,6 +779,32 @@ export async function signUpLocal(
   }
 
   return res.json() as Promise<LocalAccount>
+}
+
+// ── Organization verification ──
+export const verificationApi = {
+  get: (tenantId: number) =>
+    fetchApi<OrganizationVerification>(`/admin/verification/${tenantId}`),
+
+  submit: (tenantId: number, body: Record<string, string>) =>
+    fetchApi<OrganizationVerification>(`/admin/verification/${tenantId}`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  pending: () => fetchApi<OrganizationVerification[]>('/admin/verification/pending'),
+
+  approve: (tenantId: number, reason?: string) =>
+    fetchApi<void>(`/admin/verification/${tenantId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+
+  reject: (tenantId: number, reason: string) =>
+    fetchApi<void>(`/admin/verification/${tenantId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
 }
 
 // ── Admin: local accounts (email+password users) ──
