@@ -20,14 +20,13 @@ public record CreateEmployeeRequest(
     [MaxLength(100)]
     string? AzureAdObjectId,
 
-    [Required(AllowEmptyStrings = false), MaxLength(100)]
-    string FirstName,
-
-    [Required(AllowEmptyStrings = false), MaxLength(100)]
-    string LastName,
-
-    [Required(AllowEmptyStrings = false), EmailAddress, MaxLength(256)]
-    string Email,
+    // Name and email are optional at the DTO level and enforced by ContactType in
+    // AdminService instead: a "Department" contact is a unit reached by phone ("3North",
+    // x3434) and has neither. A "Person" still requires all three -- the check simply
+    // moved somewhere that can see which kind of row is being created.
+    [MaxLength(100)] string? FirstName,
+    [MaxLength(100)] string? LastName,
+    [EmailAddress, MaxLength(256)] string? Email,
 
     [MaxLength(200)] string? Title,
     [MaxLength(200)] string? Specialty,
@@ -40,19 +39,20 @@ public record CreateEmployeeRequest(
     Guid? ManagerId,
     List<string>? Certifications,
     List<string>? Languages,
-    int? TenantId = null
+    int? TenantId = null,
+
+    // Department-contact fields. Added at the end with defaults so every existing caller
+    // -- and every stored request body -- keeps working unchanged.
+    [MaxLength(20)] string? ContactType = null,
+    [MaxLength(200)] string? DisplayName = null,
+    [MaxLength(16)] string? Extension = null
 );
 
 /// <summary>Request to update an existing employee account. See CreateEmployeeRequest.</summary>
 public record UpdateEmployeeRequest(
-    [Required(AllowEmptyStrings = false), MaxLength(100)]
-    string FirstName,
-
-    [Required(AllowEmptyStrings = false), MaxLength(100)]
-    string LastName,
-
-    [Required(AllowEmptyStrings = false), EmailAddress, MaxLength(256)]
-    string Email,
+    [MaxLength(100)] string? FirstName,
+    [MaxLength(100)] string? LastName,
+    [EmailAddress, MaxLength(256)] string? Email,
 
     [MaxLength(200)] string? Title,
     [MaxLength(200)] string? Specialty,
@@ -66,7 +66,13 @@ public record UpdateEmployeeRequest(
     List<string>? Certifications,
     List<string>? Languages,
     bool? IsActive,
-    int? TenantId = null
+    int? TenantId = null,
+
+    // Department-contact fields. Added at the end with defaults so every existing caller
+    // -- and every stored request body -- keeps working unchanged.
+    [MaxLength(20)] string? ContactType = null,
+    [MaxLength(200)] string? DisplayName = null,
+    [MaxLength(16)] string? Extension = null
 );
 
 /// <summary>Request to create a new department (sub-account).</summary>

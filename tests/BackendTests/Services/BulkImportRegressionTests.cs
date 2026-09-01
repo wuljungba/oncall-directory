@@ -44,27 +44,43 @@ public class BulkImportRegressionTests
     }
 
     /// <summary>
-    /// A number carrying an extension must be refused, not merged into the number.
+    /// A number carrying an extension is SPLIT, never merged.
     ///
     /// Stripping non-digits folded the extension into the number itself, so
     /// "202-555-0134 x4412" became "+120255501344412" -- fifteen digits, valid E.164, past
     /// the dialable floor. It looked entirely correct and would have been dialled on a code
-    /// call. The normalizer's own doc comment says it exists to prevent exactly this.
+    /// call.
+    ///
+    /// This used to be prevented by refusing the whole row, which was safe but lost the
+    /// contact. The half that mattered was never the refusal -- it was that the two values
+    /// must not become one. Both halves are now kept in the field that means them, and the
+    /// assertion below is the stronger one: whatever ends up in the phone column, it is
+    /// never the concatenation.
     /// </summary>
     [Theory]
-    [InlineData("202-555-0134 x4412")]
-    [InlineData("(202) 555-0134 ext. 4412")]
-    [InlineData("+1 202 555 0134 extension 12")]
-    [InlineData("2025550134#77")]
-    public async Task PhoneWithAnExtensionIsRejected(string phone)
+    [InlineData("202-555-0134 x4412", "+12025550134", "4412")]
+    [InlineData("(202) 555-0134 ext. 4412", "+12025550134", "4412")]
+    [InlineData("+1 202 555 0134 extension 12", "+12025550134", "12")]
+    [InlineData("2025550134#77", "+12025550134", "77")]
+    public async Task PhoneWithAnExtensionIsSplitNotMerged(
+        string phone, string expectedNumber, string expectedExtension)
     {
         using var db = CreateDb();
 
-        var result = await CreateService(db).ValidateEmployeesAsync(
+        var result = await CreateService(db).ImportEmployeesAsync(
             Csv(Header, $",Jane,Smith,jane@hospital.example,Doctor,{phone},,,"));
 
-        result.IsValid.Should().BeFalse(
-            "an extension cannot be dialled and must not be merged into the number");
+        result.IsValid.Should().BeTrue(string.Join("; ", result.Errors));
+
+        var employee = await db.Employees.AsNoTracking().SingleAsync();
+        employee.OfficePhone.Should().Be(expectedNumber);
+        employee.Extension.Should().Be(expectedExtension);
+
+        // The specific catastrophe this test exists for: the extension appended to the
+        // number, giving one plausible-looking value that would be dialled on a code call
+        // ("202-555-0134 x4412" became "+120255501344412").
+        employee.OfficePhone.Should().NotEndWith(
+            expectedExtension, "the extension must never be folded into the dialled number");
     }
 
     [Theory]

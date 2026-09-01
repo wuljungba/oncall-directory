@@ -63,8 +63,13 @@ public class LocalAccountService : ILocalAccountService
         // (from the admin dashboard) always wins.
         if (employeeId == null)
         {
+            // e.Email != null is a security guard, not a null-check ceremony. Email is
+            // optional now, and without it a department contact carrying no address could
+            // be matched by a blank comparison and silently adopted as the identity behind
+            // a sign-in -- handing someone shifts and a directory presence that are not
+            // theirs. A row with no address is never anybody.
             var matched = await _db.Employees
-                .FirstOrDefaultAsync(e => e.Email.ToLower() == normalized);
+                .FirstOrDefaultAsync(e => e.Email != null && e.Email.ToLower() == normalized);
             if (matched != null) employeeId = matched.Id;
         }
 

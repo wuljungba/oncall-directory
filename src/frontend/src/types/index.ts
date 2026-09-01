@@ -34,15 +34,28 @@ export interface Department {
   isActive: boolean
 }
 
+/**
+ * "Person" is somebody who can be paged and may sign in. "Department" is a unit or
+ * service line reached by phone -- "3North", x3434 -- with a displayName and a number,
+ * and no name, email or sign-in identity.
+ */
+export type ContactType = 'Person' | 'Department'
+
 export interface Employee {
   id: string
   azureAdObjectId: string
   firstName: string
   lastName: string
+  /** Present on a department contact, which has no first or last name. */
+  displayName?: string
+  contactType?: ContactType
   title?: string
   specialty?: string
   clinicalRole?: string
-  email: string
+  /** Optional: a department contact has no mailbox. */
+  email?: string
+  /** Internal extension, held apart from the dialable number. */
+  extension?: string
   officePhone?: string
   mobilePhone?: string
   pagerNumber?: string

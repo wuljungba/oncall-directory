@@ -213,8 +213,13 @@ public class AdDirectorySyncService : IAdDirectorySyncService
 
             // A different person may already hold this address — the unique index would
             // reject the insert and take the batch down with it. Report it as a conflict.
-            var emailTaken = await _db.Employees
-                .AnyAsync(e => e.Email == user.Email, ct);
+            // Guarded on both sides. Email is optional now, and SQL Server would not
+            // match NULL to NULL here but the in-memory provider used by the tests
+            // would -- so an email-less department contact could report every mailbox-less
+            // directory user as a conflict and skip them all.
+            var emailTaken = !string.IsNullOrWhiteSpace(user.Email)
+                && await _db.Employees.AnyAsync(
+                    e => e.Email != null && e.Email == user.Email, ct);
             if (emailTaken)
             {
                 skipped.Add($"{Describe(user)} — another directory record already uses that email address.");

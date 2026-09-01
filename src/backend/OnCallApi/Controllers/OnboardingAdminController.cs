@@ -51,8 +51,15 @@ public class OnboardingAdminController : ControllerBase
             if (string.IsNullOrWhiteSpace(emp.Source))
                 problems.Add("Missing Source classification");
 
+            // The email comparisons here and below are guarded on emp.Email being present
+            // BEFORE they run. string.Equals(null, null) is true, so an email-less
+            // department contact would otherwise match every principal that also has no
+            // address -- reading as a sign-in identity, and as somebody's permissions.
+            var hasEmail = !string.IsNullOrWhiteSpace(emp.Email);
+
             var hasIdentity = !string.IsNullOrEmpty(emp.AzureAdObjectId)
-                || localAccounts.Any(l => l.EmployeeId == emp.Id || string.Equals(l.Email, emp.Email, StringComparison.OrdinalIgnoreCase));
+                || localAccounts.Any(l => l.EmployeeId == emp.Id
+                    || (hasEmail && string.Equals(l.Email, emp.Email, StringComparison.OrdinalIgnoreCase)));
 
             var directoryOnly = emp.Source == "CsvImport" && !hasIdentity;
 
@@ -64,8 +71,9 @@ public class OnboardingAdminController : ControllerBase
             if (hasIdentity)
             {
                 var hasScheduleRead = grants.Any(g =>
-                    (string.Equals(g.ExternalPrincipalId, emp.Email, StringComparison.OrdinalIgnoreCase)
-                     || string.Equals(g.ExternalPrincipalId, emp.AzureAdObjectId, StringComparison.OrdinalIgnoreCase))
+                    ((hasEmail && string.Equals(g.ExternalPrincipalId, emp.Email, StringComparison.OrdinalIgnoreCase))
+                     || (!string.IsNullOrEmpty(emp.AzureAdObjectId)
+                         && string.Equals(g.ExternalPrincipalId, emp.AzureAdObjectId, StringComparison.OrdinalIgnoreCase)))
                     && (g.Permissions ?? string.Empty).Contains("Schedule.Read"));
 
                 if (!hasScheduleRead)
@@ -78,7 +86,7 @@ public class OnboardingAdminController : ControllerBase
                 {
                     Id = emp.Id,
                     Name = $"{emp.FirstName} {emp.LastName}".Trim(),
-                    Email = emp.Email,
+                    Email = emp.Email ?? string.Empty,
                     Source = source,
                     IsActive = emp.IsActive,
                     Problems = problems,

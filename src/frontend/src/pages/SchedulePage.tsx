@@ -907,12 +907,17 @@ function SwapModal({
     }
   }, [shift.schedule?.departmentId])
 
+  // A department contact ("3North") is a phone number, not a person: it cannot take a
+  // shift, cannot acknowledge an escalation, and has no identity to notify. Offering one
+  // here would put a dead end on the on-call roster.
+  const assignable = employees.filter(e => e.contactType !== 'Department')
+
   const filtered = search
-    ? employees.filter(e =>
+    ? assignable.filter(e =>
         `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
-        e.email.toLowerCase().includes(search.toLowerCase())
+        (e.email?.toLowerCase().includes(search.toLowerCase()) ?? false)
       )
-    : employees
+    : assignable
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -1090,13 +1095,18 @@ function AssignShiftModal({
       .catch(() => setLoadingEmployees(false))
   }, [])
 
+  // A department contact ("3North") is a phone number, not a person: it cannot take a
+  // shift, cannot acknowledge an escalation, and has no identity to notify. Offering one
+  // here would put a dead end on the on-call roster.
+  const assignable = employees.filter(e => e.contactType !== 'Department')
+
   const filtered = search
-    ? employees.filter(e =>
+    ? assignable.filter(e =>
         `${e.firstName} ${e.lastName}`.toLowerCase().includes(search.toLowerCase()) ||
-        e.email.toLowerCase().includes(search.toLowerCase()) ||
+        (e.email?.toLowerCase().includes(search.toLowerCase()) ?? false) ||
         e.title?.toLowerCase().includes(search.toLowerCase())
       )
-    : employees
+    : assignable
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

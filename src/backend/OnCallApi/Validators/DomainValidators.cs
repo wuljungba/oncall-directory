@@ -92,6 +92,88 @@ public static partial class PhoneValidation
         new(@"(?:\bx|\bext\.?|\bextension\b|#)\s*\d+\s*$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    /// <summary>
+    /// Separates "202-555-0134 x4412" into the number and the extension, so each can be
+    /// stored in the field that means it.
+    ///
+    /// <see cref="NormalizeToDialable"/> refuses such a value outright and is right to:
+    /// merging the two produced "+120255501344412", which passes E.164, clears the
+    /// dialable floor and would have been dialled. That refusal stays exactly as it is.
+    /// What was missing was a way to keep BOTH halves instead of losing the row, which is
+    /// what a directory full of desk lines actually needs.
+    ///
+    /// A bare extension ("x3434", "3434") yields a null number and a set extension; the
+    /// caller decides whether it has a dial plan to build a real number from. Nothing here
+    /// invents one.
+    /// </summary>
+    /// <returns>
+    /// The number with the extension removed (null when there was nothing but an
+    /// extension), and the extension digits (null when there was no extension).
+    /// </returns>
+    public static (string? Number, string? Extension) SplitExtension(string? phone)
+    {
+        if (string.IsNullOrWhiteSpace(phone)) return (null, null);
+
+        var value = phone.Trim();
+
+        var marker = ExtensionMarker.Match(value);
+        if (marker.Success)
+        {
+            var head = value[..marker.Index].Trim().TrimEnd(',', ';', '-', '.', '/').Trim();
+            var digits = new string(marker.Value.Where(char.IsDigit).ToArray());
+
+            return (string.IsNullOrWhiteSpace(head) ? null : head,
+                    digits.Length == 0 ? null : digits);
+        }
+
+        // No marker. A short all-digit value is a bare extension: too short to dial, and
+        // storing it as a number would put something undialable in the phone column.
+        var bare = new string(value.Where(char.IsDigit).ToArray());
+        if (bare.Length > 0
+            && bare.Length == value.Count(c => !char.IsWhiteSpace(c))
+            && bare.Length <= MaxBareExtensionDigits)
+        {
+            return (null, bare);
+        }
+
+        return (value, null);
+    }
+
+    /// <summary>
+    /// The longest all-digit value read as an extension rather than a phone number.
+    /// Deliberately below <see cref="MinimumDialableDigits"/>, so nothing that could be a
+    /// real number is ever demoted to an extension and quietly stops being dialled.
+    /// </summary>
+    private const int MaxBareExtensionDigits = 7;
+
+    /// <summary>
+    /// Builds the full external number for an extension, given a tenant's dial-plan prefix
+    /// (prefix "845568" + extension "3434" gives "+18455683434").
+    ///
+    /// Returns null when there is no prefix, when the extension holds no digits, or when
+    /// the result is not dialable. Never guesses: an outside caller dialling a fabricated
+    /// number reaches a stranger's switchboard, which is worse than the directory
+    /// admitting it only knows the internal extension.
+    /// </summary>
+    public static string? BuildNumberFromExtension(string? prefix, string? extension,
+        string defaultCountryCode = "1")
+    {
+        if (string.IsNullOrWhiteSpace(prefix) || string.IsNullOrWhiteSpace(extension))
+            return null;
+
+        var prefixDigits = new string(prefix.Where(char.IsDigit).ToArray());
+        var extensionDigits = new string(extension.Where(char.IsDigit).ToArray());
+        if (prefixDigits.Length == 0 || extensionDigits.Length == 0) return null;
+
+        // A prefix that already ends with the extension means the whole number was given
+        // as the prefix; concatenating would repeat the last digits.
+        var combined = prefixDigits.EndsWith(extensionDigits, StringComparison.Ordinal)
+            ? prefixDigits
+            : prefixDigits + extensionDigits;
+
+        return NormalizeToDialable(combined, defaultCountryCode);
+    }
+
     public static IRuleBuilderOptions<T, string?> E164Phone<T>(this IRuleBuilder<T, string?> ruleBuilder, string fieldName)
     {
         return ruleBuilder.Must(IsValidE164)
@@ -104,14 +186,52 @@ public class EmployeeValidator : AbstractValidator<Employee>
 {
     public EmployeeValidator()
     {
-        RuleFor(x => x.FirstName).NotEmpty().MaximumLength(100);
-        RuleFor(x => x.LastName).NotEmpty().MaximumLength(100);
-        RuleFor(x => x.Email).NotEmpty().EmailAddress().MaximumLength(256);
+        // A person still needs a name and an address. A "Department" contact is a unit
+        // reached by phone -- "3North", x3434 -- and has neither, so requiring them made
+        // such a contact impossible to store. What it must have instead is a label and
+        // some way to reach it, asserted below.
+        RuleFor(x => x.FirstName).NotEmpty().When(IsPerson).MaximumLength(100);
+        RuleFor(x => x.LastName).NotEmpty().When(IsPerson).MaximumLength(100);
+        RuleFor(x => x.Email).NotEmpty().When(IsPerson);
+        RuleFor(x => x.Email).EmailAddress().MaximumLength(256)
+            .When(x => !string.IsNullOrWhiteSpace(x.Email));
+
+        RuleFor(x => x.ContactType)
+            .Must(ContactType.IsKnown)
+            .WithMessage("ContactType must be either 'Person' or 'Department'.");
+
+        RuleFor(x => x.DisplayName)
+            .NotEmpty().When(x => !IsPerson(x))
+            .WithMessage("A department contact needs a name to show, e.g. '3North'.")
+            .MaximumLength(200);
+
+        // A department contact that reaches nobody is not worth storing: it looks like a
+        // route in the directory and is a dead end when someone dials it.
+        RuleFor(x => x)
+            .Must(x => !string.IsNullOrWhiteSpace(x.OfficePhone)
+                       || !string.IsNullOrWhiteSpace(x.MobilePhone)
+                       || !string.IsNullOrWhiteSpace(x.PagerNumber)
+                       || !string.IsNullOrWhiteSpace(x.Extension))
+            .When(x => !IsPerson(x))
+            .WithMessage("A department contact needs a phone number or an extension.");
+
+        RuleFor(x => x.Extension)
+            .Matches(@"^\d{1,16}$")
+            .WithMessage("Extension must be digits only, e.g. 3434.")
+            .When(x => !string.IsNullOrWhiteSpace(x.Extension));
         RuleFor(x => x.OfficePhone).E164Phone("Office phone");
         RuleFor(x => x.MobilePhone).E164Phone("Mobile phone");
         RuleFor(x => x.PagerNumber).E164Phone("Pager number");
         // AzureAdObjectId can be auto-generated or provided; both are valid
     }
+
+    /// <summary>
+    /// Anything that is not explicitly a department contact is treated as a person, so an
+    /// unset or unrecognised ContactType keeps the STRICTER rules rather than falling
+    /// through to the laxer ones.
+    /// </summary>
+    private static bool IsPerson(Employee employee) =>
+        employee.ContactType != ContactType.Department;
 }
 
 public class DepartmentValidator : AbstractValidator<Department>

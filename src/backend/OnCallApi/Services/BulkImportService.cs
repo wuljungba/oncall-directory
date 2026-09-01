@@ -60,6 +60,10 @@ public class BulkImportService
         if (errors.Count > 0)
             return Result(records.Count, 0, errors);
 
+        // Resolved once for the whole file: a per-row lookup would issue one query per
+        // contact for a value that cannot change mid-import.
+        var extensionPrefix = await DialPlan.ResolveExtensionPrefixAsync(_db, tenantId);
+
         var imported = 0;
         var rowIndex = 0;
         foreach (var row in records.OfType<EmployeeRow>())
@@ -75,13 +79,20 @@ public class BulkImportService
                     // are left alone rather than nulled -- see EmployeeRow.PresentColumns.
                     existing.FirstName = row.FirstName;
                     existing.LastName = row.LastName;
-                    existing.Email = row.Email;
+                    // Guarded like every other optional column: now that email can be
+                    // absent, an unguarded write let a narrower follow-up file erase the
+                    // address of everyone it listed while reporting complete success.
+                    if (row.PresentColumns.Contains("email")) existing.Email = row.Email;
+                    if (row.PresentColumns.Contains("contactType")) existing.ContactType = row.ContactType;
+                    if (row.PresentColumns.Contains("displayName")) existing.DisplayName = row.DisplayName;
+                    if (row.PresentColumns.Contains("extension")) existing.Extension = row.Extension;
                     if (row.PresentColumns.Contains("title")) existing.Title = row.Title;
                     if (row.PresentColumns.Contains("officePhone")) existing.OfficePhone = row.OfficePhone;
                     if (row.PresentColumns.Contains("mobilePhone")) existing.MobilePhone = row.MobilePhone;
                     if (row.PresentColumns.Contains("officeLocation")) existing.OfficeLocation = row.OfficeLocation;
                     if (row.PresentColumns.Contains("departmentId") || row.PresentColumns.Contains("department"))
                         existing.DepartmentId = row.DepartmentId;
+                    DialPlan.ApplyExtensionPrefix(existing, extensionPrefix);
                     // TenantId is deliberately NOT reassigned. It used to be set to the
                     // importer's tenant, which meant uploading a file containing another
                     // customer's employee email silently moved that person into your
@@ -91,11 +102,14 @@ public class BulkImportService
                 }
                 else
                 {
-                    _db.Employees.Add(new Employee
+                    var created = new Employee
                     {
                         AzureAdObjectId = row.AzureAdObjectId,
                         FirstName = row.FirstName,
                         LastName = row.LastName,
+                        ContactType = row.ContactType,
+                        DisplayName = row.DisplayName,
+                        Extension = row.Extension,
                         Title = row.Title,
                         Email = row.Email,
                         OfficePhone = row.OfficePhone,
@@ -105,7 +119,14 @@ public class BulkImportService
                         TenantId = tenantId,
                         Source = "CsvImport",
                         LastSyncedAt = DateTime.UtcNow,
-                    });
+                    };
+
+                    // A row that gave only "x3434" gets a dialable number when the
+                    // subscription has a dial plan, and keeps just the extension when it
+                    // does not. See DialPlan for why nothing is invented.
+                    DialPlan.ApplyExtensionPrefix(created, extensionPrefix);
+
+                    _db.Employees.Add(created);
                     _logger.LogDebug("Created employee {EmployeeName}", row.AzureAdObjectId);
                 }
                 imported++;
@@ -322,6 +343,24 @@ public class BulkImportService
         ["worklocation"] = "officeLocation",
         ["location"] = "officeLocation",
         ["office"] = "officeLocation",
+
+        // A unit/service-line row ("3North") carries a label rather than a person's name.
+        ["displayname"] = "displayName",
+        ["contactname"] = "displayName",
+        ["unit"] = "displayName",
+        ["ward"] = "displayName",
+        ["floor"] = "displayName",
+        ["label"] = "displayName",
+
+        ["ext"] = "extension",
+        ["ext."] = "extension",
+        ["extn"] = "extension",
+        ["x"] = "extension",
+        ["deskextension"] = "extension",
+        ["phoneextension"] = "extension",
+
+        ["type"] = "contactType",
+        ["recordtype"] = "contactType",
     };
 
     /// <summary>
@@ -370,8 +409,12 @@ public class BulkImportService
     /// <summary>Checks for duplicate emails within the CSV data and adds errors.</summary>
     private static void CheckDuplicateEmails(List<object> records, List<string> errors)
     {
+        // Rows with no email are excluded rather than grouped: several department
+        // contacts legitimately have none, and grouping them together would report a
+        // dozen units as "the same duplicate address" and fail the whole import.
         var duplicateEmails = records.OfType<EmployeeRow>()
-            .GroupBy(r => r.Email, StringComparer.OrdinalIgnoreCase)
+            .Where(r => !string.IsNullOrWhiteSpace(r.Email))
+            .GroupBy(r => r.Email!, StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1)
             .Select(g => g.Key)
             .ToList();
@@ -453,7 +496,7 @@ public class BulkImportService
         foreach (var row in records.OfType<EmployeeRow>())
         {
             if (row.DepartmentId.HasValue && !validIds.Contains(row.DepartmentId.Value))
-                errors.Add($"departmentId {row.DepartmentId} does not exist for '{row.Email}'.");
+                errors.Add($"departmentId {row.DepartmentId} does not exist for '{Describe(row)}'.");
         }
     }
 
@@ -481,6 +524,7 @@ public class BulkImportService
         var emails = records.OfType<EmployeeRow>()
             .Select(r => r.Email)
             .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (emails.Count == 0) return;
@@ -490,7 +534,7 @@ public class BulkImportService
         // (which leaves TenantId null) permanently un-importable by a scoped admin, with a
         // message telling them it belonged to someone else.
         var foreign = await _db.Employees
-            .Where(e => emails.Contains(e.Email))
+            .Where(e => e.Email != null && emails.Contains(e.Email))
             .Where(e => e.TenantId.HasValue && !allowedTenantIds.Contains(e.TenantId.Value))
             .Select(e => e.Email)
             .ToListAsync();
@@ -522,15 +566,19 @@ public class BulkImportService
         if (existing != null)
             return existing;
 
-        // For synthetic IDs (no real Azure AD link), deduplicate by email
-        if (row.AzureAdObjectId.StartsWith("csv-import-", StringComparison.Ordinal))
+        // For synthetic IDs (no real Azure AD link), deduplicate by email -- but only
+        // when the row HAS one. Matching on a null address would let the first
+        // email-less department contact swallow every later one, so re-importing a
+        // sheet of twelve units would repeatedly overwrite a single row.
+        if (row.AzureAdObjectId.StartsWith("csv-import-", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(row.Email))
         {
             // Compared case-insensitively on purpose: SQLite matches case-sensitively by
             // default, so JANE@x.org and jane@x.org became two records for one clinician,
             // while SQL Server's collation would instead reject the insert outright.
-            var email = row.Email.ToLowerInvariant();
+            var email = row.Email!.ToLowerInvariant();
             existing = await candidates
-                .FirstOrDefaultAsync(e => e.Email.ToLower() == email);
+                .FirstOrDefaultAsync(e => e.Email != null && e.Email.ToLower() == email);
             if (existing != null)
                 _logger.LogDebug("Deduplicated by email for synthetic ID on '{Email}'", row.Email);
         }
@@ -568,6 +616,13 @@ public class BulkImportService
         return (normalized, null);
     }
 
+    /// <summary>Names a row in an error message without assuming it has an email.</summary>
+    private static string Describe(EmployeeRow row) =>
+        !string.IsNullOrWhiteSpace(row.Email) ? row.Email!
+        : !string.IsNullOrWhiteSpace(row.DisplayName) ? row.DisplayName!
+        : $"{row.FirstName} {row.LastName}".Trim() is { Length: > 0 } name ? name
+        : "(unnamed row)";
+
     private static (EmployeeRow? Record, string? Error) ParseEmployeeRow(Dictionary<string, string> row)
     {
         var azureAdId = row.GetValueOrDefault("azureAdObjectId", "")?.Trim() ?? "";
@@ -576,23 +631,70 @@ public class BulkImportService
 
         var firstName = row.GetValueOrDefault("firstName", "")?.Trim() ?? "";
         var lastName = row.GetValueOrDefault("lastName", "")?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
-            return (null, "firstName and lastName are required.");
+        var displayName = row.GetValueOrDefault("displayName")?.Trim();
+
+        // An extension is split off BEFORE normalization rather than failing the row.
+        // "845-568-3434 x3434" used to be rejected outright as undialable, which lost the
+        // whole contact; now the number and the extension are each kept in the field that
+        // means them. A dedicated extension column wins over one found in the phone cell.
+        var (officeRaw, officeExtension) =
+            PhoneValidation.SplitExtension(row.GetValueOrDefault("officePhone"));
+        var (mobileRaw, mobileExtension) =
+            PhoneValidation.SplitExtension(row.GetValueOrDefault("mobilePhone"));
+
+        var extensionCell = row.GetValueOrDefault("extension")?.Trim();
+        var extension = !string.IsNullOrWhiteSpace(extensionCell)
+            ? new string(extensionCell.Where(char.IsDigit).ToArray())
+            : officeExtension ?? mobileExtension;
+        if (string.IsNullOrWhiteSpace(extension)) extension = null;
 
         // Normalize rather than reject. A hospital's HR export contains "(202) 555-0134"
         // and "202-555-0134", not E.164 — insisting on canonical form made every row of a
         // real export fail, on the very path the onboarding standard recommends for staff
         // who are not in Entra. The same helper already normalizes numbers arriving from
         // Graph, so both ingestion paths now agree.
-        var (officePhone, officeError) = NormalizeImportedPhone(row.GetValueOrDefault("officePhone"), "officePhone");
+        var (officePhone, officeError) = NormalizeImportedPhone(officeRaw, "officePhone");
         if (officeError != null) return (null, officeError);
 
-        var (mobilePhone, mobileError) = NormalizeImportedPhone(row.GetValueOrDefault("mobilePhone"), "mobilePhone");
+        var (mobilePhone, mobileError) = NormalizeImportedPhone(mobileRaw, "mobilePhone");
         if (mobileError != null) return (null, mobileError);
 
         var email = row.GetValueOrDefault("email", "")?.Trim() ?? "";
-        if (string.IsNullOrWhiteSpace(email))
-            return (null, "email is required.");
+
+        // What kind of row is this? An explicit contactType column decides it; otherwise a
+        // row with no person's name and no email, but a label and a way to be reached, is
+        // a unit or service line ("3North", x3434) rather than a broken employee row.
+        var declaredType = row.GetValueOrDefault("contactType")?.Trim();
+        var reachable = !string.IsNullOrWhiteSpace(officePhone)
+            || !string.IsNullOrWhiteSpace(mobilePhone)
+            || !string.IsNullOrWhiteSpace(extension);
+
+        var isDepartmentContact = !string.IsNullOrWhiteSpace(declaredType)
+            ? string.Equals(declaredType, ContactType.Department, StringComparison.OrdinalIgnoreCase)
+            : string.IsNullOrWhiteSpace(firstName)
+              && string.IsNullOrWhiteSpace(lastName)
+              && string.IsNullOrWhiteSpace(email)
+              && !string.IsNullOrWhiteSpace(displayName)
+              && reachable;
+
+        if (isDepartmentContact)
+        {
+            if (string.IsNullOrWhiteSpace(displayName))
+                return (null, "A department contact needs a name to show, e.g. '3North'.");
+            if (!reachable)
+                return (null, $"'{displayName}' has no phone number or extension, so nothing could reach it.");
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
+                return (null, "firstName and lastName are required.");
+
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                return (null, "email is required. For a unit or service line with no mailbox, "
+                    + "give it a displayName and a phone number or extension instead.");
+            }
+        }
 
         // Parse departmentId
         var deptIdStr = row.GetValueOrDefault("departmentId")?.Trim();
@@ -612,8 +714,11 @@ public class BulkImportService
             AzureAdObjectId = azureAdId,
             FirstName = firstName,
             LastName = lastName,
+            ContactType = isDepartmentContact ? ContactType.Department : ContactType.Person,
+            DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
+            Extension = extension,
             Title = row.GetValueOrDefault("title")?.Trim(),
-            Email = email,
+            Email = string.IsNullOrWhiteSpace(email) ? null : email,
             OfficePhone = string.IsNullOrWhiteSpace(officePhone) ? null : officePhone,
             MobilePhone = string.IsNullOrWhiteSpace(mobilePhone) ? null : mobilePhone,
             OfficeLocation = row.GetValueOrDefault("officeLocation")?.Trim(),
@@ -658,7 +763,19 @@ public class BulkImportService
         public string FirstName { get; init; } = string.Empty;
         public string LastName { get; init; } = string.Empty;
         public string? Title { get; init; }
-        public string Email { get; init; } = string.Empty;
+
+        /// <summary>Optional: a department/unit contact has no mailbox.</summary>
+        public string? Email { get; init; }
+
+        /// <summary>"Person" or "Department" -- see <see cref="Models.ContactType"/>.</summary>
+        public string ContactType { get; init; } = Models.ContactType.Person;
+
+        /// <summary>The label shown for a row that is not a person ("3North").</summary>
+        public string? DisplayName { get; init; }
+
+        /// <summary>Internal extension digits, held apart from the dialable number.</summary>
+        public string? Extension { get; init; }
+
         public string? OfficePhone { get; init; }
         public string? MobilePhone { get; init; }
         public string? OfficeLocation { get; init; }

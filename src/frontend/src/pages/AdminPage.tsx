@@ -300,7 +300,8 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
     const q = search.toLowerCase()
     return e.firstName.toLowerCase().includes(q)
       || e.lastName.toLowerCase().includes(q)
-      || e.email.toLowerCase().includes(q)
+      || (e.displayName?.toLowerCase().includes(q) ?? false)
+      || (e.email?.toLowerCase().includes(q) ?? false)
       || (e.title && e.title.toLowerCase().includes(q))
   })
 

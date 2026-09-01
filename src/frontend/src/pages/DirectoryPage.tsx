@@ -7,7 +7,8 @@ import { downloadCsv } from '@/utils/download'
 import { useToast } from '@/components/Toast'
 import { isValidE164 } from '@/utils/validation'
 import { presenceLabel } from '@/utils/presence'
-import type { Employee, Department, Tenant } from '@/types'
+import { contactName, contactInitials } from '@/utils/contacts'
+import type { Employee, Department, Tenant, ContactType } from '@/types'
 
 export default function DirectoryPage() {
   const { canDirectoryWrite, isAdmin, canTenantManage, activeTenantId } = useAuth()
@@ -68,15 +69,20 @@ export default function DirectoryPage() {
 
   function handleDownloadTemplate() {
     const headers = [
-      'azureAdObjectId', 'firstName', 'lastName', 'email', 'title',
-      'officePhone', 'mobilePhone', 'officeLocation', 'departmentId',
+      'azureAdObjectId', 'firstName', 'lastName', 'displayName', 'email', 'title',
+      'officePhone', 'mobilePhone', 'extension', 'officeLocation', 'departmentId',
     ]
-    const sampleRow = [
-      '', 'Jane', 'Smith', 'jane.smith@hospital.org', 'Attending Physician',
-      '+12025551234', '+12025555678', 'Floor 3 - West Wing', '1',
+    const personRow = [
+      '', 'Jane', 'Smith', '', 'jane.smith@hospital.org', 'Attending Physician',
+      '+12025551234', '+12025555678', '', 'Floor 3 - West Wing', '1',
+    ]
+    // A unit or service line: a label and a number, no name and no mailbox.
+    const unitRow = [
+      '', '', '', '3North', '', '',
+      '845-568-3434', '', '3434', 'Floor 3 - North Wing', '1',
     ]
 
-    downloadCsv('employee-import-template.csv', [headers, sampleRow])
+    downloadCsv('employee-import-template.csv', [headers, personRow, unitRow])
   }
 
   async function handleUpdateEmployee(id: string, data: Partial<Employee>) {
@@ -197,8 +203,7 @@ export default function DirectoryPage() {
                   <div className="flex items-center gap-3">
                     <div className="relative">
                       <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-medium">
-                        {emp.firstName?.charAt(0)}
-                        {emp.lastName?.charAt(0)}
+                        {contactInitials(emp)}
                       </div>
                       <div
                         className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-gray-900 ${presenceColor(emp.presence)}`}
@@ -207,7 +212,7 @@ export default function DirectoryPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">
-                        {emp.firstName} {emp.lastName}
+                        {contactName(emp)}
                       </p>
                       <p className="text-xs text-gray-500 truncate">
                         {emp.title} {emp.department ? `· ${emp.department.name}` : ''}
@@ -231,11 +236,10 @@ export default function DirectoryPage() {
             <div className="space-y-5">
               <div className="text-center">
                 <div className="w-16 h-16 rounded-full bg-gray-700 flex items-center justify-center text-xl font-medium mx-auto">
-                  {selectedEmployee.firstName?.charAt(0)}
-                  {selectedEmployee.lastName?.charAt(0)}
+                  {contactInitials(selectedEmployee)}
                 </div>
                 <h2 className="text-lg font-medium mt-3">
-                  {selectedEmployee.firstName} {selectedEmployee.lastName}
+                  {contactName(selectedEmployee)}
                 </h2>
                 <p className="text-sm text-gray-500">{selectedEmployee.title}</p>
                 {selectedEmployee.onCallStatus && (
@@ -272,7 +276,7 @@ export default function DirectoryPage() {
                 )}
                 <div className="flex items-center gap-3 text-sm">
                   <Mail className="w-4 h-4 text-gray-500" />
-                  <span>{selectedEmployee.email}</span>
+                  <span>{selectedEmployee.email ?? 'No email on file'}</span>
                 </div>
                 <div className="flex items-center gap-3 text-sm">
                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${presenceColor(selectedEmployee.presence)}`} />
@@ -305,18 +309,26 @@ export default function DirectoryPage() {
                     Edit
                   </button>
                 )}
-                <a
-                  href={`tel:${selectedEmployee.officePhone || selectedEmployee.mobilePhone}`}
-                  className="flex-1 text-center px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
-                >
-                  Call
-                </a>
-                <a
-                  href={`mailto:${selectedEmployee.email}`}
-                  className="flex-1 text-center px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
-                >
-                  Email
-                </a>
+                {(selectedEmployee.officePhone || selectedEmployee.mobilePhone) && (
+                  <a
+                    href={`tel:${selectedEmployee.officePhone || selectedEmployee.mobilePhone}`}
+                    className="flex-1 text-center px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Call
+                  </a>
+                )}
+                {/* A department contact has no mailbox. A mailto: with nothing after it
+                    opens an empty draft, which reads as the app losing the address rather
+                    than there never having been one. */}
+                {selectedEmployee.email && (
+                  <a
+                    href={`mailto:${selectedEmployee.email}`}
+                    className="flex-1 text-center px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Email
+                  </a>
+                )}
+                {selectedEmployee.email && (
                 <a
                   href={`https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(selectedEmployee.email)}`}
                   target="_blank"
@@ -326,6 +338,7 @@ export default function DirectoryPage() {
                 >
                   <MessageSquare className="w-4 h-4 inline-block" />
                 </a>
+                )}
               </div>
             </div>
           ) : (
@@ -343,7 +356,7 @@ export default function DirectoryPage() {
         isOpen={showImport}
         onClose={() => { setShowImport(false); reloadEmployees() }}
         title="Import Employees"
-        description="Upload a CSV or Excel (.xlsx) file of employee data. Columns: firstName, lastName, email, title, officePhone, mobilePhone, officeLocation, departmentId, and azureAdObjectId (optional — leave blank for manual accounts). Everyday headings such as 'First Name' and 'Work Email' are understood too, and any column not listed here is ignored. Phone numbers are accepted in ordinary form, e.g. (202) 555-0134."
+        description="Upload a CSV or Excel (.xlsx) file of directory data. Columns: firstName, lastName, email, title, officePhone, mobilePhone, extension, officeLocation, departmentId, and azureAdObjectId (optional — leave blank for manual accounts). Everyday headings such as 'First Name' and 'Work Email' are understood too, and any column not listed here is ignored. Phone numbers are accepted in ordinary form, e.g. (202) 555-0134, and an extension such as 'x3434' is kept in its own field rather than dialled. For a unit or service line with no mailbox, give it a displayName and a phone number or extension and leave the name and email blank."
         extra={canPickTenant ? (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Subscription (tenant) to import into</label>
@@ -399,8 +412,12 @@ function EditEmployeeModal({
   onClose: () => void
 }) {
   const isEditing = employee !== null
+  const [contactType, setContactType] = useState<ContactType>(employee?.contactType || 'Person')
+  const isPerson = contactType === 'Person'
   const [firstName, setFirstName] = useState(employee?.firstName || '')
   const [lastName, setLastName] = useState(employee?.lastName || '')
+  const [displayName, setDisplayName] = useState(employee?.displayName || '')
+  const [extension, setExtension] = useState(employee?.extension || '')
   const [email, setEmail] = useState(employee?.email || '')
   const [title, setTitle] = useState(employee?.title || '')
   const [specialty, setSpecialty] = useState(employee?.specialty || '')
@@ -414,16 +431,29 @@ function EditEmployeeModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!firstName.trim() || !lastName.trim()) { setError('First and last name are required.'); return }
-    if (!email.trim()) { setError('Email is required.'); return }
+    if (isPerson) {
+      if (!firstName.trim() || !lastName.trim()) { setError('First and last name are required.'); return }
+      if (!email.trim()) { setError('Email is required.'); return }
+    } else {
+      // A unit that dials nowhere is worse than absent: it looks like a route someone
+      // can use, and finding out otherwise takes a failed call.
+      if (!displayName.trim()) { setError('A department contact needs a name, e.g. "3North".'); return }
+      if (!officePhone.trim() && !mobilePhone.trim() && !extension.trim()) {
+        setError('A department contact needs a phone number or an extension.')
+        return
+      }
+    }
 
     setSaving(true)
     setError(null)
     try {
       const data: Partial<Employee> = {
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        email: email.trim(),
+        contactType,
+        firstName: isPerson ? firstName.trim() : '',
+        lastName: isPerson ? lastName.trim() : '',
+        displayName: isPerson ? undefined : displayName.trim(),
+        extension: extension.trim() || undefined,
+        email: isPerson ? email.trim() : undefined,
         title: title.trim() || undefined,
         specialty: specialty.trim() || undefined,
         clinicalRole: clinicalRole.trim() || undefined,
@@ -465,6 +495,46 @@ function EditEmployeeModal({
             </div>
           )}
 
+          <div>
+            <span className="block text-sm text-gray-500 mb-1">Contact type</span>
+            <div className="flex gap-2">
+              {(['Person', 'Department'] as ContactType[]).map((type) => (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setContactType(type)}
+                  className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    contactType === type
+                      ? 'bg-amber-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                  }`}
+                >
+                  {type === 'Person' ? 'Person' : 'Unit / department'}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-gray-600 mt-1">
+              {isPerson
+                ? 'Someone who can be paged and may sign in.'
+                : 'A unit or service line reached by phone, e.g. 3North at extension 3434. No email or sign-in.'}
+            </p>
+          </div>
+
+          {!isPerson && (
+            <div>
+              <label htmlFor="emp-display-name" className="block text-sm text-gray-500 mb-1">Name</label>
+              <input
+                id="emp-display-name"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="e.g., 3North"
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+              />
+            </div>
+          )}
+
+          {isPerson && (
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label htmlFor="emp-first-name" className="block text-sm text-gray-500 mb-1">First Name</label>
@@ -489,7 +559,9 @@ function EditEmployeeModal({
               />
             </div>
           </div>
+          )}
 
+          {isPerson && (
           <div>
             <label htmlFor="emp-email" className="block text-sm text-gray-500 mb-1">Email</label>
             <input
@@ -500,6 +572,25 @@ function EditEmployeeModal({
               onChange={(e) => setEmail(e.target.value)}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
             />
+          </div>
+          )}
+
+          <div>
+            <label htmlFor="emp-extension" className="block text-sm text-gray-500 mb-1">
+              Extension <span className="text-gray-600">(optional)</span>
+            </label>
+            <input
+              id="emp-extension"
+              type="text"
+              inputMode="numeric"
+              value={extension}
+              onChange={(e) => setExtension(e.target.value)}
+              placeholder="e.g., 3434"
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
+            />
+            <p className="text-xs text-gray-600 mt-1">
+              Digits only. Kept separate from the phone number so it is never dialled as one.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">

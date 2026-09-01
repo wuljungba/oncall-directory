@@ -940,6 +940,50 @@ using (var scope = app.Services.CreateScope())
                 CREATE INDEX IX_DebriefNotes_PhoneTreeEventId ON dbo.DebriefNotes (PhoneTreeEventId);
             END;
             """,
+            // Employees: department/unit contacts. A unit reached by phone ("3North",
+            // x3434) has a label and a number but no person's name, so DisplayName and
+            // Extension are added and ContactType tells the two kinds of row apart.
+            // ContactType is NOT NULL with a default, matching Source above: the model
+            // reads it as a non-nullable string, and a NULL row crashes every SELECT.
+            """
+            IF COL_LENGTH(N'dbo.Employees', N'DisplayName') IS NULL
+                ALTER TABLE dbo.Employees ADD DisplayName nvarchar(200) NULL;
+            IF COL_LENGTH(N'dbo.Employees', N'Extension') IS NULL
+                ALTER TABLE dbo.Employees ADD Extension nvarchar(16) NULL;
+            IF COL_LENGTH(N'dbo.Employees', N'ContactType') IS NULL
+                ALTER TABLE dbo.Employees ADD ContactType nvarchar(20) NOT NULL
+                    CONSTRAINT DF_Employees_ContactType DEFAULT N'Person';
+            """,
+            // Employees.Email becomes optional, and its unique index gains a filter.
+            //
+            // Order matters and all three steps belong in one statement: the column
+            // cannot be altered while an index depends on it, and dropping the index
+            // without recreating it would leave the directory with no uniqueness
+            // guarantee on email at all -- which is what stops one clinician being
+            // imported twice. An UNFILTERED unique index also collides on the second
+            // email-less contact, so a database that kept the old index would reject
+            // exactly the rows this change exists to allow.
+            //
+            // Each step is guarded on its own state, so this is a no-op once applied.
+            """
+            IF EXISTS (SELECT 1 FROM sys.indexes
+                       WHERE name = N'IX_Employees_Email'
+                         AND object_id = OBJECT_ID(N'dbo.Employees')
+                         AND has_filter = 0)
+                DROP INDEX IX_Employees_Email ON dbo.Employees;
+
+            IF EXISTS (SELECT 1 FROM sys.columns
+                       WHERE object_id = OBJECT_ID(N'dbo.Employees')
+                         AND name = N'Email'
+                         AND is_nullable = 0)
+                ALTER TABLE dbo.Employees ALTER COLUMN Email nvarchar(256) NULL;
+
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes
+                           WHERE name = N'IX_Employees_Email'
+                             AND object_id = OBJECT_ID(N'dbo.Employees'))
+                CREATE UNIQUE INDEX IX_Employees_Email ON dbo.Employees (Email)
+                    WHERE Email IS NOT NULL;
+            """,
         })
         {
             try

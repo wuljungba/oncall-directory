@@ -54,6 +54,12 @@ public class DirectoryService : IDirectoryService
         if (!string.IsNullOrWhiteSpace(query))
         {
             var search = query.ToLower();
+
+            // Unit names are written every which way -- "3North", "3 North", "3-North" --
+            // and whoever is searching has no idea which the import happened to use. Both
+            // sides drop spaces and punctuation so all three spellings find each other.
+            var compact = new string(query.Where(char.IsLetterOrDigit).ToArray()).ToLower();
+
             q = q.Where(e =>
                 e.FirstName.ToLower().Contains(search) ||
                 e.LastName.ToLower().Contains(search) ||
@@ -61,7 +67,12 @@ public class DirectoryService : IDirectoryService
                 (e.Specialty != null && e.Specialty.ToLower().Contains(search)) ||
                 (e.ClinicalRole != null && e.ClinicalRole.ToLower().Contains(search)) ||
                 (e.OfficeLocation != null && e.OfficeLocation.ToLower().Contains(search)) ||
-                e.Email.ToLower().Contains(search) ||
+                (e.Email != null && e.Email.ToLower().Contains(search)) ||
+                (e.DisplayName != null && e.DisplayName.ToLower().Contains(search)) ||
+                (compact.Length > 0 && e.DisplayName != null
+                    && e.DisplayName.ToLower().Replace(" ", "").Replace("-", "").Replace(".", "")
+                        .Contains(compact)) ||
+                (e.Extension != null && e.Extension.Contains(search)) ||
                 (e.Department != null && e.Department.Name.ToLower().Contains(search)));
         }
 
@@ -95,10 +106,15 @@ public class DirectoryService : IDirectoryService
 
     public async Task<Employee?> GetEmployeeByEmailAsync(string email)
     {
+        // No address, no match. Email is optional now, and comparing null to null would
+        // otherwise hand back an arbitrary department contact for a blank lookup.
+        if (string.IsNullOrWhiteSpace(email)) return null;
+
+        var normalized = email.ToLower();
         var q = await ScopeEmployeesAsync(_db.Employees
             .AsNoTracking()
             .Include(e => e.Department)
-            .Where(e => e.Email.ToLower() == email.ToLower()));
+            .Where(e => e.Email != null && e.Email.ToLower() == normalized));
 
         return await q.FirstOrDefaultAsync();
     }

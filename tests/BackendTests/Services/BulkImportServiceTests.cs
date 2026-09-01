@@ -159,14 +159,14 @@ public class BulkImportServiceTests
     }
 
     [Theory]
-    [InlineData("ext. 4412")]
-    [InlineData("4412")]
     [InlineData("555-1234")]
     [InlineData("not a phone")]
     public async Task ValidateEmployees_StillRejectsUndialableNumbers(string phone)
     {
-        // Normalizing must not become "accept anything": an extension or a 7-digit local
-        // fragment would be promoted to a well-formed number that reaches nobody.
+        // Normalizing must not become "accept anything": a 7-digit local fragment would be
+        // promoted to a well-formed number that reaches nobody. Note what is NOT in this
+        // list any more -- an extension is now recognised and kept rather than rejected,
+        // which is a different outcome from being silently dialled. See the test below.
         var db = CreateDbContext();
         var service = CreateService(db);
 
@@ -176,6 +176,34 @@ public class BulkImportServiceTests
 
         result.IsValid.Should().BeFalse($"'{phone}' cannot be dialled");
         result.Errors.Should().Contain(e => e.Contains("officePhone"));
+    }
+
+    /// <summary>
+    /// An extension in the phone column is captured, not thrown away with the row.
+    ///
+    /// A four-digit desk extension is what a hospital export actually contains, and
+    /// refusing the row lost the whole person. It is kept in the extension field, and the
+    /// phone column is left EMPTY rather than filled with something undialable -- which is
+    /// the property that keeps a code call from being sent somewhere it cannot arrive.
+    /// </summary>
+    [Theory]
+    [InlineData("ext. 4412", "4412")]
+    [InlineData("4412", "4412")]
+    [InlineData("x3434", "3434")]
+    public async Task ImportEmployees_BareExtensionIsCapturedNotDialled(string phone, string expected)
+    {
+        var db = CreateDbContext();
+        var service = CreateService(db);
+
+        var csv = "azureAdObjectId,firstName,lastName,email,officePhone\n" +
+                   $"obj-1,Jane,Smith,jane@test.com,{phone}";
+        var result = await service.ImportEmployeesAsync(CsvToStream(csv));
+
+        result.IsValid.Should().BeTrue(string.Join("; ", result.Errors));
+
+        var employee = await db.Employees.AsNoTracking().SingleAsync();
+        employee.Extension.Should().Be(expected);
+        employee.OfficePhone.Should().BeNull("an extension on its own is not a dialable number");
     }
 
     [Fact]

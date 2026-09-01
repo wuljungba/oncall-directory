@@ -42,7 +42,13 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Employee>(e =>
         {
             e.HasIndex(x => x.AzureAdObjectId).IsUnique().HasFilter("[AzureAdObjectId] IS NOT NULL AND [AzureAdObjectId] != ''");
-            e.HasIndex(x => x.Email).IsUnique();
+            // FILTERED, because Email is now optional. An unfiltered unique index treats
+            // every NULL as a value to be unique against on SQL Server, so the SECOND
+            // email-less department contact ("3North", "4West") collides with the first
+            // and the whole import rolls back. The filter keeps the real guarantee -- one
+            // clinician cannot be imported twice under the same address -- while leaving
+            // contacts that have no address alone.
+            e.HasIndex(x => x.Email).IsUnique().HasFilter("[Email] IS NOT NULL");
 
             e.Property(x => x.Certifications).HasDefaultValue("[]");
             e.Property(x => x.Languages).HasDefaultValue("[]");

@@ -153,6 +153,78 @@ public class AdminService : IAdminService
         return normalized;
     }
 
+    /// <summary>
+    /// Anything unrecognised becomes "Person", the stricter of the two. A typo in this
+    /// field must not be a way to create a row that skips the name and email checks.
+    /// </summary>
+    private static string ResolveContactType(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return ContactType.Person;
+
+        return string.Equals(raw.Trim(), ContactType.Department, StringComparison.OrdinalIgnoreCase)
+            ? ContactType.Department
+            : ContactType.Person;
+    }
+
+    /// <summary>Keeps the digits of an extension, or reports what is wrong with it.</summary>
+    private static string? NormalizeExtensionOrThrow(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var (_, extension) = PhoneValidation.SplitExtension(raw);
+
+        // A value that survives with no extension found is something like "555-0134" -- a
+        // full number typed into the extension box, which would be dialled internally and
+        // reach nobody. Say so rather than storing it.
+        if (extension == null)
+        {
+            throw new ValidationException(
+                $"Extension '{raw.Trim()}' is not an extension. Enter digits only, e.g. 3434.");
+        }
+
+        return extension;
+    }
+
+    /// <summary>
+    /// Enforces what the request DTOs no longer can, now that name and email are optional
+    /// there: a person still needs a name and an address, and a department contact needs a
+    /// label and some way to be reached.
+    ///
+    /// Without the second half a "Department" row is a name in the directory that dials
+    /// nowhere -- worse than absent, because it looks like a route someone can use.
+    /// </summary>
+    private static void RequireContactShape(
+        string contactType, string? firstName, string? lastName, string? email,
+        string? displayName, string? officePhone, string? mobilePhone, string? pagerNumber,
+        string? extension)
+    {
+        if (contactType == ContactType.Department)
+        {
+            if (string.IsNullOrWhiteSpace(displayName))
+                throw new ValidationException("A department contact needs a name to show, e.g. '3North'.");
+
+            var reachable = !string.IsNullOrWhiteSpace(officePhone)
+                || !string.IsNullOrWhiteSpace(mobilePhone)
+                || !string.IsNullOrWhiteSpace(pagerNumber)
+                || !string.IsNullOrWhiteSpace(extension);
+
+            if (!reachable)
+                throw new ValidationException("A department contact needs a phone number or an extension.");
+
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
+            throw new ValidationException("First name and last name are required.");
+
+        if (string.IsNullOrWhiteSpace(email))
+        {
+            throw new ValidationException(
+                "Email is required for a person. To add a unit or service line instead, "
+                + "set contactType to 'Department'.");
+        }
+    }
+
     // ── Employees ──
 
     public async Task<List<Employee>> GetAllEmployeesAsync(bool includeInactive = false)
@@ -195,12 +267,19 @@ public class AdminService : IAdminService
         var tenantId = await ResolveCreateTenantId(request.TenantId);
         await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId);
 
+        var contactType = ResolveContactType(request.ContactType);
+        var extension = NormalizeExtensionOrThrow(request.Extension);
+        RequireContactShape(contactType, request.FirstName, request.LastName,
+            request.Email, request.DisplayName, request.OfficePhone, request.MobilePhone,
+            request.PagerNumber, extension);
+
         // One employee per email (onboarding standard). Prevents duplicate directory
         // entries for the same person no matter which path creates them.
         if (!string.IsNullOrWhiteSpace(request.Email))
         {
+            var candidate = request.Email.ToLowerInvariant().Trim();
             var existingEmail = await _db.Employees
-                .AnyAsync(e => e.Email.ToLower() == request.Email.ToLowerInvariant().Trim());
+                .AnyAsync(e => e.Email != null && e.Email.ToLower() == candidate);
             if (existingEmail)
                 throw new InvalidOperationException("An employee with this email already exists.");
         }
@@ -209,9 +288,12 @@ public class AdminService : IAdminService
         {
             Id = Guid.NewGuid(),
             AzureAdObjectId = request.AzureAdObjectId ?? string.Empty,
-            FirstName = request.FirstName,
-            LastName = request.LastName,
-            Email = request.Email,
+            FirstName = request.FirstName ?? string.Empty,
+            LastName = request.LastName ?? string.Empty,
+            Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim(),
+            ContactType = contactType,
+            DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim(),
+            Extension = extension,
             Title = request.Title,
             Specialty = request.Specialty,
             ClinicalRole = request.ClinicalRole,
@@ -230,6 +312,11 @@ public class AdminService : IAdminService
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow,
         };
+
+        // Same rule as the importer: an extension with no number becomes a dialable
+        // number only when the subscription has a dial plan to build one from.
+        DialPlan.ApplyExtensionPrefix(
+            employee, await DialPlan.ResolveExtensionPrefixAsync(_db, tenantId));
 
         _db.Employees.Add(employee);
 
@@ -294,9 +381,18 @@ public class AdminService : IAdminService
                 throw new InvalidOperationException("This assignment would create a circular manager reference.");
         }
 
-        existing.FirstName = request.FirstName;
-        existing.LastName = request.LastName;
-        existing.Email = request.Email;
+        var contactType = ResolveContactType(request.ContactType ?? existing.ContactType);
+        var extension = NormalizeExtensionOrThrow(request.Extension);
+        RequireContactShape(contactType, request.FirstName, request.LastName,
+            request.Email, request.DisplayName, request.OfficePhone, request.MobilePhone,
+            request.PagerNumber, extension);
+
+        existing.FirstName = request.FirstName ?? string.Empty;
+        existing.LastName = request.LastName ?? string.Empty;
+        existing.Email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email.Trim();
+        existing.ContactType = contactType;
+        existing.DisplayName = string.IsNullOrWhiteSpace(request.DisplayName) ? null : request.DisplayName.Trim();
+        existing.Extension = extension;
         existing.Title = request.Title;
         existing.Specialty = request.Specialty;
         existing.ClinicalRole = request.ClinicalRole;
