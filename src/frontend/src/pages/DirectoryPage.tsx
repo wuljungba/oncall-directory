@@ -82,7 +82,7 @@ export default function DirectoryPage() {
       '845-568-3434', '', '3434', 'Floor 3 - North Wing', '1',
     ]
 
-    downloadCsv('employee-import-template.csv', [headers, personRow, unitRow])
+    downloadCsv('directory-import-template.csv', [headers, personRow, unitRow])
   }
 
   async function handleUpdateEmployee(id: string, data: Partial<Employee>) {
@@ -240,6 +240,11 @@ export default function DirectoryPage() {
                 </div>
                 <h2 className="text-lg font-medium mt-3">
                   {contactName(selectedEmployee)}
+                  {selectedEmployee.credentials && (
+                    <span className="ml-2 text-sm font-normal text-gray-500">
+                      {selectedEmployee.credentials}
+                    </span>
+                  )}
                 </h2>
                 <p className="text-sm text-gray-500">{selectedEmployee.title}</p>
                 {selectedEmployee.onCallStatus && (
@@ -356,7 +361,7 @@ export default function DirectoryPage() {
         isOpen={showImport}
         onClose={() => { setShowImport(false); reloadEmployees() }}
         title="Import Employees"
-        description="Upload a CSV or Excel (.xlsx) file of directory data. Columns: firstName, lastName, email, title, officePhone, mobilePhone, extension, officeLocation, departmentId, and azureAdObjectId (optional — leave blank for manual accounts). Everyday headings such as 'First Name' and 'Work Email' are understood too, and any column not listed here is ignored. Phone numbers are accepted in ordinary form, e.g. (202) 555-0134, and an extension such as 'x3434' is kept in its own field rather than dialled. For a unit or service line with no mailbox, give it a displayName and a phone number or extension and leave the name and email blank."
+        description="Upload a CSV or Excel (.xlsx) file of directory data. Columns: firstName, lastName, email, title, officePhone, mobilePhone, extension, officeLocation, departmentId, and azureAdObjectId (optional — leave blank for manual accounts). Everyday headings such as 'First Name' and 'Work Email' are understood too, and any column not listed here is ignored. Phone numbers are accepted in ordinary form, e.g. (202) 555-0134, and an extension such as 'x3434' is kept in its own field rather than dialled. A single 'name' column is read too — 'Doe, John, MD' and 'Dr. Jane Smith' both work, and a name it cannot read confidently is reported rather than guessed at. For a unit or service line with no mailbox, give it a displayName and a phone number or extension and leave the name and email blank."
         extra={canPickTenant ? (
           <div>
             <label className="block text-xs text-gray-400 mb-1">Subscription (tenant) to import into</label>

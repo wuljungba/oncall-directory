@@ -49,6 +49,16 @@ public class Employee
     [MaxLength(200)]
     public string? Title { get; set; }
 
+    /// <summary>
+    /// Post-nominal letters -- "MD", "RN, BSN" -- kept apart from the name.
+    ///
+    /// They arrive attached to it ("Jane Smith, MD") and used to be stored that way, which
+    /// made the surname "Smith, MD" and put the person out of reach of a search for
+    /// "Smith".
+    /// </summary>
+    [MaxLength(100)]
+    public string? Credentials { get; set; }
+
     [MaxLength(200)]
     public string? Specialty { get; set; }
 

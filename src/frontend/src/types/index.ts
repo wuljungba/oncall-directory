@@ -49,6 +49,8 @@ export interface Employee {
   /** Present on a department contact, which has no first or last name. */
   displayName?: string
   contactType?: ContactType
+  /** Post-nominal letters ("MD", "RN, BSN"), kept apart from the name. */
+  credentials?: string
   title?: string
   specialty?: string
   clinicalRole?: string

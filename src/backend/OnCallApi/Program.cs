@@ -953,6 +953,8 @@ using (var scope = app.Services.CreateScope())
             IF COL_LENGTH(N'dbo.Employees', N'ContactType') IS NULL
                 ALTER TABLE dbo.Employees ADD ContactType nvarchar(20) NOT NULL
                     CONSTRAINT DF_Employees_ContactType DEFAULT N'Person';
+            IF COL_LENGTH(N'dbo.Employees', N'Credentials') IS NULL
+                ALTER TABLE dbo.Employees ADD Credentials nvarchar(100) NULL;
             """,
             // Employees.Email becomes optional, and its unique index gains a filter.
             //

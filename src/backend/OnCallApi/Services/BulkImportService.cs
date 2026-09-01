@@ -86,6 +86,8 @@ public class BulkImportService
                     if (row.PresentColumns.Contains("contactType")) existing.ContactType = row.ContactType;
                     if (row.PresentColumns.Contains("displayName")) existing.DisplayName = row.DisplayName;
                     if (row.PresentColumns.Contains("extension")) existing.Extension = row.Extension;
+                    if (row.PresentColumns.Contains("credentials") || row.PresentColumns.Contains("name"))
+                        existing.Credentials = row.Credentials;
                     if (row.PresentColumns.Contains("title")) existing.Title = row.Title;
                     if (row.PresentColumns.Contains("officePhone")) existing.OfficePhone = row.OfficePhone;
                     if (row.PresentColumns.Contains("mobilePhone")) existing.MobilePhone = row.MobilePhone;
@@ -110,6 +112,7 @@ public class BulkImportService
                         ContactType = row.ContactType,
                         DisplayName = row.DisplayName,
                         Extension = row.Extension,
+                        Credentials = row.Credentials,
                         Title = row.Title,
                         Email = row.Email,
                         OfficePhone = row.OfficePhone,
@@ -317,6 +320,21 @@ public class BulkImportService
         ["forename"] = "firstName",
         ["surname"] = "lastName",
         ["familyname"] = "lastName",
+
+        // One combined name column, which is what a real staff export usually has.
+        ["name"] = "name",
+        ["fullname"] = "name",
+        ["employeename"] = "name",
+        ["staffname"] = "name",
+        ["provider"] = "name",
+        ["providername"] = "name",
+        ["physician"] = "name",
+        ["clinician"] = "name",
+
+        ["credentials"] = "credentials",
+        ["degree"] = "credentials",
+        ["degrees"] = "credentials",
+        ["postnominals"] = "credentials",
 
         ["workemail"] = "email",
         ["emailaddress"] = "email",
@@ -632,6 +650,36 @@ public class BulkImportService
         var firstName = row.GetValueOrDefault("firstName", "")?.Trim() ?? "";
         var lastName = row.GetValueOrDefault("lastName", "")?.Trim() ?? "";
         var displayName = row.GetValueOrDefault("displayName")?.Trim();
+        var credentials = row.GetValueOrDefault("credentials")?.Trim();
+
+        // A single "Name" column is read only when separate columns did not supply the
+        // answer. Explicit firstName/lastName always win: the file said which is which,
+        // and no parse beats being told.
+        string? nameReviewReason = null;
+        if (string.IsNullOrWhiteSpace(firstName) && string.IsNullOrWhiteSpace(lastName))
+        {
+            var combined = row.GetValueOrDefault("name")?.Trim();
+            if (!string.IsNullOrWhiteSpace(combined))
+            {
+                var parsed = NameParser.Parse(combined);
+
+                if (parsed.Confidence == NameConfidence.Low)
+                {
+                    // Deliberately NOT stored on a guess. A single word may be a unit
+                    // label, and the department-contact branch below can still claim it;
+                    // anything else is reported so a person decides, because filing
+                    // someone under the wrong half of their name makes them unfindable.
+                    nameReviewReason = parsed.ReviewReason;
+                    displayName ??= parsed.DisplayName;
+                }
+                else
+                {
+                    firstName = parsed.FirstName;
+                    lastName = parsed.LastName;
+                    if (string.IsNullOrWhiteSpace(credentials)) credentials = parsed.Credentials;
+                }
+            }
+        }
 
         // An extension is split off BEFORE normalization rather than failing the row.
         // "845-568-3434 x3434" used to be rejected outright as undialable, which lost the
@@ -686,6 +734,14 @@ public class BulkImportService
         }
         else
         {
+            // A name the parser would not commit to is reported as itself, rather than as
+            // the missing-column error it used to masquerade as.
+            if (nameReviewReason != null)
+            {
+                return (null, nameReviewReason
+                    + " Split it into firstName and lastName columns, or write it as \"Last, First\".");
+            }
+
             if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
                 return (null, "firstName and lastName are required.");
 
@@ -717,6 +773,7 @@ public class BulkImportService
             ContactType = isDepartmentContact ? ContactType.Department : ContactType.Person,
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
             Extension = extension,
+            Credentials = string.IsNullOrWhiteSpace(credentials) ? null : credentials,
             Title = row.GetValueOrDefault("title")?.Trim(),
             Email = string.IsNullOrWhiteSpace(email) ? null : email,
             OfficePhone = string.IsNullOrWhiteSpace(officePhone) ? null : officePhone,
@@ -775,6 +832,9 @@ public class BulkImportService
 
         /// <summary>Internal extension digits, held apart from the dialable number.</summary>
         public string? Extension { get; init; }
+
+        /// <summary>Post-nominal letters lifted out of a combined name column.</summary>
+        public string? Credentials { get; init; }
 
         public string? OfficePhone { get; init; }
         public string? MobilePhone { get; init; }
