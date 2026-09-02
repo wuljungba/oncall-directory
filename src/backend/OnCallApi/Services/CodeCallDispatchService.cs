@@ -300,18 +300,32 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             }
             else
             {
-                // All channels failed — try SIP fallback
-                await RecordStepAndNotify(evt.Id, "sip_fallback", "in_progress",
-                    "All primary dispatch channels failed — attempting SIP PBX fallback...");
-
+                // Every channel failed. There is no SIP fallback to try.
+                //
+                // This branch used to await Task.Delay(500) with the comment "Simulate SIP
+                // call setup", record the step as completed, and increment successCount --
+                // which then suppressed BOTH alarms below, because each is guarded on
+                // successCount == 0. So at the exact moment every real channel had failed
+                // and nobody had been contacted, the pipeline reported a delivered page and
+                // the Command Center stopped asking for attention.
+                //
+                // Unlike Twilio, InformaCast, Vocera and CUCM, SIP has no client anywhere in
+                // this codebase -- only SipPbxOptions. The delay WAS the implementation.
+                //
+                // An operator who has set SipPbx.Enabled believes they have a fallback, so
+                // they are told plainly that they do not. Finding that out here is bad;
+                // finding it out during a code blue, from a page that never arrived, is
+                // worse.
                 if (_options.SipPbx.Enabled)
                 {
-                    // SIP fallback paging
-                    await Task.Delay(500); // Simulate SIP call setup
-                    await RecordStepAndNotify(evt.Id, "sip_fallback", "completed",
-                        $"SIP fallback page sent via {_options.SipPbx.Host} " +
-                        $"(extension {_options.SipPbx.PagingExtension})");
-                    successCount++;
+                    _logger.LogError(
+                        "Code call {EventId}: SIP PBX fallback is enabled in configuration but "
+                        + "is NOT implemented -- no SIP client exists. Nobody was paged by it.",
+                        evt.Id);
+
+                    await RecordStepAndNotify(evt.Id, "sip_fallback", "failed",
+                        "SIP PBX fallback is switched on in configuration but is not implemented, "
+                        + "so no call was placed. Escalate by phone now.");
                 }
                 else
                 {
@@ -319,24 +333,22 @@ public class CodeCallDispatchService : ICodeCallDispatchService
                         "SIP fallback not configured — manual dispatch required");
                 }
 
-                if (successCount == 0)
-                {
-                    // Every configured channel failed AND the fallback did not carry it, so
-                    // this code call reached NOBODY — operationally identical to the
-                    // no-channels-configured case above, which is loud about it. This branch
-                    // used to end with only per-channel "failed" steps and an Information-level
-                    // "Dispatch pipeline complete", wording that reads like success for a
-                    // dispatch that contacted no one. Give it the same aggregate alarm and the
-                    // same explicit operator instruction.
-                    const string nobodyReached =
-                        "DISPATCH FAILED — every dispatch channel failed, so nobody was "
-                        + "contacted. Escalate by phone now.";
+                // Reaching this branch at all means every configured channel failed, and
+                // nothing above it can succeed, so the alarm is unconditional. It used to be
+                // guarded on successCount == 0, which the simulated fallback defeated.
+                //
+                // Operationally identical to the no-channels-configured case above, which is
+                // loud about it. This branch once ended with only per-channel "failed" steps
+                // and an Information-level "Dispatch pipeline complete" -- wording that reads
+                // like success for a dispatch that contacted no one.
+                const string nobodyReached =
+                    "DISPATCH FAILED — every dispatch channel failed, so nobody was "
+                    + "contacted. Escalate by phone now.";
 
-                    await RecordStepAndNotify(evt.Id, "acknowledged", "failed", nobodyReached);
+                await RecordStepAndNotify(evt.Id, "acknowledged", "failed", nobodyReached);
 
-                    // Deliberately NOT acknowledged: the event stays active and unacknowledged
-                    // so it keeps demanding attention in the Command Center.
-                }
+                // Deliberately NOT acknowledged: the event stays active and unacknowledged
+                // so it keeps demanding attention in the Command Center.
             }
 
             if (totalChannels > 0 && successCount == 0)
