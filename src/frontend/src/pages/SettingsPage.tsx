@@ -8,6 +8,7 @@ interface AppSettings {
   calendarSyncInterval: number
   sessionTimeout: number
   defaultRotation: string
+  extensionPrefix: string
   teamsNotifications: boolean
   emailNotifications: boolean
   smsForEscalation: boolean
@@ -18,6 +19,7 @@ const DEFAULTS: AppSettings = {
   calendarSyncInterval: 5,
   sessionTimeout: 15,
   defaultRotation: 'weekly',
+  extensionPrefix: '',
   teamsNotifications: true,
   emailNotifications: true,
   smsForEscalation: true,
@@ -28,6 +30,9 @@ const SETTING_KEYS: Record<keyof AppSettings, string> = {
   calendarSyncInterval: 'sync.calendar_interval_minutes',
   sessionTimeout: 'hipaa.session_timeout_minutes',
   defaultRotation: 'schedule.default_rotation',
+  // Matches DialPlan.ExtensionPrefixKey on the server. The per-subscription form of this
+  // key carries the tenant id; this is the estate-wide default.
+  extensionPrefix: 'Directory:ExtensionPrefix',
   teamsNotifications: 'notifications.teams_enabled',
   emailNotifications: 'notifications.email_enabled',
   smsForEscalation: 'notifications.sms_escalation_enabled',
@@ -68,6 +73,9 @@ export default function SettingsPage() {
           case SETTING_KEYS.defaultRotation:
             parsed.defaultRotation = value || DEFAULTS.defaultRotation
             break
+          case SETTING_KEYS.extensionPrefix:
+            parsed.extensionPrefix = value || DEFAULTS.extensionPrefix
+            break
           case SETTING_KEYS.teamsNotifications:
             parsed.teamsNotifications = value === 'true'
             break
@@ -102,6 +110,7 @@ export default function SettingsPage() {
         settingsApi.upsert(SETTING_KEYS.calendarSyncInterval, String(settings.calendarSyncInterval), 'Calendar sync interval in minutes'),
         settingsApi.upsert(SETTING_KEYS.sessionTimeout, String(settings.sessionTimeout), 'HIPAA session timeout in minutes'),
         settingsApi.upsert(SETTING_KEYS.defaultRotation, settings.defaultRotation, 'Default schedule rotation type'),
+        settingsApi.upsert(SETTING_KEYS.extensionPrefix, settings.extensionPrefix.trim(), 'Dial-plan prefix used to build a full number from an extension'),
         settingsApi.upsert(SETTING_KEYS.teamsNotifications, String(settings.teamsNotifications), 'Enable Teams notifications'),
         settingsApi.upsert(SETTING_KEYS.emailNotifications, String(settings.emailNotifications), 'Enable email notifications'),
         settingsApi.upsert(SETTING_KEYS.smsForEscalation, String(settings.smsForEscalation), 'Enable SMS for escalations'),
@@ -314,6 +323,27 @@ export default function SettingsPage() {
           />
           <p className="text-xs text-gray-600 mt-1">
             HIPAA requires automatic logoff after inactivity
+          </p>
+        </div>
+
+        <div>
+          <label htmlFor="extension-prefix" className="block text-sm text-gray-500 mb-1">
+            Extension prefix
+          </label>
+          <input
+            id="extension-prefix"
+            type="text"
+            inputMode="numeric"
+            value={settings.extensionPrefix}
+            onChange={(e) => setSettings({ ...settings, extensionPrefix: e.target.value })}
+            placeholder="e.g., 845568"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600 w-40"
+          />
+          <p className="text-xs text-gray-600 mt-1">
+            The digits in front of an internal extension. With 845568 set, a contact listed
+            only as x3434 gets the dialable number +1 845 568 3434 for outside callers.
+            Leave it empty and extensions are stored as extensions — a number is never
+            invented, because one that reaches the wrong switchboard is worse than none.
           </p>
         </div>
       </section>

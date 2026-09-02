@@ -4,7 +4,7 @@ import {
   Users, Building2, RefreshCw, Shield, Plus, Search, X, Save, Trash2,
   CheckCircle, AlertTriangle, Calendar, Phone, Building,
 } from 'lucide-react'
-import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi, identitiesApi } from '@/services/api'
+import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi, identitiesApi, verificationApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import { formatDateOnly } from '@/utils/date'
 import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity } from '@/types'
@@ -137,6 +137,7 @@ export default function AdminPage() {
 
 function AdminOverview({ onSelectTab }: { onSelectTab: (tab: Tab) => void }) {
   const [stats, setStats] = useState({ total: 0, active: 0, departments: 0 })
+  const [pendingVerifications, setPendingVerifications] = useState(0)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -152,6 +153,14 @@ function AdminOverview({ onSelectTab }: { onSelectTab: (tab: Tab) => void }) {
           departments: allDepts.length,
         })
       } catch { /* ignore */ }
+
+      // An organization sitting in Pending is read-only: no schedules, no code calls.
+      // The queue was pull-only, so nothing distinguished "nobody has looked yet" from
+      // "there is nothing to look at" — and the customer waits either way.
+      try {
+        setPendingVerifications((await verificationApi.pending()).length)
+      } catch { /* not a full admin, or the endpoint is unavailable */ }
+
       setLoading(false)
     }
     load()
@@ -167,6 +176,23 @@ function AdminOverview({ onSelectTab }: { onSelectTab: (tab: Tab) => void }) {
 
   return (
     <div className="space-y-6">
+      {pendingVerifications > 0 && (
+        <button
+          onClick={() => onSelectTab('verification')}
+          className="w-full flex items-center gap-3 text-left bg-amber-600/10 border border-amber-600/30 rounded-xl px-5 py-4 hover:bg-amber-600/15 transition-colors"
+        >
+          <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <span className="text-sm">
+            <span className="font-medium text-amber-500">
+              {pendingVerifications} organization{pendingVerifications === 1 ? '' : 's'} waiting on verification.
+            </span>{' '}
+            <span className="text-gray-400">
+              They cannot publish schedules or start a code call until this is settled.
+            </span>
+          </span>
+        </button>
+      )}
+
       {/* Stat cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">

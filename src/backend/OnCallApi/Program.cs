@@ -556,6 +556,11 @@ builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
 builder.Services.AddHostedService<AuditBackgroundService>();
 
+// Staged import rows are a full copy of an uploaded staff list. An abandoned upload would
+// otherwise keep one indefinitely, so unfinished imports are discarded after a week and a
+// committed import's rows after a month — its header is kept as the record.
+builder.Services.AddHostedService<OnCallApi.Services.Import.ImportJobCleanupService>();
+
 // Sign-in identity directory: same channel + background-flusher shape as the audit log,
 // so recording who signed in costs nothing on the request path.
 builder.Services.AddSingleton<IdentityDirectoryService>();

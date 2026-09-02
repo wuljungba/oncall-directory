@@ -316,7 +316,8 @@ public class AdminService : IAdminService
         // Same rule as the importer: an extension with no number becomes a dialable
         // number only when the subscription has a dial plan to build one from.
         DialPlan.ApplyExtensionPrefix(
-            employee, await DialPlan.ResolveExtensionPrefixAsync(_db, tenantId));
+            employee,
+            await DialPlan.ResolveExtensionPrefixAsync(_db, tenantId, employee.DepartmentId));
 
         _db.Employees.Add(employee);
 

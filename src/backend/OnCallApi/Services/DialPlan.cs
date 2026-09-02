@@ -33,15 +33,24 @@ public static class DialPlan
         $"{ExtensionPrefixKey}:{tenantId}";
 
     /// <summary>
-    /// The extension prefix in force for a subscription: its own if it has one, otherwise
-    /// the app-wide default, otherwise null.
+    /// The per-department key, for a multi-campus organization whose buildings sit behind
+    /// different prefixes. A second campus is the only reason this exists; a single-site
+    /// customer never touches it and inherits the subscription's value.
+    /// </summary>
+    public static string ExtensionPrefixKeyForDepartment(int departmentId) =>
+        $"{ExtensionPrefixKey}:Department:{departmentId}";
+
+    /// <summary>
+    /// The extension prefix in force, most specific first: the department's own, then the
+    /// subscription's, then the app-wide default, then nothing.
     /// </summary>
     public static async Task<string?> ResolveExtensionPrefixAsync(
-        AppDbContext db, int? tenantId, CancellationToken ct = default)
+        AppDbContext db, int? tenantId, int? departmentId = null, CancellationToken ct = default)
     {
-        var keys = tenantId.HasValue
-            ? new[] { ExtensionPrefixKeyFor(tenantId.Value), ExtensionPrefixKey }
-            : [ExtensionPrefixKey];
+        var keys = new List<string>();
+        if (departmentId.HasValue) keys.Add(ExtensionPrefixKeyForDepartment(departmentId.Value));
+        if (tenantId.HasValue) keys.Add(ExtensionPrefixKeyFor(tenantId.Value));
+        keys.Add(ExtensionPrefixKey);
 
         var found = await db.AppSettings
             .AsNoTracking()
@@ -57,6 +66,68 @@ public static class DialPlan
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// The prefixes in force across one import: a subscription-wide default, plus any
+    /// department that overrides it.
+    /// </summary>
+    public sealed class ExtensionPrefixes
+    {
+        private readonly IReadOnlyDictionary<int, string> _byDepartment;
+
+        internal ExtensionPrefixes(string? fallback, IReadOnlyDictionary<int, string> byDepartment)
+        {
+            Default = fallback;
+            _byDepartment = byDepartment;
+        }
+
+        /// <summary>The subscription-wide prefix, or null when none is configured.</summary>
+        public string? Default { get; }
+
+        /// <summary>The prefix for a department, falling back to the subscription's.</summary>
+        public string? For(int? departmentId) =>
+            departmentId.HasValue && _byDepartment.TryGetValue(departmentId.Value, out var own)
+                ? own
+                : Default;
+    }
+
+    /// <summary>
+    /// Every prefix that could apply to an import, resolved together.
+    ///
+    /// One query rather than one per row: an import of four hundred contacts spread over a
+    /// dozen departments would otherwise issue four hundred lookups for a handful of values
+    /// that cannot change mid-import.
+    /// </summary>
+    public static async Task<ExtensionPrefixes> ResolveExtensionPrefixesAsync(
+        AppDbContext db, int? tenantId, IReadOnlyCollection<int> departmentIds,
+        CancellationToken ct = default)
+    {
+        var fallback = await ResolveExtensionPrefixAsync(db, tenantId, null, ct);
+
+        var byDepartment = new Dictionary<int, string>();
+        if (departmentIds.Count == 0) return new ExtensionPrefixes(fallback, byDepartment);
+
+        var wanted = departmentIds.Distinct().ToList();
+        var keys = wanted.Select(ExtensionPrefixKeyForDepartment).ToList();
+
+        var overrides = await db.AppSettings
+            .AsNoTracking()
+            .Where(s => keys.Contains(s.Key))
+            .Select(s => new { s.Key, s.Value })
+            .ToListAsync(ct);
+
+        foreach (var id in wanted)
+        {
+            var value = overrides
+                .FirstOrDefault(o => o.Key == ExtensionPrefixKeyForDepartment(id))?.Value;
+
+            // Only an override is stored. A department with none simply falls through to
+            // the subscription's value at lookup time.
+            if (!string.IsNullOrWhiteSpace(value)) byDepartment[id] = value.Trim();
+        }
+
+        return new ExtensionPrefixes(fallback, byDepartment);
     }
 
     /// <summary>

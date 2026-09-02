@@ -234,8 +234,6 @@ public class ImportJobService
 
         var mapping = ReadMapping(job);
         var departmentsByName = await LoadDepartmentsAsync(job.TenantId, allowedTenantIds, ct);
-        var extensionPrefix = await DialPlan.ResolveExtensionPrefixAsync(_db, job.TenantId, ct);
-
         var staged = new List<StagedRow>();
         foreach (var row in rows)
         {
@@ -246,6 +244,16 @@ public class ImportJobService
 
         ResolveDepartments(staged, departmentsByName);
 
+        // Resolved after the departments are known, and in one query: a per-row lookup
+        // would issue one for every contact in the file.
+        var extensionPrefixes = await DialPlan.ResolveExtensionPrefixesAsync(
+            _db, job.TenantId,
+            staged.Where(i => i.Record.DepartmentId.HasValue)
+                .Select(i => i.Record.DepartmentId!.Value)
+                .Distinct()
+                .ToList(),
+            ct);
+
         var imported = 0;
         foreach (var item in staged)
         {
@@ -255,14 +263,16 @@ public class ImportJobService
                 ? await FindInScopeAsync(item.Job.MatchedEmployeeId.Value, allowedTenantIds, ct)
                 : null;
 
+            var prefix = extensionPrefixes.For(item.Record.DepartmentId);
+
             if (matched != null && item.Job.Resolution == ImportRowResolution.Merge)
             {
-                BulkImportService.ApplyRowToEmployee(item.Record, matched, extensionPrefix);
+                BulkImportService.ApplyRowToEmployee(item.Record, matched, prefix);
             }
             else
             {
                 _db.Employees.Add(
-                    BulkImportService.NewEmployeeFromRow(item.Record, job.TenantId, extensionPrefix));
+                    BulkImportService.NewEmployeeFromRow(item.Record, job.TenantId, prefix));
             }
 
             imported++;

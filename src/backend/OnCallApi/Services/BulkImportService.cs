@@ -61,8 +61,16 @@ public class BulkImportService
             return Result(records.Count, 0, errors);
 
         // Resolved once for the whole file: a per-row lookup would issue one query per
-        // contact for a value that cannot change mid-import.
-        var extensionPrefix = await DialPlan.ResolveExtensionPrefixAsync(_db, tenantId);
+        // contact for a value that cannot change mid-import. A multi-campus organization
+        // can override the prefix per department, so every department this file mentions
+        // is resolved together.
+        var extensionPrefixes = await DialPlan.ResolveExtensionPrefixesAsync(
+            _db, tenantId,
+            records.OfType<EmployeeRow>()
+                .Where(r => r.DepartmentId.HasValue)
+                .Select(r => r.DepartmentId!.Value)
+                .Distinct()
+                .ToList());
 
         var imported = 0;
         var rowIndex = 0;
@@ -72,6 +80,8 @@ public class BulkImportService
             try
             {
                 var existing = await FindExistingEmployeeAsync(row, allowedTenantIds);
+
+                var extensionPrefix = extensionPrefixes.For(row.DepartmentId);
 
                 if (existing != null)
                 {
