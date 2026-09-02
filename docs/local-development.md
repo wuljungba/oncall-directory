@@ -64,6 +64,34 @@ rm src/backend/OnCallApi/bin/Debug/net8.0/OnCallDb.sqlite
 The API logs a warning at startup when it skips the backport, naming this. If you see
 features failing on missing tables or columns, delete the file first.
 
+### The same trap catches the test suite
+
+`tests/BackendTests` keeps its **own** copy of the file, and the integration tests boot the
+real application over it. After any model change, expect failures that look nothing like the
+change you made — the ones that surfaced this were two SignalR hub-negotiate tests returning
+`500`, because `ExceptionHandlingMiddleware` hides the detail from the response. The real
+cause is in the test log: `SqliteException: no such column`.
+
+Delete every copy, not just the API's:
+
+```bash
+rm -f tests/BackendTests/bin/Debug/net8.0/OnCallDb.sqlite       tests/BackendTests/obj/testrun/Debug/net8.0/OnCallDb.sqlite       src/backend/OnCallApi/bin/Debug/net8.0/OnCallDb.sqlite       src/backend/OnCallApi/obj/testrun/Debug/net8.0/OnCallDb.sqlite
+```
+
+A related trap when writing tests: build the in-memory database name **once** and capture it.
+
+```csharp
+var dbName = Guid.NewGuid().ToString();                        // correct
+services.AddDbContext<AppDbContext>(o => o.UseInMemoryDatabase(dbName));
+
+services.AddDbContext<AppDbContext>(                            // wrong
+    o => o.UseInMemoryDatabase(Guid.NewGuid().ToString()));
+```
+
+The lambda runs per context, so the second form gives every scope its own database. The seed,
+the code under test and the assertions each talk to a different one, and the test fails with
+everything empty rather than with anything that points at the cause.
+
 ## Getting data in
 
 A rebuilt database is empty apart from two seeded duty-hour rules. Nothing is on call, so the
