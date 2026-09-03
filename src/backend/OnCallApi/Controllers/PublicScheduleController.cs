@@ -54,7 +54,12 @@ public class PublicScheduleController : ControllerBase
                 && sh.Schedule.Department.TenantId == tenantId)
             // Group tier by its lowercased form so mixed-case data can't collide into a
             // duplicate dictionary key below.
-            .GroupBy(sh => new { sh.Schedule.Department!.Id, sh.Schedule.Department!.Name, Tier = sh.Tier.ToLowerInvariant() })
+            //
+            // ToLower(), not ToLowerInvariant(): EF Core translates the first to SQL
+            // LOWER() and cannot translate the second at all, so this threw
+            // InvalidOperationException at runtime and every share link answered 500 --
+            // on the one endpoint with no authentication in front of it to notice.
+            .GroupBy(sh => new { sh.Schedule.Department!.Id, sh.Schedule.Department!.Name, Tier = sh.Tier.ToLower() })
             .Select(g => new { g.Key.Id, g.Key.Name, g.Key.Tier, Count = g.Count() })
             .ToListAsync();
 
