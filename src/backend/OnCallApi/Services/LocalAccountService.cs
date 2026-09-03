@@ -88,13 +88,29 @@ public class LocalAccountService : ILocalAccountService
         await _db.SaveChangesAsync();
 
         // Onboarding standard: every sign-in-capable account gets the staff baseline
-        // (Schedule.Read + Directory.Read). Admins can demote/adjust afterward.
+        // (Schedule.Read + Directory.Read) -- but only ever WITHIN one organization.
+        //
+        // This row used to be written with no TenantId, and a grant with no TenantId is
+        // read as a system-wide grant: every account an administrator created could list
+        // every other organization's contacts, departments, phone trees and code-call
+        // locations. The baseline only means something once we know which organization it
+        // is the baseline FOR, so an account that cannot be placed gets nothing and waits
+        // for an administrator to grant access explicitly. Failing closed here costs a
+        // support ticket; failing open costs another hospital's phone list.
+        var baselineTenantId = employeeId.HasValue
+            ? await _db.Employees
+                .Where(e => e.Id == employeeId.Value)
+                .Select(e => e.TenantId)
+                .FirstOrDefaultAsync()
+            : null;
+
         var hasBaseline = await _db.PermissionGrants.AnyAsync(g =>
             g.IsActive && g.ExternalPrincipalId == account.Email && (g.Permissions ?? string.Empty).Contains(Permissions.ScheduleRead));
-        if (!hasBaseline)
+        if (!hasBaseline && baselineTenantId.HasValue)
         {
             _db.PermissionGrants.Add(new PermissionGrant
             {
+                TenantId = baselineTenantId,
                 PrincipalType = "local",
                 ExternalPrincipalId = account.Email,
                 LocalUserId = account.Id,
@@ -102,6 +118,13 @@ public class LocalAccountService : ILocalAccountService
                 IsActive = true,
             });
             await _db.SaveChangesAsync();
+        }
+        else if (!hasBaseline)
+        {
+            _logger.LogInformation(
+                "No baseline permission granted to {Email}: the account is not linked to a "
+                + "directory entry, so there is no organization to scope it to. An "
+                + "administrator must grant access explicitly.", account.Email);
         }
 
         _logger.LogInformation("Local account registered: {Email} (Id={Id})", account.Email, account.Id);

@@ -69,17 +69,55 @@ public class SelfSignupTests
     /// <summary>
     /// The admin path keeps its behaviour. If this ever fails, the two paths have been
     /// merged and the wrong one won.
+    ///
+    /// The baseline now names the organization it is the baseline FOR. It used to be
+    /// written with no TenantId, and a grant with no TenantId means "every tenant" —
+    /// so every account an administrator created could read every other hospital's
+    /// contacts, departments, phone trees and code-call locations.
     /// </summary>
     [Fact]
-    public async Task AnAdminCreatedAccountStillGetsTheStaffBaseline()
+    public async Task AnAdminCreatedAccountGetsAStaffBaselineScopedToItsOrganization()
     {
         using var db = CreateDb();
+        db.Employees.Add(new Employee
+        {
+            Id = Guid.NewGuid(),
+            FirstName = "New",
+            LastName = "Hire",
+            Email = "hired@example.com",
+            TenantId = 7,
+        });
+        await db.SaveChangesAsync();
 
         var account = await CreateService(db).RegisterAsync(
             "hired@example.com", GoodPassword, "New Hire");
 
         account.Origin.Should().Be(LocalAccountOrigin.Admin);
-        (await db.PermissionGrants.CountAsync()).Should().Be(1);
+
+        var grants = await db.PermissionGrants.ToListAsync();
+        grants.Should().ContainSingle();
+        grants[0].TenantId.Should().Be(7,
+            "a baseline with no tenant is read as every tenant, which is how one "
+            + "organization's staff came to read another's directory");
+    }
+
+    /// <summary>
+    /// An account nobody can place in an organization gets nothing, and waits for an
+    /// administrator to say where it belongs.
+    ///
+    /// Failing closed here costs a support ticket. Failing open — which is what a
+    /// tenant-less baseline did — costs another hospital's phone list.
+    /// </summary>
+    [Fact]
+    public async Task AnAdminCreatedAccountThatCannotBePlacedGetsNoBaseline()
+    {
+        using var db = CreateDb();
+
+        var account = await CreateService(db).RegisterAsync(
+            "unplaceable@example.com", GoodPassword, "Unplaceable");
+
+        account.Origin.Should().Be(LocalAccountOrigin.Admin);
+        (await db.PermissionGrants.CountAsync()).Should().Be(0);
     }
 
     // ── Addresses that already mean somebody ──

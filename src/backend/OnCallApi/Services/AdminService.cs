@@ -112,19 +112,44 @@ public class AdminService : IAdminService
     /// is left to mean "conflicts with what already exists" (a duplicate email), which the
     /// controller maps to 409.
     /// </summary>
-    private async Task ValidateEmployeeReferencesAsync(int? departmentId, Guid? managerId)
+    private async Task ValidateEmployeeReferencesAsync(
+        int? departmentId, Guid? managerId, int? tenantId)
     {
+        // Existence alone used to be the whole check, so a tenant-scoped admin could file
+        // one of their own contacts under ANOTHER subscription's department, or under a
+        // manager belonging to one. The row stayed invisible to the other side, which is
+        // what makes it worth refusing now rather than after some later query joins on
+        // department without also checking the tenant.
+        //
+        // Both refusals say "does not exist": a department or manager the caller cannot
+        // reach must not be confirmed to them by a different message.
         if (departmentId.HasValue)
         {
-            var departmentExists = await _db.Departments.AnyAsync(d => d.Id == departmentId.Value);
-            if (!departmentExists)
+            var department = await _db.Departments
+                .Where(d => d.Id == departmentId.Value)
+                .Select(d => new { d.TenantId })
+                .FirstOrDefaultAsync();
+
+            if (department == null)
+                throw new ValidationException($"Department {departmentId.Value} does not exist.");
+
+            if (tenantId.HasValue && department.TenantId.HasValue
+                && department.TenantId.Value != tenantId.Value)
                 throw new ValidationException($"Department {departmentId.Value} does not exist.");
         }
 
         if (managerId.HasValue)
         {
-            var managerExists = await _db.Employees.AnyAsync(e => e.Id == managerId.Value);
-            if (!managerExists)
+            var manager = await _db.Employees
+                .Where(e => e.Id == managerId.Value)
+                .Select(e => new { e.TenantId })
+                .FirstOrDefaultAsync();
+
+            if (manager == null)
+                throw new ValidationException($"Manager {managerId.Value} does not exist.");
+
+            if (tenantId.HasValue && manager.TenantId.HasValue
+                && manager.TenantId.Value != tenantId.Value)
                 throw new ValidationException($"Manager {managerId.Value} does not exist.");
         }
     }
@@ -265,7 +290,7 @@ public class AdminService : IAdminService
     public async Task<Employee> CreateEmployeeAsync(CreateEmployeeRequest request)
     {
         var tenantId = await ResolveCreateTenantId(request.TenantId);
-        await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId);
+        await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId, tenantId);
 
         var contactType = ResolveContactType(request.ContactType);
         var extension = NormalizeExtensionOrThrow(request.Extension);
@@ -369,7 +394,7 @@ public class AdminService : IAdminService
                 throw new KeyNotFoundException($"Employee {id} not found.");
         }
 
-        await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId);
+        await ValidateEmployeeReferencesAsync(request.DepartmentId, request.ManagerId, existing.TenantId);
 
         // Prevent circular manager reference
         if (request.ManagerId.HasValue && request.ManagerId.Value == id)
