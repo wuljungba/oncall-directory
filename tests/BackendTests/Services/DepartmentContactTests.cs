@@ -288,4 +288,78 @@ public class DepartmentContactTests
         public string ContentRootPath { get; set; } = Directory.GetCurrentDirectory();
         public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
+
+    // ── A unit line whose label looks like a person's name ──
+
+    /// <summary>
+    /// "ICU Desk" parses cleanly into a first and last name, so it was treated as a
+    /// person and rejected for having no email — and because a commit is all or nothing,
+    /// one such row failed the entire file. A real hospital list is full of them: Blood
+    /// Bank, Main Switchboard, Emergency Department.
+    ///
+    /// Only the missing mailbox distinguishes a place from a person here, so the row is
+    /// claimed as a unit line and FLAGGED, never silently relabelled: a member of staff
+    /// who simply has no email address looks exactly the same, and only the person doing
+    /// the import can tell them apart.
+    /// </summary>
+    [Theory]
+    [InlineData("ICU Desk")]
+    [InlineData("Blood Bank")]
+    [InlineData("Main Switchboard")]
+    [InlineData("Emergency Department")]
+    public void ATwoWordUnitLabelWithNoEmailImportsAsAUnitAndIsFlagged(string label)
+    {
+        var (record, error) = BulkImportService.ParseEmployeeRow(new Dictionary<string, string>
+        {
+            ["name"] = label,
+            ["officePhone"] = "845-568-3400",
+        });
+
+        error.Should().BeNull("a unit line with a phone number is importable, not an error");
+        record.Should().NotBeNull();
+        record!.ContactType.Should().Be(ContactType.Department);
+        record.DisplayName.Should().Be(label);
+        record.Email.Should().BeNull();
+        record.ReviewReason.Should().NotBeNull(
+            "the same row could be a person with no email address, so a human confirms it");
+    }
+
+    /// <summary>
+    /// The unambiguous case keeps its silence. "3North" needs no review note, and adding
+    /// one to every unit line would bury the rows that genuinely need looking at.
+    /// </summary>
+    [Fact]
+    public void AnUnambiguousUnitLabelIsNotFlaggedForReview()
+    {
+        var (record, error) = BulkImportService.ParseEmployeeRow(new Dictionary<string, string>
+        {
+            ["name"] = "3North",
+            ["officePhone"] = "845-568-3434",
+            ["extension"] = "x3434",
+        });
+
+        error.Should().BeNull();
+        record!.ContactType.Should().Be(ContactType.Department);
+        record.ReviewReason.Should().BeNull();
+    }
+
+    /// <summary>
+    /// A person with an email address is still a person, however their name is spelled.
+    /// </summary>
+    [Fact]
+    public void ATwoWordNameWithAnEmailIsStillAPerson()
+    {
+        var (record, error) = BulkImportService.ParseEmployeeRow(new Dictionary<string, string>
+        {
+            ["name"] = "Jane Roe",
+            ["email"] = "jane.roe@hospital.example",
+            ["officePhone"] = "202-555-0134",
+        });
+
+        error.Should().BeNull();
+        record!.ContactType.Should().Be(ContactType.Person);
+        record.FirstName.Should().Be("Jane");
+        record.LastName.Should().Be("Roe");
+        record.ReviewReason.Should().BeNull();
+    }
 }

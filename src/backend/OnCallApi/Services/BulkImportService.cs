@@ -689,11 +689,17 @@ public class BulkImportService
         // answer. Explicit firstName/lastName always win: the file said which is which,
         // and no parse beats being told.
         string? nameReviewReason = null;
+        string? singleColumnLabel = null;
         if (string.IsNullOrWhiteSpace(firstName) && string.IsNullOrWhiteSpace(lastName))
         {
             var combined = row.GetValueOrDefault("name")?.Trim();
             if (!string.IsNullOrWhiteSpace(combined))
             {
+                // Kept so the unit-line branch below can still claim this row. A confident
+                // parse of "ICU Desk" produces a perfectly good first and last name; only
+                // the absence of a mailbox says it is a place rather than a person.
+                singleColumnLabel = combined;
+
                 var parsed = NameParser.Parse(combined);
 
                 if (parsed.Confidence == NameConfidence.Low)
@@ -749,6 +755,11 @@ public class BulkImportService
         // What kind of row is this? An explicit contactType column decides it; otherwise a
         // row with no person's name and no email, but a label and a way to be reached, is
         // a unit or service line ("3North", x3434) rather than a broken employee row.
+        // Set only when a row is claimed as a unit line below. A unit line inferred the
+        // ordinary way needs no review note -- "3North" is not ambiguous -- so the
+        // parser's "could not tell first name from last" is still suppressed for those.
+        string? reclassifiedReason = null;
+
         var declaredType = row.GetValueOrDefault("contactType")?.Trim();
         var reachable = !string.IsNullOrWhiteSpace(officePhone)
             || !string.IsNullOrWhiteSpace(mobilePhone)
@@ -761,6 +772,33 @@ public class BulkImportService
               && string.IsNullOrWhiteSpace(email)
               && !string.IsNullOrWhiteSpace(displayName)
               && reachable;
+
+        // A two-word unit label parses cleanly as a person: "ICU Desk" becomes first ICU,
+        // last Desk, and was then rejected for having no email -- which failed the whole
+        // file, because a commit is all or nothing. "Blood Bank", "Main Switchboard" and
+        // "Emergency Department" all did the same, and a hospital contact list is full of
+        // them.
+        //
+        // A row whose name came from one label column, carries no mailbox, and has a
+        // number to ring is a place, not a person. It is claimed here rather than
+        // refused, and flagged for review so nobody is quietly relabelled: a real member
+        // of staff who simply has no email address looks identical, and the person
+        // importing is the one who can tell them apart.
+        if (!isDepartmentContact
+            && string.IsNullOrWhiteSpace(declaredType)
+            && string.IsNullOrWhiteSpace(email)
+            && reachable
+            && !string.IsNullOrWhiteSpace(singleColumnLabel))
+        {
+            isDepartmentContact = true;
+            displayName = string.IsNullOrWhiteSpace(displayName) ? singleColumnLabel : displayName;
+            firstName = string.Empty;
+            lastName = string.Empty;
+            reclassifiedReason =
+                $"Imported as a unit or service line because '{singleColumnLabel}' has a phone "
+                + "number but no email address. If this is a person, set their contact type "
+                + "to Person and add an email address.";
+        }
 
         if (isDepartmentContact)
         {
@@ -811,7 +849,7 @@ public class BulkImportService
             DisplayName = string.IsNullOrWhiteSpace(displayName) ? null : displayName,
             Extension = extension,
             Credentials = string.IsNullOrWhiteSpace(credentials) ? null : credentials,
-            ReviewReason = isDepartmentContact ? null : nameReviewReason,
+            ReviewReason = isDepartmentContact ? reclassifiedReason : nameReviewReason,
             Title = row.GetValueOrDefault("title")?.Trim(),
             Email = string.IsNullOrWhiteSpace(email) ? null : email,
             OfficePhone = string.IsNullOrWhiteSpace(officePhone) ? null : officePhone,
