@@ -39,6 +39,14 @@ export default function Dashboard() {
   const { lastEvent } = useSignalR()
   const loadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Whether the last attempt to read who is on call actually failed.
+  //
+  // Without this, a failed request left onCallNow empty and the panel below said "No one
+  // is currently on call" — which on this screen is a clinical claim, not a UI state, and
+  // is indistinguishable from the truth. "We could not find out" and "nobody is on call"
+  // have to look different.
+  const [onCallError, setOnCallError] = useState<string | null>(null)
+
   // Live countdown tick.
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000)
@@ -68,6 +76,7 @@ export default function Dashboard() {
 
       setRawShifts(shifts)
       setOnCallNow(summaries)
+      setOnCallError(null)
       setStats({
         onCall: shifts.length,
         departments: new Set(employees.map((e: Employee) => e.departmentId)).size,
@@ -75,6 +84,14 @@ export default function Dashboard() {
       })
     } catch (err) {
       console.error('Failed to load dashboard:', err)
+
+      // Say so on the page. A console line is not a disclosure to the person reading it.
+      const status = (err as { response?: { status?: number } })?.response?.status
+      setOnCallError(
+        status === 403
+          ? 'You do not have permission to view the on-call schedule, so this list may be incomplete.'
+          : 'Could not load who is on call. This list is not reliable — reload, and use the phone tree if this persists.',
+      )
     }
   }
 
@@ -142,7 +159,18 @@ export default function Dashboard() {
         <div className="lg:col-span-2">
           <Card title="Currently On Call">
             <div aria-live="polite">
-              {onCallNow.length === 0 ? (
+              {onCallError ? (
+                <div
+                  role="alert"
+                  className="flex items-start gap-3 py-8 px-4 justify-center text-amber-400"
+                >
+                  <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">Who is on call could not be loaded.</p>
+                    <p className="text-sm text-amber-400/80 mt-1">{onCallError}</p>
+                  </div>
+                </div>
+              ) : onCallNow.length === 0 ? (
                 <div className="flex items-center gap-3 text-gray-500 py-8 justify-center">
                   <AlertTriangle className="w-5 h-5" />
                   <p>No one is currently on call</p>
