@@ -112,6 +112,15 @@ public class ImportJobRow
     [MaxLength(20)]
     public string Resolution { get; set; } = ImportRowResolution.Create;
 
+    /// <summary>
+    /// Whether a person has explicitly chosen what happens to this row.
+    ///
+    /// "create" is both the starting value and a real choice, so without this the matcher
+    /// cannot tell "nobody has decided yet" from "somebody looked at two people who share
+    /// a surname and a phone number and said they are not the same person".
+    /// </summary>
+    public bool ResolutionChosen { get; set; }
+
     /// <summary>The existing directory entry this row was matched to, when it matched one.</summary>
     public Guid? MatchedEmployeeId { get; set; }
 

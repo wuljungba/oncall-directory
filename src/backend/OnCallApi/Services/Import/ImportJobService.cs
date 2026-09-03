@@ -379,6 +379,7 @@ public class ImportJobService
         if (row == null) return false;
 
         row.Resolution = resolution;
+        row.ResolutionChosen = true;
         row.Included = resolution != ImportRowResolution.Skip;
         job.UpdatedAt = DateTime.UtcNow;
 
@@ -582,7 +583,12 @@ public class ImportJobService
 
             // Merging is the safe default: creating a second record for somebody already
             // in the directory is how a code call reaches the number nobody answers.
-            if (item.Job.Resolution == ImportRowResolution.Create)
+            //
+            // Only the DEFAULT is overridden. This runs on every preview rebuild -- and
+            // CommitAsync rebuilds the preview before writing -- so without the flag an
+            // explicit "these are two different people" was reverted to merge on the way
+            // to the database, silently collapsing two contacts into one.
+            if (!item.Job.ResolutionChosen && item.Job.Resolution == ImportRowResolution.Create)
                 item.Job.Resolution = ImportRowResolution.Merge;
         }
     }

@@ -1010,6 +1010,7 @@ using (var scope = app.Services.CreateScope())
                     ErrorReason nvarchar(1000) NULL,
                     ReviewReason nvarchar(1000) NULL,
                     Resolution nvarchar(20) NOT NULL,
+                    ResolutionChosen bit NOT NULL,
                     MatchedEmployeeId uniqueidentifier NULL,
                     MatchedOn nvarchar(100) NULL,
                     CONSTRAINT FK_ImportJobRows_Job FOREIGN KEY (ImportJobId)
@@ -1033,6 +1034,15 @@ using (var scope = app.Services.CreateScope())
                     CONSTRAINT DF_Employees_ContactType DEFAULT N'Person';
             IF COL_LENGTH(N'dbo.Employees', N'Credentials') IS NULL
                 ALTER TABLE dbo.Employees ADD Credentials nvarchar(100) NULL;
+            """,
+            // ImportJobRows.ResolutionChosen: tells a row nobody has looked at from one
+            // where somebody chose "create" for two people who only look alike. Without
+            // it the safe-default-to-merge overrode the choice on every preview rebuild.
+            """
+            IF OBJECT_ID(N'dbo.ImportJobRows') IS NOT NULL
+               AND COL_LENGTH(N'dbo.ImportJobRows', N'ResolutionChosen') IS NULL
+                ALTER TABLE dbo.ImportJobRows ADD ResolutionChosen bit NOT NULL
+                    CONSTRAINT DF_ImportJobRows_ResolutionChosen DEFAULT 0;
             """,
             // LocalAccounts: where an account came from, and its lockout state.
             // Origin is NOT NULL with a default of 'Admin', which is the truth for every
