@@ -15,6 +15,11 @@ on:
           - staging
           - prod
           - production
+      swap:
+        description: 'Swap staging into production when the health check passes. Set false to deploy to the staging slot and stop there, so the build can be examined before it reaches anyone.'
+        required: false
+        default: true
+        type: boolean
 
 env:
   DOTNET_VERSION: '8.0.x'
@@ -96,8 +101,24 @@ jobs:
         run: |
           curl -f --max-time 60 "https://app-oncall-${{ github.event.inputs.environment || 'dev' }}-staging.azurewebsites.net/health"
 
+      - name: Report that the swap was skipped
+        if: ${{ github.event.inputs.swap == 'false' }}
+        run: |
+          echo "Deployed to the staging slot and stopped there, as requested."
+          echo "Nothing has reached production. Verify against:"
+          echo "  https://app-oncall-${{ github.event.inputs.environment || 'dev' }}-staging.azurewebsites.net"
+          echo "Then swap by hand:"
+          echo "  az webapp deployment slot swap --resource-group rg-oncall-${{ github.event.inputs.environment || 'dev' }} --name app-oncall-${{ github.event.inputs.environment || 'dev' }} --slot staging --target-slot production"
+
       # ── Swap into production ──
+      #
+      # Skippable on purpose. A schema change reaches the database the moment the
+      # staging slot starts, and a health check only says the application came up --
+      # not that the migration did what it meant to. Deploying with swap=false leaves
+      # the build on the staging slot so it can be exercised against real data first,
+      # and the swap is then run by hand.
       - name: Azure login
+        if: ${{ github.event.inputs.swap != 'false' }}
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
@@ -105,9 +126,11 @@ jobs:
       # Swapping is near-instant and reversible: running the same swap again puts
       # the previous build back, which is the rollback path.
       - name: Swap staging into production
+        if: ${{ github.event.inputs.swap != 'false' }}
         run: |
           az webapp deployment slot swap             --resource-group rg-oncall-${{ github.event.inputs.environment || 'dev' }}             --name app-oncall-${{ github.event.inputs.environment || 'dev' }}             --slot staging --target-slot production
 
       - name: Health check production
+        if: ${{ github.event.inputs.swap != 'false' }}
         run: |
           curl -f --max-time 60 "https://app-oncall-${{ github.event.inputs.environment || 'dev' }}.azurewebsites.net/health"
