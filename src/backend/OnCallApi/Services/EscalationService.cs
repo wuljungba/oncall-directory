@@ -115,20 +115,39 @@ public class EscalationService
 
             foreach (var shift in activeShifts)
             {
-                // Check if already escalated recently
-                var recentEvent = await _db.EscalationEvents
-                    .Where(e => e.ShiftId == shift.Id && e.Status == "pending")
+                // The most recent escalation for this shift, whatever became of it.
+                //
+                // This used to filter on Status == "pending" — a status the row very
+                // often does not keep. FireEscalation writes "notify_failed" the moment
+                // delivery fails, and acknowledging writes "resolved". Either way the
+                // lookup found nothing, the shift read as "never escalated", and the
+                // engine re-fired TIER 1 on the next pass, and the one after that, and
+                // never reached tier 2 at all. It failed hardest in the exact case
+                // escalation exists for: the tier that could not be reached.
+                var lastEvent = await _db.EscalationEvents
+                    .Where(e => e.ShiftId == shift.Id)
                     .OrderByDescending(e => e.TriggeredAt)
                     .FirstOrDefaultAsync();
 
-                if (recentEvent != null)
+                if (lastEvent != null)
                 {
-                    // Already escalated — check if it's time for the next tier
-                    var minutesSinceTrigger = (now - recentEvent.TriggeredAt).TotalMinutes;
-                    if (minutesSinceTrigger >= policy.MaxResponseMinutes && recentEvent.Tier < policy.EscalationTierCount)
+                    // Somebody has taken it, or every tier has already been tried and
+                    // the exhaustion has already been raised once.
+                    if (lastEvent.Status is "resolved" or "exhausted") continue;
+
+                    // Still inside the window this tier was given to respond.
+                    var minutesSinceTrigger = (now - lastEvent.TriggeredAt).TotalMinutes;
+                    if (minutesSinceTrigger < policy.MaxResponseMinutes) continue;
+
+                    if (lastEvent.Tier < policy.EscalationTierCount)
                     {
-                        await FireEscalation(policy, shift, recentEvent.Tier + 1);
+                        await FireEscalation(policy, shift, lastEvent.Tier + 1);
                     }
+                    else
+                    {
+                        await RecordExhaustionAsync(policy, shift, lastEvent);
+                    }
+
                     continue;
                 }
 
@@ -140,6 +159,38 @@ public class EscalationService
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Every tier of the policy has fired and nobody acknowledged.
+    ///
+    /// This is the end of the policy: the engine has nothing left to try, and this shift
+    /// still has no confirmed holder. Recorded as its own event so it is visible in the
+    /// feed rather than inferred from a run of failures, and so the shift is not started
+    /// over from tier 1 on the next pass.
+    /// </summary>
+    private async Task RecordExhaustionAsync(
+        EscalationPolicy policy, Shift shift, EscalationEvent last)
+    {
+        _db.EscalationEvents.Add(new EscalationEvent
+        {
+            PolicyId = policy.Id,
+            EmployeeId = last.EmployeeId,
+            ShiftId = shift.Id,
+            Tier = last.Tier,
+            Status = "exhausted",
+            Details =
+                $"ESCALATION EXHAUSTED: all {policy.EscalationTierCount} tier(s) of "
+                + $"'{policy.Name}' fired and nobody acknowledged.",
+        });
+
+        await _db.SaveChangesAsync();
+
+        // Safety-critical: the chain is spent and nobody has answered for this shift.
+        _logger.LogError(
+            "ESCALATION EXHAUSTED for shift {ShiftId}: all {Tiers} tier(s) of policy "
+            + "{Policy} fired and nobody acknowledged",
+            shift.Id, policy.EscalationTierCount, policy.Name);
     }
 
     private async Task FireEscalation(EscalationPolicy policy, Shift shift, int tier)
