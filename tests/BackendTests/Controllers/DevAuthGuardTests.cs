@@ -86,6 +86,39 @@ public class DevAuthGuardTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    /// <summary>
+    /// The route must be absent even when the request would not bind.
+    ///
+    /// The guard was an action filter, which runs *after* model binding, so
+    /// <c>[ApiController]</c>'s automatic model-state validation answered first: a
+    /// production sweep got 400 with <c>errors: {"role": [...]}</c> from an endpoint that
+    /// is supposed to be invisible. Not privilege escalation — the guard still fires once
+    /// binding succeeds, and no cookie is ever set — but it advertises both the route and
+    /// the parameter it wants, in exactly the build that must not have it.
+    ///
+    /// The test above passes <c>?role=admin</c>, which binds, so it never saw this.
+    /// </summary>
+    [Theory]
+    [InlineData("/api/auth/dev/set-role")]        // no query string at all
+    [InlineData("/api/auth/dev/set-role?role=")]  // present but empty
+    [InlineData("/api/auth/dev/set-oid")]
+    [InlineData("/api/auth/dev/set-oid?oid=")]
+    public async Task DevAuthEndpointsAreAbsentEvenWhenTheRequestWouldNotBind(string url)
+    {
+        using var factory = CreateFactory("Development", devAuth: false);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PostAsync(url, null);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound,
+            "an endpoint absent from this build must not answer with a model-binding error "
+            + "that names its parameters");
+
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().NotContain("role", "a 404 must not disclose the parameter name");
+        body.Should().NotContain("oid", "a 404 must not disclose the parameter name");
+    }
+
     [Fact]
     public async Task AuthMeReportsProductionAuthModeWhenDevAuthIsOff()
     {

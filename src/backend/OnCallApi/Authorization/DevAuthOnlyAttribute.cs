@@ -12,10 +12,17 @@ namespace OnCallApi.Authorization;
 /// advertises "set your own role" should not exist in a build that does not honour it.
 ///
 /// 404 rather than 403: an endpoint that is not part of this build should look absent.
+///
+/// This is an <see cref="IAuthorizationFilter"/>, not an action filter, and the
+/// distinction is the whole point. Authorization filters run before model binding;
+/// action filters run after it. As an action filter this guard was reached only when
+/// binding succeeded, so <c>[ApiController]</c>'s automatic model-state validation
+/// answered <c>?role=</c> with a 400 naming the parameter it wanted — announcing the
+/// route, and its shape, in exactly the build that is supposed to have no such route.
 /// </summary>
-public class DevAuthOnlyAttribute : ActionFilterAttribute
+public sealed class DevAuthOnlyAttribute : Attribute, IAuthorizationFilter
 {
-    public override void OnActionExecuting(ActionExecutingContext context)
+    public void OnAuthorization(AuthorizationFilterContext context)
     {
         var config = context.HttpContext.RequestServices.GetRequiredService<IConfiguration>();
         var env = context.HttpContext.RequestServices.GetRequiredService<IWebHostEnvironment>();
@@ -23,9 +30,6 @@ public class DevAuthOnlyAttribute : ActionFilterAttribute
         if (!config.GetValue<bool>("DevAuth:Enabled") || !env.IsDevelopment())
         {
             context.Result = new NotFoundResult();
-            return;
         }
-
-        base.OnActionExecuting(context);
     }
 }
