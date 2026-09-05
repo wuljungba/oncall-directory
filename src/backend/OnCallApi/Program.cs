@@ -680,8 +680,43 @@ using (var scope = app.Services.CreateScope())
 
 // ── Middleware Pipeline ──
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+// ── Security headers ──
+// Set before anything else can write, so they land on error responses too. There were
+// none of these previously: not a Linux-migration regression, just never added.
+app.Use(async (context, next) =>
+{
+    var headers = context.Response.Headers;
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Referrer-Policy"] = "no-referrer";
+
+    // Report-Only on purpose. An enforcing policy that misses one auth origin locks
+    // clinical staff out of the directory, and this app signs in through both Entra and
+    // Google. Browsers report violations to the console, so a real sign-in on each
+    // provider validates the policy before anyone switches this to enforcing.
+    headers["Content-Security-Policy-Report-Only"] =
+        "default-src 'self'; " +
+        "script-src 'self' https://accounts.google.com; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https:; " +
+        "font-src 'self' data:; " +
+        "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://accounts.google.com; " +
+        "frame-src https://login.microsoftonline.com https://accounts.google.com; " +
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+
+    await next();
+});
+
 app.UseResponseCompression();
 app.UseRateLimiter();
+
+// HSTS only outside Development — it must never be sent over the plain-HTTP dev listener.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 app.UseHttpsRedirection();
 
 // ── Static Files (SPA) ──
@@ -744,6 +779,13 @@ app.MapHealthChecks("/health", new HealthCheckOptions
 
 // ── SignalR Hubs ──
 app.MapHub<OnCallNotificationHub>("/hubs/notifications");
+
+// An unmatched /api or /hubs path is a caller bug, not a client-side route. Without these
+// the SPA fallback answers 200 with index.html, so a typo'd fetch URL looks like a success
+// and a broken integration reports nothing at all. More specific fallback routes win over
+// the catch-all below.
+app.MapFallback("/api/{**rest}", () => Results.NotFound());
+app.MapFallback("/hubs/{**rest}", () => Results.NotFound());
 
 // SPA fallback: serve index.html for client-side routes (e.g. /dashboard).
 // Registered last so /api, /health, and /hubs keep priority.
