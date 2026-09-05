@@ -1,3 +1,4 @@
-azureAdObjectId,firstName,lastName,email,title,officePhone,mobilePhone,officeLocation,departmentId
-,John,Doe,john.doe@hospital.org,Emergency Physician,+15551234567,+15559876543,Emergency Dept,1
-,Jane,Smith,jane.smith@hospital.org,Cardiologist,+15551112222,+15555556666,Cardiology Dept,2
+firstName,lastName,displayName,email,title,credentials,officePhone,mobilePhone,extension,officeLocation,department,departmentId,contactType,azureAdObjectId
+John,Doe,,john.doe@hospital.org,Emergency Physician,MD,+15551234567,+15559876543,,Emergency Dept,Emergency Medicine,,Person,
+Jane,Smith,,jane.smith@hospital.org,Cardiologist,MD,+15551112222,+15555556666,,Cardiology Dept,Cardiology,,Person,
+,,Blood Bank,,,,+15553334444,,3434,Floor 2 - Lab,Emergency Medicine,,Department,

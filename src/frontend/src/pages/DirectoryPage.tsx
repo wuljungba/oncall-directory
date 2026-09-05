@@ -4,6 +4,7 @@ import { directoryApi, adminApi, departmentsApi, tenantsApi } from '@/services/a
 import { useAuth } from '@/hooks/useAuth'
 import WorkbookImportModal from '@/components/WorkbookImportModal'
 import { downloadCsv } from '@/utils/download'
+import { TEMPLATE_FILENAME, templateRows } from '@/utils/importFields'
 import { useToast } from '@/components/Toast'
 import { isValidE164 } from '@/utils/validation'
 import { presenceLabel } from '@/utils/presence'
@@ -68,21 +69,7 @@ export default function DirectoryPage() {
   }
 
   function handleDownloadTemplate() {
-    const headers = [
-      'azureAdObjectId', 'firstName', 'lastName', 'displayName', 'email', 'title',
-      'officePhone', 'mobilePhone', 'extension', 'officeLocation', 'departmentId',
-    ]
-    const personRow = [
-      '', 'Jane', 'Smith', '', 'jane.smith@hospital.org', 'Attending Physician',
-      '+12025551234', '+12025555678', '', 'Floor 3 - West Wing', '1',
-    ]
-    // A unit or service line: a label and a number, no name and no mailbox.
-    const unitRow = [
-      '', '', '', '3North', '', '',
-      '845-568-3434', '', '3434', 'Floor 3 - North Wing', '1',
-    ]
-
-    downloadCsv('directory-import-template.csv', [headers, personRow, unitRow])
+    downloadCsv(TEMPLATE_FILENAME, templateRows())
   }
 
   async function handleUpdateEmployee(id: string, data: Partial<Employee>) {

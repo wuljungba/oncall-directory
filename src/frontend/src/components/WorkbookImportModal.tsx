@@ -4,29 +4,7 @@ import {
 } from 'lucide-react'
 import { importApi, authenticatedBlob, type ImportJobPreview, type ImportRowPreview } from '@/services/api'
 import { downloadBlob } from '@/utils/download'
-
-/**
- * The fields a column can be mapped to. Kept in step with the importer's canonical names;
- * an unlisted column is ignored, which is exactly what an empty mapping means.
- */
-const FIELDS: { value: string; label: string }[] = [
-  { value: '', label: 'Ignore this column' },
-  { value: 'firstName', label: 'First name' },
-  { value: 'lastName', label: 'Last name' },
-  { value: 'name', label: 'Full name (one column)' },
-  { value: 'displayName', label: 'Unit / department name' },
-  { value: 'email', label: 'Email' },
-  { value: 'title', label: 'Title' },
-  { value: 'credentials', label: 'Credentials' },
-  { value: 'officePhone', label: 'Office phone' },
-  { value: 'mobilePhone', label: 'Mobile phone' },
-  { value: 'extension', label: 'Extension' },
-  { value: 'officeLocation', label: 'Location' },
-  { value: 'department', label: 'Department (name)' },
-  { value: 'departmentId', label: 'Department (id)' },
-  { value: 'contactType', label: 'Contact type' },
-  { value: 'azureAdObjectId', label: 'Entra object id' },
-]
+import { IMPORT_FIELDS as FIELDS } from '@/utils/importFields'
 
 type Step = 'upload' | 'sheets' | 'mapping' | 'review'
 
@@ -219,8 +197,10 @@ export default function WorkbookImportModal({
           {step === 'upload' && committed === null && (
             <>
               <p className="text-sm text-gray-500">
-                Upload a CSV or Excel workbook. Every sheet is read — you choose which ones to
-                import and what their columns mean before anything is saved.
+                Upload a CSV or Excel workbook. Every sheet is read, and each one is a separate
+                list of people — sheets are never merged together, so every row needs all of that
+                person's details on it. You choose which sheets to import, and what their columns
+                mean, before anything is saved.
               </p>
               {extra && <div className="rounded-lg bg-gray-800/40 p-3">{extra}</div>}
               <div
@@ -267,7 +247,9 @@ export default function WorkbookImportModal({
           {step === 'sheets' && preview && committed === null && (
             <>
               <p className="text-sm text-gray-500">
-                {preview.sheetCount} sheets, {preview.totalRows} rows. Untick any you do not want.
+                {preview.sheetCount} sheets, {preview.totalRows} rows. Untick any you do not
+                want — a commit is all or nothing, so one unusable row on a sheet you did not
+                mean to bring will stop the whole import.
               </p>
               <div className="space-y-2">
                 {preview.sheets.map(s => (
@@ -327,7 +309,12 @@ export default function WorkbookImportModal({
                       </p>
                     </div>
                     <select
-                      value={FIELDS.some(f => f.value === c.field) ? c.field : ''}
+                      // Matched case-insensitively and resolved back to the option's own
+                      // spelling. The server answers with canonical field names, but a
+                      // value that is merely close — "FirstName" for "firstName" — selects
+                      // nothing, and the column silently reads as "Ignore this column".
+                      value={FIELDS.find(f =>
+                        f.value.toLowerCase() === (c.field ?? '').toLowerCase())?.value ?? ''}
                       onChange={(e) => changeMapping(c.column, e.target.value, false)}
                       className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600"
                     >
