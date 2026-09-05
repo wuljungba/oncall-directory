@@ -56,6 +56,9 @@ param entraAudience string = ''
 // Days of HTTP logs the platform retains.
 param httpLoggingRetentionDays int = 3
 
+@description('Daily ingestion ceiling for Log Analytics, in GB. Diagnostics stop being ingested past this for the rest of the UTC day; the SQL audit trail is unaffected.')
+param logAnalyticsDailyQuotaGb int = 5
+
 var resourceGroupName = 'rg-oncall-${environmentName}'
 var appName = 'app-oncall-${environmentName}'
 var sqlServerName = 'sql-oncall-${environmentName}'
@@ -66,6 +69,11 @@ var logName = 'log-oncall-${environmentName}'
 var stName = 'st${take(environmentName, 4)}${uniqueString(subscription().subscriptionId)}'
 var connectionString = 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};TrustServerCertificate=False;Encrypt=True;'
 var defaultCorsOrigin = !empty(corsOrigin) ? corsOrigin : 'https://${appName}.azurewebsites.net'
+
+// The staging slot answers on its own hostname, so pointing it at production's origin was
+// simply wrong. Harmless while the SPA and API are same-origin, but it would reject any
+// cross-origin caller aimed at staging.
+var stagingCorsOrigin = !empty(corsOrigin) ? corsOrigin : 'https://${appName}-staging.azurewebsites.net'
 
 // Twilio posts delivery status here. Slot-specific, so a message sent from staging
 // settles on staging rather than reporting into production's dispatch history.
@@ -130,6 +138,13 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
     // Diagnostics only, and priced by ingestion. The HIPAA audit trail is kept
     // in SQL for 2190 days and is unaffected by this.
     retentionInDays: 30
+    // Ingestion was previously unbounded: one runaway loop could bill four figures before
+    // anyone noticed. Normal usage sits near 0.4 GB/day, so this is roughly 12x headroom
+    // and a ceiling rather than a limit anything should reach. Losing diagnostics past the
+    // cap costs nothing that matters — the audit trail is in SQL, not here.
+    workspaceCapping: {
+      dailyQuotaGb: logAnalyticsDailyQuotaGb
+    }
   }
 }
 
@@ -317,7 +332,7 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'AzureAd__Domain', value: entraDomain }
         { name: 'AzureAd__TenantId', value: entraTenantId }
         { name: 'AzureAd__ClientId', value: entraClientId }
-        { name: 'Cors__Origin', value: defaultCorsOrigin }
+        { name: 'Cors__Origin', value: stagingCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
         // WEBSITE_RUN_FROM_PACKAGE=1 is deliberately absent: the numeric form mounts a
@@ -361,6 +376,19 @@ resource storageRbac 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: storageAccount
   properties: {
     principalId: webApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe') // Storage Blob Data Contributor
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The staging slot has its own identity and had no storage grant at all, so anything
+// touching blob storage — the audit archive above all — would 403 there while working in
+// production. Same role, same scope, different principal.
+resource storageRbacSlot 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, resourceGroupName, 'StorageBlobDataContributor', 'staging')
+  scope: storageAccount
+  properties: {
+    principalId: stagingSlot.identity.principalId
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe') // Storage Blob Data Contributor
     principalType: 'ServicePrincipal'
   }
