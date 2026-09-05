@@ -139,24 +139,51 @@ The staff contact list, and the most-used page in the app.
 | Phone entered as `(202) 555-0134` | Accepted, stored as `+12025550134` |
 | Phone with an extension, e.g. `555-0134 x4412` | **Rejected.** An extension cannot be dialled, and merging it silently produced an undialable number |
 | **Edit** | Saves; the list updates |
-| **Download Template** | Downloads `employee-import-template.csv` with the nine expected headers |
-| **Import CSV** | Opens the import dialog, with an optional dry-run validation pass |
+| **Download Template** | Downloads `directory-import-template.csv`, with a worked person row and a worked unit row |
+| **Import** | Opens the import wizard: upload → choose sheets → confirm columns → review → commit |
 
-**CSV import rules — read before importing.** The importer is CSV-only and requires **exact
-camelCase headers**:
+**Import rules — read before importing.** The importer accepts **`.csv` and `.xlsx`**, and
+reads **every sheet** in a workbook. Legacy `.xls` is refused with instructions to re-save.
+Format is detected from the file's contents, not its extension.
+
+Headers do **not** have to match exactly. Case, spaces, underscores and hyphens are all
+ignored, and common real-world names are understood — so `First Name`, `first_name` and
+`FIRSTNAME` all reach `firstName`, and `Job Title`, `Desk Phone`, `Mobile Number`, `Work
+Email` and `Dept` all land where you would expect. Columns the importer does not recognise
+are ignored, and the wizard's **columns** step lets you correct any it mapped wrongly.
+
+The template's columns:
 
 ```
-azureAdObjectId,firstName,lastName,email,title,officePhone,mobilePhone,officeLocation,departmentId
+firstName,lastName,displayName,email,title,credentials,officePhone,mobilePhone,
+extension,officeLocation,department,departmentId,contactType,azureAdObjectId
 ```
 
-- `firstName`, `lastName` and `email` are required; the rest are optional.
-- **All or nothing** — one bad row and nothing is imported.
-- Re-importing the same people **updates** them rather than creating duplicates.
+- **People** need `firstName`, `lastName` and `email`. Everything else is optional.
+- **Units and service lines** — "3North", "Blood Bank", the switchboard — need a
+  `displayName` and something dialable (`officePhone`, `mobilePhone` or `extension`), and no
+  email. Set `contactType` to `Department` to say so outright; a row with a label, a number
+  and no mailbox is otherwise treated as one anyway and flagged for review.
+- `department` takes the department **name**; `departmentId` takes its numeric id. Use one or
+  the other — the name is usually easier. **A department name the system does not recognise
+  fails the whole import**, on purpose: a typo would otherwise file someone outside every
+  department-scoped on-call lookup, where they read as missing long afterwards. Departments
+  are never created by an import.
+- `mobilePhone` is the number a **code call** dials. A directory imported without it looks
+  complete and can page nobody.
+- `azureAdObjectId` is optional; one is generated when it is blank.
+- **All or nothing** — a commit either takes every included row or none of them. The review
+  step shows what will happen first, and rows can be excluded individually.
+- Re-importing the same people **updates** them rather than creating duplicates, matched on
+  email.
 - Columns you leave out are untouched. A blank cell in a column you *do* include clears that value.
-- Messy phone formats are fine: `(202) 555-0134`, `202-555-0134` and `+1 202 555 0134` all work.
+- Messy phone formats are fine: `(202) 555-0134`, `202-555-0134` and `+1 202 555 0134` all
+  work. An extension written inline, e.g. `555-0134 x4412`, is split into the `extension`
+  field rather than rejected.
+- Up to **10,000 data rows** per upload, counted across all sheets.
 
-Always start from **Download Template**. A file exported straight from an HR system almost
-certainly will not import as-is — see section 7.
+A file exported straight from an HR system will often import as-is. If a column is not
+recognised, correct it in the wizard's **columns** step rather than editing the file.
 
 ### 5.3 On-Call Schedule — *Backend verified; page renders*
 
@@ -268,11 +295,15 @@ These need resolving before this document becomes official.
 
 ### Blocking for a new user
 
-1. **A real HR export will not import.** The importer is CSV-only with exact camelCase
-   headers. A file with `First Name` / `Work Email` / `Cell Number` fails with one error per
-   row and never says the headers are the problem. An `.xlsx` renamed `.csv` — common, and
-   true of two sample files we have on hand — is parsed as text and produces dozens of
-   meaningless errors. Always start from **Download Template**.
+1. **Departments must exist before the first import.** The importer never creates them, and a
+   department name it does not recognise fails the *entire* file — deliberately, since a typo
+   would file someone outside every department-scoped on-call lookup, where they read as
+   missing long afterwards. On a brand-new tenant with no departments yet, the error says so
+   (*"There are no departments to import into yet — create them first"*), but it does mean
+   creating them is step one. (The older limitation here — CSV-only, exact camelCase headers,
+   HR exports failing wholesale — no longer applies: `.xlsx` is accepted, every sheet is read,
+   and headers are matched case- and separator-insensitively with aliases for common
+   real-world names.)
 2. **Frontend and backend auth modes ship mismatched** (`VITE_DEV_AUTH=false` against
    `DevAuth:Enabled=true`). Pick one mode before onboarding anyone.
 3. **Phone Trees and Escalation have no sidebar link.** Two whole features are reachable only
@@ -318,7 +349,7 @@ These need resolving before this document becomes official.
 | Amber "DEVELOPMENT AUTH" banner | The backend is not checking credentials. Expected locally; it must never appear in a deployed environment |
 | "Offline" badge in the header | The real-time connection (SignalR) is not connected. The app still works, but live updates will not arrive |
 | Backend refuses to start, citing DevAuth | Intentional. `DevAuth:Enabled` is set outside development, which would disable all authentication |
-| Import fails with *"firstName and lastName are required"* on every row | Wrong headers, or the file is really a spreadsheet renamed `.csv`. Start from **Download Template** |
+| Import fails with *"firstName and lastName are required"* on every row | The name columns were not recognised, or the rows are unit lines rather than people. Check the wizard's **columns** step; for a unit or service line, give it a `displayName` and a phone instead of a name and email |
 
 ---
 
