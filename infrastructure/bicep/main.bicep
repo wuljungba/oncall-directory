@@ -239,19 +239,28 @@ resource complianceReportsContainer 'Microsoft.Storage/storageAccounts/blobServi
 }
 
 // ── App Service Plan + Web App (serves both API and frontend static files) ──
+// Linux plan. The identical tier costs roughly half what its Windows equivalent does and
+// .NET 8 runs natively, so this is a price change rather than a capability one — nothing in
+// the app is Windows-specific. `reserved: true` is what actually makes a plan Linux; `kind`
+// alone is cosmetic, and a plan cannot be converted between the two after it is created.
 resource appPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: 'plan-oncall-${environmentName}'
   location: location
+  kind: 'linux'
   sku: {
     name: 'P0v3'
     tier: 'PremiumV3'
     capacity: 1
+  }
+  properties: {
+    reserved: true
   }
 }
 
 resource webApp 'Microsoft.Web/sites@2023-12-01' = {
   name: appName
   location: location
+  kind: 'app,linux'
   identity: {
     type: 'SystemAssigned'
   }
@@ -259,7 +268,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
     serverFarmId: appPlan.id
     httpsOnly: true
     siteConfig: {
-      netFrameworkVersion: 'v8.0'
+      // The Linux runtime stack. netFrameworkVersion is the Windows-only equivalent and is
+      // ignored here; without this the site comes up with no runtime and serves nothing.
+      linuxFxVersion: 'DOTNETCORE|8.0'
       alwaysOn: true
       minTlsVersion: '1.2'
       appSettings: concat([
@@ -271,7 +282,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'Cors__Origin', value: defaultCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+        // WEBSITE_RUN_FROM_PACKAGE=1 is deliberately absent: the numeric form mounts a
+        // package from local storage and is Windows-only. On Linux the zip deploy the
+        // pipeline performs extracts to /home/site/wwwroot, which is what we want.
         { name: 'DevAuth__Enabled', value: 'false' }
       ], concat(applicationSettings, concat(twilioSettings, [
         { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackProd }
@@ -285,6 +298,7 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
   parent: webApp
   name: 'staging'
   location: location
+  kind: 'app,linux'
   identity: {
     type: 'SystemAssigned'
   }
@@ -292,7 +306,9 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
     serverFarmId: appPlan.id
     httpsOnly: true
     siteConfig: {
-      netFrameworkVersion: 'v8.0'
+      // The Linux runtime stack. netFrameworkVersion is the Windows-only equivalent and is
+      // ignored here; without this the site comes up with no runtime and serves nothing.
+      linuxFxVersion: 'DOTNETCORE|8.0'
       alwaysOn: true
       minTlsVersion: '1.2'
       appSettings: concat([
@@ -304,7 +320,9 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'Cors__Origin', value: defaultCorsOrigin }
         { name: 'ApplicationInsights__ConnectionString', value: appInsights.properties.ConnectionString }
         { name: 'Storage__ConnectionString', value: storageAccount.properties.primaryEndpoints.blob }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE', value: '1' }
+        // WEBSITE_RUN_FROM_PACKAGE=1 is deliberately absent: the numeric form mounts a
+        // package from local storage and is Windows-only. On Linux the zip deploy the
+        // pipeline performs extracts to /home/site/wwwroot, which is what we want.
         { name: 'DevAuth__Enabled', value: 'false' }
       ], concat(applicationSettings, concat(twilioSettings, [
         { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackStaging }
