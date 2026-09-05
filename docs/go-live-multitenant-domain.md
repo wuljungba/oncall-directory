@@ -11,7 +11,7 @@ with **true multi-tenant** Microsoft Entra sign-in and a **custom web domain**.
 | Resource group | `rg-oncall-production` (westus3) — **production only, no staging RG** |
 | Deployed | SQL Server + DB, Redis, Storage, Key Vault, App Insights, Log Analytics |
 | **Not deployed** | **App Service Plan + web app + staging slot** (defined in `main.bicep`, never deployed) |
-| Entra app | "OnCall API" (`96955ba3-…`) — SPA redirects fixed, roles fixed to `OnCall.*`, service principal provisioned |
+| Entra app | "OnCall API" (`6569f3cb-…`) — SPA redirects fixed, roles fixed to `OnCall.*`, service principal provisioned |
 | Entra sign-in audience | `AzureADMyOrg` (**single-tenant**) |
 | Entra custom domain | none (only `yisadivinyahoo.onmicrosoft.com`) |
 | Code | frontend authority `organizations`, backend issuer validator accepts any `login.microsoftonline.com/<tenant-guid>` issuer |
@@ -31,7 +31,7 @@ az deployment group create \
   --parameters environmentName=production \
       sqlAdminPassword='<secret>' \
       entraTenantId='<your tenant id>' \
-      entraClientId='96955ba3-c70c-4205-8637-a4b34301480a' \
+      entraClientId='6569f3cb-47a1-4826-9f35-16e7d4bf3a52' \
       entraDomain='yisadivinyahoo.onmicrosoft.com' \
       corsOrigin='https://<your-custom-domain>' \
       location=westus3
@@ -56,14 +56,14 @@ Goal: any authorized hospital organization signs in with **its own** Entra tenan
 
 1. **Sign-in audience** — change `AzureADMyOrg` → `AzureADMultipleOrgs`:
    ```bash
-   az ad app update --id 96955ba3-c70c-4205-8637-a4b34301480a \
+   az ad app update --id 6569f3cb-47a1-4826-9f35-16e7d4bf3a52 \
      --set signInAudience=AzureADMultipleOrgs
    ```
 2. **App roles** stay as-is (`OnCall.*`). Each customer tenant's admin assigns
    them to their users; token `roles` claims will carry the matching values.
 3. **Consent** — each customer tenant admin must consent once, via the admin
    consent URL:
-   `https://login.microsoftonline.com/<customer-tenant-id>/adminconsent?client_id=96955ba3-c70c-4205-8637-a4b34301480a`
+   `https://login.microsoftonline.com/<customer-tenant-id>/adminconsent?client_id=6569f3cb-47a1-4826-9f35-16e7d4bf3a52`
    (No consent is needed for the app's *own* `access_as_user` scope — see
    `docs/superadmin-and-entra-login.md`.)
 

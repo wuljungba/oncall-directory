@@ -168,7 +168,7 @@ VITE_GOOGLE_CLIENT_ID=
 ```
 
 > Note: a gitignored `.env.local` with the real client ID
-> (`96955ba3-c70c-4205-8637-a4b34301480a`, the "OnCall API" registration) is
+> (`6569f3cb-47a1-4826-9f35-16e7d4bf3a52`, the "OnCall API" registration) is
 > already in place locally. `npm run dev` with it active enables real Entra
 > sign-in; delete it to go back to dev auth.
 

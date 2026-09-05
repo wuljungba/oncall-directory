@@ -93,7 +93,7 @@ Completed all **P1 (Testing Gaps)** items and **13 of 15 P2 (Cleanup/Hygiene)** 
 - Updated `.github/workflows/deploy.yml` to use `${{ secrets.VITE_AZURE_CLIENT_ID }}`  and `${{ secrets.VITE_GOOGLE_CLIENT_ID }}`
 - Removed hardcoded client IDs from workflow
 - **Action Required:** Repository maintainer must set these as GitHub secrets in repo settings
-  - `VITE_AZURE_CLIENT_ID` = 96955ba3-c70c-4205-8637-a4b34301480a (or env-specific value)
+  - `VITE_AZURE_CLIENT_ID` = 6569f3cb-47a1-4826-9f35-16e7d4bf3a52 (or env-specific value)
   - `VITE_GOOGLE_CLIENT_ID` = 445006464104-pcq13k9lkmcol1k5hqktu8arcrv49c5n.apps.googleusercontent.com (or env-specific value)
 
 ### ✓ Add deployment checklist & secret documentation

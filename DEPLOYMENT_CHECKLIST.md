@@ -7,7 +7,7 @@ Before deploying to any environment, ensure the following GitHub secrets are con
 ### Frontend Build Secrets
 
 - **`VITE_AZURE_CLIENT_ID`** — Microsoft Entra application client ID for MSAL authentication
-  - Format: UUID (e.g., `96955ba3-c70c-4205-8637-a4b34301480a`)
+  - Format: UUID (e.g., `6569f3cb-47a1-4826-9f35-16e7d4bf3a52`)
   - Obtain from: Azure Portal → App Registrations → Your app → Application (client) ID
 
 - **`VITE_GOOGLE_CLIENT_ID`** — Google OAuth client ID for Google sign-in
