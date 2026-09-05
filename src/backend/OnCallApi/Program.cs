@@ -8,12 +8,17 @@ using OnCallApi.Authentication;
 using OnCallApi.Services.Dispatch;
 using OnCallApi.Authorization;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Identity.Web;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Kestrel announces itself on every response, including 401s and 404s. Nothing reads it,
+// and it names the stack for anyone scanning for a matching CVE.
+builder.WebHost.ConfigureKestrel(options => options.AddServerHeader = false);
 
 // Don't crash the whole app if a background service fails (e.g. Graph API not configured in dev)
 builder.Services.Configure<HostOptions>(opts =>
@@ -515,7 +520,32 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromHours(1),
             }));
 
+    // CSP violation reports are posted by the browser, unauthenticated, and their volume
+    // is chosen by whoever is sending them. They land in Log Analytics, which is capped
+    // at a daily quota — so an unbudgeted collector is a way to burn the logging bill and
+    // push out real telemetry. Validating the policy needs a handful of distinct
+    // violations, not a stream, so this budget is deliberately small.
+    options.AddPolicy("CspReport", ctx =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromHours(1),
+            }));
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+});
+
+// ── HSTS ──
+// The default is 30 days and this host name only. For a system carrying PHI, a browser
+// that has once seen this site should refuse plain HTTP to it for a year, and to anything
+// under it. Not preloaded: preloading is submitted for a whole registrable domain, and
+// this app does not own azurewebsites.net.
+builder.Services.AddHsts(options =>
+{
+    options.MaxAge = TimeSpan.FromDays(365);
+    options.IncludeSubDomains = true;
 });
 
 // ── Response Compression ──
@@ -623,6 +653,12 @@ builder.Services.AddCors(options =>
 builder.Services.AddApplicationInsightsTelemetry(options =>
 {
     options.ConnectionString = builder.Configuration["ApplicationInsights:ConnectionString"] ?? string.Empty;
+
+    // Off by default this would stamp `Request-Context: appId=cid-v1:...` onto every
+    // response, 401s and 404s included. It exists to correlate calls between two
+    // instrumented services; nothing here calls another one, so it only publishes our
+    // telemetry identity to anyone who sends a request.
+    options.RequestCollectionOptions.InjectResponseHeaders = false;
 });
 
 // ── Health Checks ──
@@ -635,7 +671,52 @@ builder.Services.AddValidatorsFromAssemblyContaining<OnCallApi.Validators.Schedu
 // ── Swagger ──
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddControllers()
+builder.Services.AddControllers(options =>
+    {
+        // The stock binding messages quote the value that failed to bind back at the
+        // caller ("The value 'x' is not valid for role."). In a system where a malformed
+        // request can carry a patient identifier, the echo is worth removing at source —
+        // and naming the field is the part that was ever useful for fixing the request.
+        var messages = options.ModelBindingMessageProvider;
+        messages.SetValueIsInvalidAccessor(
+            _ => "The value supplied is not valid.");
+        messages.SetAttemptedValueIsInvalidAccessor(
+            (_, field) => $"The value supplied for {field} is not valid.");
+        messages.SetNonPropertyAttemptedValueIsInvalidAccessor(
+            _ => "The value supplied is not valid.");
+        messages.SetUnknownValueIsInvalidAccessor(
+            field => $"The value supplied for {field} is not valid.");
+        messages.SetNonPropertyUnknownValueIsInvalidAccessor(
+            () => "The value supplied is not valid.");
+    })
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        // Two error contracts were live at once: handled failures return the app's
+        // {"error":{code,message}} envelope, while anything that failed model binding
+        // short-circuited to the framework's application/problem+json before reaching it.
+        // A client written against one mis-parses the other, and the split is invisible
+        // until a request happens to be malformed rather than merely refused.
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var problems = context.ModelState
+                .SelectMany(entry => entry.Value?.Errors ?? [])
+                .Select(error => error.ErrorMessage)
+                .Where(message => !string.IsNullOrWhiteSpace(message))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+
+            return new BadRequestObjectResult(new
+            {
+                error = new
+                {
+                    code = StatusCodes.Status400BadRequest,
+                    message = problems.Length > 0
+                        ? string.Join(" ", problems)
+                        : "The request could not be understood.",
+                }
+            });
+        };
+    })
     .AddJsonOptions(options =>
     {
         // Prevent circular reference errors from navigation properties (Employee -> Manager -> Employee, etc.)
@@ -693,8 +774,10 @@ app.Use(async (context, next) =>
 
     // Report-Only on purpose. An enforcing policy that misses one auth origin locks
     // clinical staff out of the directory, and this app signs in through both Entra and
-    // Google. Browsers report violations to the console, so a real sign-in on each
-    // provider validates the policy before anyone switches this to enforcing.
+    // Google. A real sign-in through each provider validates the policy before anyone
+    // switches this to enforcing — and report-uri is what makes that validation possible
+    // without asking someone to watch a browser console: violations are collected server
+    // side, so the evidence accumulates from real sessions instead of a staged one.
     headers["Content-Security-Policy-Report-Only"] =
         "default-src 'self'; " +
         "script-src 'self' https://accounts.google.com; " +
@@ -703,7 +786,8 @@ app.Use(async (context, next) =>
         "font-src 'self' data:; " +
         "connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://accounts.google.com; " +
         "frame-src https://login.microsoftonline.com https://accounts.google.com; " +
-        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; " +
+        "report-uri /api/public/csp-report";
 
     await next();
 });
@@ -722,8 +806,29 @@ app.UseHttpsRedirection();
 // ── Static Files (SPA) ──
 // Serves the built React SPA from wwwroot (published alongside the API).
 // Public, so it runs before authentication.
+//
+// Nothing set Cache-Control at all, which left index.html on the browser's *heuristic*
+// freshness — roughly a tenth of the document's age, so the caching window grows the
+// longer a deploy sits untouched. A stale shell references hashed asset names that the
+// next deploy removed, and those 404: the app comes up blank for a returning user, with
+// nothing in the server logs to say so. The shell must always be revalidated. The hashed
+// files under /assets/ are the opposite case — their name changes whenever their content
+// does, so they can be cached hard and were needlessly revalidated on every navigation.
+const string ImmutableAsset = "public, max-age=31536000, immutable";
+const string AlwaysRevalidate = "no-cache, must-revalidate";
+
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+    {
+        var path = ctx.Context.Request.Path.Value ?? string.Empty;
+        ctx.Context.Response.Headers.CacheControl =
+            path.StartsWith("/assets/", StringComparison.OrdinalIgnoreCase)
+                ? ImmutableAsset
+                : AlwaysRevalidate;
+    }
+});
 app.UseCors("Frontend");
 app.UseAuthentication();
 
@@ -789,7 +894,14 @@ app.MapFallback("/hubs/{**rest}", () => Results.NotFound());
 
 // SPA fallback: serve index.html for client-side routes (e.g. /dashboard).
 // Registered last so /api, /health, and /hubs keep priority.
-app.MapFallbackToFile("index.html");
+// Its own options, deliberately not shared with UseStaticFiles above: this always serves
+// the shell whatever path was asked for, so a request for /assets/gone.js that reached
+// here must not be cached for a year under the asset rule.
+app.MapFallbackToFile("index.html", new StaticFileOptions
+{
+    OnPrepareResponse = ctx =>
+        ctx.Context.Response.Headers.CacheControl = AlwaysRevalidate
+});
 
 // ── Auto-setup database schema (runs in ALL environments) ──
 // The app has no EF migrations, so the schema is created directly from the model
