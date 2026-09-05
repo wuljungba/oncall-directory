@@ -341,6 +341,25 @@ public class BulkImportService
         ["type"] = "contactType",
         ["recordtype"] = "contactType",
     };
+    /// <summary>
+    /// The canonical field names, in the one spelling the rest of the pipeline — and the
+    /// import wizard — expect to see.
+    ///
+    /// A header that is already a field name has no alias entry, so it used to come back
+    /// in whatever casing the file wrote it: "First Name" became "FirstName". Harmless to
+    /// the parser, whose row lookups are case-insensitive, but not to anything comparing
+    /// the result against the field list. The wizard matches exactly, so those columns
+    /// matched no option and were drawn as "Ignore this column" — including email, which
+    /// is required. The file imported correctly while the screen said it would not.
+    /// </summary>
+    private static readonly Dictionary<string, string> CanonicalFields =
+        new[]
+        {
+            "azureAdObjectId", "firstName", "lastName", "name", "displayName", "credentials",
+            "email", "title", "officePhone", "mobilePhone", "extension", "officeLocation",
+            "department", "departmentId", "contactType",
+            "employeeId", "startTime", "endTime", "tier",
+        }.ToDictionary(field => field, field => field, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Maps one file column onto the field it means.
@@ -355,7 +374,11 @@ public class BulkImportService
             .Where(c => !char.IsWhiteSpace(c) && c != '_' && c != '-')
             .ToArray());
 
-        return HeaderAliases.TryGetValue(compact, out var canonical) ? canonical : compact;
+        if (HeaderAliases.TryGetValue(compact, out var canonical))
+            return canonical;
+
+        // Already a field name, in the file's own casing — answer in ours.
+        return CanonicalFields.TryGetValue(compact, out var exact) ? exact : compact;
     }
 
     /// <summary>
