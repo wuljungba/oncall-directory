@@ -52,7 +52,15 @@ public class EhrWebhookController : ControllerBase
     public async Task<ActionResult<object>> LaunchOnCall()
     {
         if (string.IsNullOrWhiteSpace(_webhookKey) || _webhookKey.Contains("change-me", StringComparison.OrdinalIgnoreCase))
-            return StatusCode(503, new { error = "EHR webhook is not configured. Set Authentication:EhrWebhook:Key." });
+        {
+            // The operator needs to know which key to set; an anonymous caller does not get
+            // to learn our configuration paths. Loud at Error because this is a
+            // safety-critical intake announcing that it cannot accept a code call.
+            _logger.LogError(
+                "EHR on-call webhook was called but Authentication:EhrWebhook:Key is unset or "
+                + "still a placeholder. The EHR code-call intake is NOT functional.");
+            return StatusCode(503, new { error = "EHR webhook is not configured." });
+        }
 
         // Read the raw body once and use the SAME bytes for signature verification and
         // deserialization. (Reading via [FromBody] would consume the stream first.)

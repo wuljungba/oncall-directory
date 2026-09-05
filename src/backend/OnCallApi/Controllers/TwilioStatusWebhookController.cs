@@ -59,7 +59,11 @@ public class TwilioStatusWebhookController : ControllerBase
         if (string.IsNullOrWhiteSpace(_options.AuthToken) ||
             _options.AuthToken.Contains("your-twilio", StringComparison.OrdinalIgnoreCase))
         {
-            return StatusCode(503, new { error = "Twilio is not configured. Set Dispatch:Twilio:AuthToken." });
+            // Config paths stay in the log, not in a response to an anonymous caller.
+            _logger.LogError(
+                "Twilio status callback arrived but Dispatch:Twilio:AuthToken is unset or still a "
+                + "placeholder, so delivery receipts cannot be authenticated or settled.");
+            return StatusCode(503, new { error = "Twilio is not configured." });
         }
 
         if (!Request.HasFormContentType)
