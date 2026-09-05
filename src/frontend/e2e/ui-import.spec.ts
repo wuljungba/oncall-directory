@@ -67,13 +67,13 @@ test.describe('Import wizard', () => {
     // ── Mapping ──
     await expect(modal.getByText(/Everyday headings are recognised already/)).toBeVisible()
     // Auto-mapped: firstName column shows the "First name" mapping already selected.
-    const firstNameRow = modal.locator('div.flex.items-center.gap-3', { has: modal.locator('p', { hasText: 'firstName' }) })
+    const firstNameRow = modal.locator('div.flex.items-center.gap-3', { has: page.locator('p', { hasText: 'firstName' }) })
     await expect(firstNameRow.locator('select')).toHaveValue('firstName')
 
     // The unrecognised header "Cell #" must NOT have been silently dropped — it should sit
     // on "Ignore this column" until mapped by hand, and be visibly listed so the user knows
     // it exists.
-    const cellRow = modal.locator('div.flex.items-center.gap-3', { has: modal.locator('p', { hasText: 'Cell #' }) })
+    const cellRow = modal.locator('div.flex.items-center.gap-3', { has: page.locator('p', { hasText: 'Cell #' }) })
     await expect(cellRow).toBeVisible()
     await expect(cellRow.locator('select')).toHaveValue('')
     await cellRow.locator('select').selectOption({ label: 'Mobile phone' })
@@ -86,7 +86,7 @@ test.describe('Import wizard', () => {
     await modal.getByRole('button', { name: 'Next' }).click()
 
     // ── Review ──
-    await expect(modal.getByText('Ready')).toBeVisible({ timeout: 15000 })
+    await expect(modal.getByText('Ready', { exact: true })).toBeVisible({ timeout: 15000 })
     await expect(modal.getByText('Problems')).toBeVisible()
     // Deterministic given the fixture: 2 rows are unimportable (duplicate email, bad department).
     const problemsLabel = modal.locator('p', { hasText: 'Problems' })
