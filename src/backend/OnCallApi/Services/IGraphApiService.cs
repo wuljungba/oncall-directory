@@ -12,6 +12,17 @@ public interface IGraphApiService
     /// </summary>
     Task<GraphUserDelta> SyncUsersDeltaAsync(string? entraTenantId, string? deltaToken, CancellationToken ct = default);
     Task<string?> GetUserPresenceAsync(string azureAdObjectId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Presence for many people in one round trip, keyed by Entra object id.
+    ///
+    /// Graph accepts up to 650 ids per call, so this chunks internally: a directory of
+    /// 5,000 costs 8 requests rather than 5,000. Ids Graph does not answer for are simply
+    /// absent from the result — callers must treat that as "nothing learned", not as
+    /// evidence the person is offline.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, string>> GetPresencesAsync(
+        IReadOnlyCollection<string> azureAdObjectIds, CancellationToken ct = default);
     Task SendTeamsNotificationAsync(string userId, string title, string message, CancellationToken ct = default);
     /// <summary>
     /// Sends a Teams message. Returns false when it could not be delivered — including the

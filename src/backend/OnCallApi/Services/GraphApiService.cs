@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Azure.Identity;
 using Microsoft.Graph;
+using Microsoft.Graph.Communications.GetPresencesByUserId;
 using Microsoft.Graph.Models;
 using Microsoft.Graph.Models.ODataErrors;
 using Microsoft.Extensions.Options;
@@ -193,6 +194,48 @@ public class GraphApiService : IGraphApiService
         {
             return "unknown";
         }
+    }
+
+    /// <summary>Graph's documented ceiling for one getPresencesByUserId request.</summary>
+    private const int PresenceBatchSize = 650;
+
+    public async Task<IReadOnlyDictionary<string, string>> GetPresencesAsync(
+        IReadOnlyCollection<string> azureAdObjectIds, CancellationToken ct = default)
+    {
+        var presences = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (azureAdObjectIds.Count == 0) return presences;
+
+        var ids = azureAdObjectIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var chunk in ids.Chunk(PresenceBatchSize))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var body = new GetPresencesByUserIdPostRequestBody { Ids = chunk.ToList() };
+                var response = await GetClient().Communications.GetPresencesByUserId
+                    .PostAsGetPresencesByUserIdPostResponseAsync(body, cancellationToken: ct);
+
+                foreach (var presence in response?.Value ?? [])
+                {
+                    if (string.IsNullOrEmpty(presence.Id)) continue;
+                    presences[presence.Id] = NormalizePresence(presence.Availability);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One rejected chunk costs us that chunk, not the whole directory. Left out
+                // of the result rather than recorded as "unknown": the caller can tell the
+                // difference between a person who is offline and one we failed to ask about.
+                _logger.LogError(ex, "Presence batch failed for {Count} of {Total} user(s)",
+                    chunk.Length, ids.Length);
+            }
+        }
+
+        return presences;
     }
 
     /// <summary>
