@@ -556,6 +556,12 @@ builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
 builder.Services.AddHostedService<AuditBackgroundService>();
 
+// The audit table is the fastest-growing thing in the schema and nothing ever pruned it.
+// Rows past the hot window are written to blob storage and only then deleted, so the six
+// years Hipaa:AuditLogRetentionDays asks for are actually kept somewhere. Off unless
+// Hipaa:AuditArchive:Enabled says otherwise — it deletes audit records.
+builder.Services.AddHostedService<AuditArchiveService>();
+
 // Staged import rows are a full copy of an uploaded staff list. An abandoned upload would
 // otherwise keep one indefinitely, so unfinished imports are discarded after a week and a
 // committed import's rows after a month — its header is kept as the record.
