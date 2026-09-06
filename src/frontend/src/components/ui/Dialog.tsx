@@ -40,6 +40,11 @@ export interface ConfirmOptions {
   body?: string
   confirmLabel?: string
   cancelLabel?: string
+  /**
+   * Rendered instead of `body` when present. A bulk action has to show counts and a list,
+   * which a single paragraph of text cannot carry without becoming unreadable.
+   */
+  bodyNode?: React.ReactNode
   /** Red confirm button, for anything that destroys or cancels a record. */
   danger?: boolean
 }
@@ -156,6 +161,7 @@ function DialogHost({ pending, value, onChange, onCancel, onConfirm }: {
 
   const title = promptOptions?.title ?? confirmOptions?.title ?? ''
   const body = promptOptions?.body ?? confirmOptions?.body
+  const bodyNode = confirmOptions?.bodyNode
   const danger = !!confirmOptions?.danger
 
   return (
@@ -172,7 +178,9 @@ function DialogHost({ pending, value, onChange, onCancel, onConfirm }: {
       >
         <div className="px-5 py-4 border-b border-gray-800">
           <h2 className="text-base font-medium text-gray-100">{title}</h2>
-          {body && <p className="text-xs text-gray-500 mt-1 leading-relaxed">{body}</p>}
+          {bodyNode
+            ? <div className="text-xs text-gray-500 mt-1 leading-relaxed">{bodyNode}</div>
+            : body && <p className="text-xs text-gray-500 mt-1 leading-relaxed">{body}</p>}
         </div>
 
         <form

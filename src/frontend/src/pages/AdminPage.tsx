@@ -7,8 +7,12 @@ import {
 import { adminApi, integrationsApi, settingsApi, scheduleApi, tenantsApi, identitiesApi, verificationApi } from '@/services/api'
 import { useAuth } from '@/hooks/useAuth'
 import { formatDateOnly } from '@/utils/date'
-import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity } from '@/types'
+import { SOURCE_FILTERS, matchesSource } from '@/constants/permissions'
+import { contactName, contactInitials } from '@/utils/contacts'
+import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity, BulkActionResult } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
+import BulkPermissionModal from './admin/BulkPermissionModal'
+import BulkResultPanel from './admin/BulkResultPanel'
 import PermissionsSection from './admin/PermissionsSection'
 import SharedSchedulesSection from './admin/SharedSchedulesSection'
 import OnboardingHealthSection from './admin/OnboardingHealthSection'
@@ -309,6 +313,17 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // ── Bulk selection ──
+  // Deliberately not cleared when the filters change: the natural way to build a batch is
+  // search, select, search again, select again, and clearing on every keystroke would make that
+  // impossible. The count below says how many of the selected are currently out of view.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [sourceFilter, setSourceFilter] = useState('')
+  const [bulkBusy, setBulkBusy] = useState<string | null>(null)
+  const [bulkResult, setBulkResult] = useState<BulkActionResult | null>(null)
+  const [showBulkPermissions, setShowBulkPermissions] = useState(false)
+  const { employeeId: myEmployeeId } = useAuth()
+
   useEffect(() => { loadData() }, [])
 
   async function loadData() {
@@ -325,6 +340,7 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
   }
 
   const filtered = employees.filter(e => {
+    if (!matchesSource(e.source, sourceFilter)) return false
     if (!search) return true
     const q = search.toLowerCase()
     return e.firstName.toLowerCase().includes(q)
@@ -333,6 +349,143 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
       || (e.email?.toLowerCase().includes(q) ?? false)
       || (e.title && e.title.toLowerCase().includes(q))
   })
+
+  // ── Bulk selection ──
+
+  const selectable = filtered.filter(e => e.id !== myEmployeeId)
+  const allShownSelected = selectable.length > 0 && selectable.every(e => selected.has(e.id))
+  const someShownSelected = selectable.some(e => selected.has(e.id))
+  const selectedEmployees = employees.filter(e => selected.has(e.id))
+  const hiddenSelected = selected.size - filtered.filter(e => selected.has(e.id)).length
+
+  const toggleOne = (id: string) => setSelected(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  })
+
+  function toggleAllShown() {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (allShownSelected) selectable.forEach(e => next.delete(e.id))
+      else selectable.forEach(e => next.add(e.id))
+      return next
+    })
+  }
+
+  /** Names, so a confirmation shows who rather than only how many. */
+  function nameList(list: Employee[], limit = 8) {
+    const names = list.slice(0, limit).map(e => e.displayName || `${e.firstName} ${e.lastName}`.trim())
+    return list.length > limit ? `${names.join(', ')} and ${list.length - limit} more` : names.join(', ')
+  }
+
+  async function applyBulkResult(result: BulkActionResult) {
+    setBulkResult(result)
+    // The row set really changed, so refetch rather than patching in place — and drop only the
+    // records that actually succeeded, leaving the blocked ones selected to act on.
+    await loadData()
+    const done = new Set(result.results.filter(r => r.outcome === 'succeeded').map(r => r.employeeId))
+    setSelected(prev => new Set([...prev].filter(id => !done.has(id))))
+  }
+
+  async function runBulk(
+    action: 'deactivate' | 'reactivate' | 'delete',
+    call: () => Promise<BulkActionResult>,
+  ) {
+    setBulkBusy(action)
+    setError(null)
+    try {
+      await applyBulkResult(await call())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not ${action} the selected records.`)
+    }
+    setBulkBusy(null)
+  }
+
+  async function handleBulkDeactivate() {
+    const noEmail = selectedEmployees.filter(e => !e.email).length
+    const ok = await dialog.confirm({
+      title: `Deactivate ${selectedEmployees.length} ${selectedEmployees.length === 1 ? 'record' : 'records'}?`,
+      bodyNode: (
+        <span className="block space-y-2">
+          <span className="block">{nameList(selectedEmployees)}</span>
+          <span className="block text-amber-400">
+            Their permissions are revoked as well. Reactivating later does <strong>not</strong> give
+            those back — they have to be granted again.
+          </span>
+          {noEmail > 0 && (
+            <span className="block">{noEmail} {noEmail === 1 ? 'has' : 'have'} no email address, so there is nothing to revoke for them.</span>
+          )}
+        </span>
+      ),
+      confirmLabel: 'Deactivate',
+      cancelLabel: 'Cancel',
+      danger: true,
+    })
+    if (ok) await runBulk('deactivate', () => adminApi.bulkDeactivate([...selected]))
+  }
+
+  async function handleBulkReactivate() {
+    const ok = await dialog.confirm({
+      title: `Reactivate ${selectedEmployees.length} ${selectedEmployees.length === 1 ? 'record' : 'records'}?`,
+      body: 'They return to the directory. Permissions are not restored — use Assign permissions afterwards.',
+      confirmLabel: 'Reactivate',
+      cancelLabel: 'Cancel',
+    })
+    if (ok) await runBulk('reactivate', () => adminApi.bulkReactivate([...selected]))
+  }
+
+  async function handleBulkDelete() {
+    const n = selectedEmployees.length
+    // Typing the count, not just clicking through: this is the one action with no undo, and the
+    // click target is identical whether it is 3 records or 300.
+    const typed = await dialog.prompt({
+      title: `Permanently delete ${n} ${n === 1 ? 'record' : 'records'}?`,
+      body: 'This cannot be undone. Anyone referenced by schedule, time-off or phone-tree history '
+        + 'is refused and left active — you will see which. Permissions are revoked for the rest.',
+      label: `Type ${n} to confirm`,
+      confirmLabel: 'Delete permanently',
+      required: true,
+    })
+    if (typed === null || typed.trim() !== String(n)) return
+
+    // Deliberately not acknowledged yet. Only the server knows which of these people hold admin
+    // rights that deletion will not remove, so it gets to refuse first and say who — passing
+    // true up front would turn its guard into a formality.
+    try {
+      setBulkBusy('delete')
+      const result = await adminApi.bulkDelete([...selected], false)
+      await applyBulkResult(result)
+      setBulkBusy(null)
+      return
+    } catch (err) {
+      setBulkBusy(null)
+      const message = err instanceof Error ? err.message : ''
+      if (!message.toLowerCase().includes('administrator')) {
+        setError(message || 'Could not delete the selected records.')
+        return
+      }
+
+      const proceed = await dialog.confirm({
+        title: 'Some of these are administrators',
+        bodyNode: (
+          <span className="block space-y-2">
+            <span className="block">{message}</span>
+            <span className="block text-amber-400">
+              Deleting their directory record does <strong>not</strong> take away their
+              administrator access. Remove that under Subscriptions.
+            </span>
+          </span>
+        ),
+        confirmLabel: 'Delete anyway',
+        cancelLabel: 'Cancel',
+        danger: true,
+      })
+      if (!proceed) return
+    }
+
+    await runBulk('delete', () => adminApi.bulkDelete([...selected], true))
+  }
 
   async function handleSave(data: Partial<Employee>) {
     try {
@@ -400,6 +553,16 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
             className="w-full bg-gray-900 border border-gray-700 rounded-xl pl-11 pr-4 py-2.5 text-sm focus:outline-none focus:border-amber-600"
           />
         </div>
+        {/* "First created by", not "came from the last upload": a CSV row that merges into an
+            existing person leaves this alone. */}
+        <select
+          value={sourceFilter}
+          onChange={e => setSourceFilter(e.target.value)}
+          title="How the record was first created"
+          className="bg-gray-900 border border-gray-700 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-amber-600"
+        >
+          {SOURCE_FILTERS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+        </select>
         <button
           onClick={() => { setEditingEmployee(null); setShowModal(true) }}
           className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg text-sm font-medium transition-colors"
@@ -408,8 +571,85 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
         </button>
       </div>
 
+      {bulkResult && (
+        <BulkResultPanel
+          result={bulkResult}
+          onDismiss={() => setBulkResult(null)}
+          onSelectIds={ids => setSelected(new Set(ids))}
+        />
+      )}
+
+      {selected.size > 0 && (
+        // Fixed to the viewport, not sticky to the page. The shell wraps content in a
+        // `min-h-screen` column whose `main` has `overflow-auto` but never actually scrolls —
+        // the document does — so `sticky top-0` had no scroll range at all and the bar simply
+        // left the screen. Pinning it here keeps it reachable without restructuring the layout
+        // every other page depends on.
+        <div data-testid="bulk-action-bar" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-30 flex flex-wrap items-center gap-2 bg-gray-900 border border-amber-600/40 shadow-2xl rounded-xl px-5 py-3 max-w-[calc(100vw-3rem)]">
+          <span className="text-sm">
+            <span className="font-medium text-amber-400">{selected.size}</span> selected
+            {hiddenSelected > 0 && (
+              <span className="text-gray-500"> ({hiddenSelected} not shown by the current filter)</span>
+            )}
+          </span>
+          <div className="flex-1" />
+          <button
+            onClick={handleBulkDeactivate}
+            disabled={!!bulkBusy}
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors disabled:opacity-50"
+          >
+            {bulkBusy === 'deactivate' ? `Working on ${selected.size}…` : 'Deactivate'}
+          </button>
+          <button
+            onClick={handleBulkReactivate}
+            disabled={!!bulkBusy}
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors disabled:opacity-50"
+          >
+            {bulkBusy === 'reactivate' ? `Working on ${selected.size}…` : 'Reactivate'}
+          </button>
+          <button
+            onClick={() => setShowBulkPermissions(true)}
+            disabled={!!bulkBusy}
+            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+          >
+            Assign permissions…
+          </button>
+          <span className="w-px h-5 bg-gray-700 mx-1" />
+          <button
+            onClick={handleBulkDelete}
+            disabled={!!bulkBusy}
+            className="px-3 py-1.5 bg-red-600/20 text-red-400 border border-red-600/40 hover:bg-red-600/30 rounded-lg text-xs transition-colors disabled:opacity-50"
+          >
+            {bulkBusy === 'delete' ? `Working on ${selected.size}…` : 'Delete permanently'}
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            disabled={!!bulkBusy}
+            className="px-3 py-1.5 text-xs text-gray-400 hover:text-gray-200 disabled:opacity-50"
+          >
+            Clear
+          </button>
+        </div>
+      )}
+
       <div className="bg-gray-900 border border-gray-800 rounded-xl">
-        <div className="px-5 py-4 border-b border-gray-800">
+        <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-3">
+          {selectable.length > 0 && (
+            <label className="flex items-center gap-2 text-sm text-gray-500 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allShownSelected}
+                // Some-but-not-all reads as "none" without this, which misrepresents the
+                // selection the action bar is about to act on.
+                ref={el => { if (el) el.indeterminate = !allShownSelected && someShownSelected }}
+                onChange={toggleAllShown}
+                className="accent-amber-600"
+                aria-label={`Select all ${selectable.length} shown`}
+              />
+              Select all {selectable.length} shown
+            </label>
+          )}
+          <div className="flex-1" />
           <p className="text-sm text-gray-500">{filtered.length} employee{filtered.length !== 1 ? 's' : ''}</p>
         </div>
         {filtered.length === 0 ? (
@@ -428,14 +668,27 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
             {filtered.map(emp => (
               <div key={emp.id} className="px-5 py-4 flex items-center justify-between group">
                 <div className="flex items-center gap-3 min-w-0">
+                  {/* Your own record is not selectable: the realistic accident is "select all,
+                      deactivate", which locks you out part-way through your own batch. */}
+                  <input
+                    type="checkbox"
+                    checked={selected.has(emp.id)}
+                    disabled={emp.id === myEmployeeId}
+                    onChange={() => toggleOne(emp.id)}
+                    title={emp.id === myEmployeeId ? 'You cannot include your own record' : undefined}
+                    aria-label={`Select ${contactName(emp)}`}
+                    className="accent-amber-600 flex-shrink-0 disabled:opacity-30"
+                  />
                   <div className="w-10 h-10 rounded-full bg-gray-700 flex items-center justify-center text-sm font-medium flex-shrink-0">
-                    {emp.firstName?.charAt(0)}{emp.lastName?.charAt(0)}
+                    {contactInitials(emp)}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{emp.firstName} {emp.lastName}</p>
+                    {/* A unit or service line has no first or last name, only a displayName, so
+                        rendering the two name fields left the row blank — selectable, deletable,
+                        and impossible to identify. */}
+                    <p className="text-sm font-medium truncate">{contactName(emp)}</p>
                     <p className="text-xs text-gray-500 truncate">
-                      {emp.email}
-                      {emp.department ? ` · ${emp.department.name}` : ''}
+                      {[emp.email, emp.department?.name].filter(Boolean).join(' · ') || '—'}
                     </p>
                   </div>
                 </div>
@@ -490,6 +743,42 @@ function AccountsSection({ tenants, canPickTenant, activeTenantId }: {
           activeTenantId={activeTenantId}
           onSave={handleSave}
           onClose={() => { setShowModal(false); setEditingEmployee(null) }}
+        />
+      )}
+
+      {showBulkPermissions && (
+        <BulkPermissionModal
+          employees={selectedEmployees}
+          tenants={tenants}
+          onClose={() => setShowBulkPermissions(false)}
+          onDone={async result => {
+            setShowBulkPermissions(false)
+            // Reported through the same result panel as every other bulk action rather than the
+            // red error banner, which is what a success used to be announced in. The per-record
+            // outcomes are the useful half — who was skipped, and why.
+            await applyBulkResult({
+              action: 'grant',
+              batchId: result.batchId,
+              requested: result.requested,
+              succeeded: result.granted + result.replaced,
+              blocked: 0,
+              skipped: result.skipped,
+              notFound: result.notFound,
+              grantsRevoked: 0,
+              signInsDisabled: 0,
+              systemWideGrantsLeft: 0,
+              privilegedPrincipals: 0,
+              results: result.results.map(r => ({
+                employeeId: r.employeeId,
+                email: r.email,
+                outcome: r.outcome,
+                message: r.message,
+                grantsRevoked: 0,
+                signInsDisabled: 0,
+                isPrivilegedPrincipal: false,
+              })),
+            })
+          }}
         />
       )}
     </div>

@@ -104,6 +104,68 @@ export interface Employee {
   presence: 'available' | 'busy' | 'dnd' | 'offline' | 'unknown'
   isActive: boolean
   lastSyncedAt: string
+  /**
+   * How the record was first created: "Ad", "CsvImport", "Local", or "" on legacy rows.
+   *
+   * Deliberately a plain string, not a union — the empty value genuinely exists, and a union
+   * would make the type claim something the data does not honour. Note this records how a
+   * record was *first created*: a CSV row that merges into an existing person leaves it alone,
+   * so it is not a record of which upload last touched someone.
+   */
+  source?: string
+}
+
+/** One record's outcome in a bulk admin action. */
+export interface BulkItemResult {
+  employeeId: string
+  /** Null when the record was not found or belongs to another subscription. */
+  displayName?: string
+  email?: string
+  outcome: string
+  message?: string
+  grantsRevoked: number
+  /**
+   * Local sign-in accounts switched off. Revoking grants alone leaves a working credential —
+   * a LocalAccount has its own active flag and no foreign key to the employee.
+   */
+  signInsDisabled: number
+  /** Holds admin rights that revoking permission grants does not remove. */
+  isPrivilegedPrincipal: boolean
+}
+
+export interface BulkActionResult {
+  action: string
+  batchId: string
+  requested: number
+  succeeded: number
+  blocked: number
+  skipped: number
+  notFound: number
+  grantsRevoked: number
+  signInsDisabled: number
+  systemWideGrantsLeft: number
+  privilegedPrincipals: number
+  results: BulkItemResult[]
+}
+
+export interface BulkGrantItemResult {
+  employeeId: string
+  email?: string
+  outcome: string
+  message?: string
+  grantId?: number
+}
+
+export interface BulkGrantResult {
+  tenantId?: number
+  permissions: string[]
+  batchId: string
+  requested: number
+  granted: number
+  replaced: number
+  skipped: number
+  notFound: number
+  results: BulkGrantItemResult[]
 }
 
 export interface Schedule {

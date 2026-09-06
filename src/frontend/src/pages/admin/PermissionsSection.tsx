@@ -3,15 +3,8 @@ import { AlertTriangle, CheckCircle, Plus, ShieldCheck, Trash2, UserPlus, Users 
 import { accessRequestsApi, identitiesApi, localAccountsApi, permissionsAdminApi, tenantsApi } from '@/services/api'
 import { useDialog } from '@/components/ui/Dialog'
 import { useAuth } from '@/hooks/useAuth'
+import { PERMISSION_OPTIONS } from '@/constants/permissions'
 import type { AccessRequest, LocalAccount, PermissionGrant, SignInIdentity, Tenant } from '@/types'
-
-const PERMISSION_OPTIONS: { key: string; label: string }[] = [
-  { key: 'Schedule.Read', label: 'On-Call Schedule — Read' },
-  { key: 'Schedule.Write', label: 'On-Call Schedule — Write' },
-  { key: 'Directory.Read', label: 'Directory — Read' },
-  { key: 'Directory.Write', label: 'Directory — Write' },
-  { key: 'CodeCall.Write', label: 'Code Call — Write' },
-]
 
 /**
  * Admin tab for assigning on-call schedule read/write (and directory) permissions to a

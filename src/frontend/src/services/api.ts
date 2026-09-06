@@ -29,6 +29,8 @@ import type {
   ConnectionStatus,
   SignInIdentity,
   OrganizationVerification,
+  BulkActionResult,
+  BulkGrantResult,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 
@@ -688,6 +690,28 @@ export const adminApi = {
   getDirectReports: (id: string) =>
     fetchApi<Employee[]>(`/admin/employees/${id}/direct-reports`),
 
+  // Bulk actions. These answer 200 with a per-record report rather than a single status: a
+  // batch where some people are blocked by schedule history is the ordinary outcome, so the
+  // caller has to read the body, not the status code.
+  bulkDeactivate: (employeeIds: string[], reason?: string) =>
+    fetchApi<BulkActionResult>('/admin/employees/bulk/deactivate', {
+      method: 'POST', body: JSON.stringify({ employeeIds, reason }),
+    }),
+  bulkReactivate: (employeeIds: string[], reason?: string) =>
+    fetchApi<BulkActionResult>('/admin/employees/bulk/reactivate', {
+      method: 'POST', body: JSON.stringify({ employeeIds, reason }),
+    }),
+  /**
+   * Call this with `acknowledgePrivileged: false` first. When the batch contains someone whose
+   * admin rights deletion will NOT remove, the server answers 400 and names them; show that to
+   * the caller and only then retry with true. Passing true up front defeats the guard — which
+   * is what the first version of this did.
+   */
+  bulkDelete: (employeeIds: string[], acknowledgePrivileged: boolean, reason?: string) =>
+    fetchApi<BulkActionResult>('/admin/employees/bulk/delete', {
+      method: 'POST', body: JSON.stringify({ employeeIds, reason, acknowledgePrivileged }),
+    }),
+
   // Departments
   getAllDepartments: (includeInactive = false, tenantId?: number) =>
     fetchApi<Department[]>(`/admin/departments${buildQueryString({ includeInactive: includeInactive || undefined, tenantId })}`),
@@ -717,6 +741,16 @@ export const permissionsAdminApi = {
     }),
   remove: (id: number) =>
     fetchApi<void>(`/admin/permissions/${id}`, { method: 'DELETE' }),
+  /**
+   * Grant the same permissions to many people, keyed by employee id rather than by address:
+   * uploaded staff have never signed in, so they are absent from the identity list the
+   * single-record form is driven from. Replaces rather than adds, so re-running is safe.
+   */
+  bulkGrant: (data: { tenantId?: number; employeeIds: string[]; permissions: string }) =>
+    fetchApi<BulkGrantResult>('/admin/permissions/bulk', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 }
 
 // ── Admin: who has signed in ──
