@@ -8,7 +8,10 @@ using OnCallApi.Validators;
 
 namespace OnCallApi.Services;
 
-public class AdminService : IAdminService
+// Bulk lifecycle actions live in AdminService.Bulk.cs. They reuse the tenant filter and the
+// audit plumbing here, but their per-record loop and reference pre-flight are long enough that
+// interleaving them with the single-record CRUD would bury both.
+public partial class AdminService : IAdminService
 {
     private readonly AppDbContext _db;
     private readonly ILogger<AdminService> _logger;

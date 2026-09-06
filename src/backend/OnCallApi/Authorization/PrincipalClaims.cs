@@ -38,6 +38,24 @@ public static class PrincipalClaims
             ?? user.FindFirst("preferred_username")?.Value;
     }
 
+    /// <summary>
+    /// Whether a stored directory value could actually key a working permission grant.
+    ///
+    /// Grants hold either an email or an object id in one column, and
+    /// <see cref="Middleware.TenantClaimsMiddleware"/> tells them apart purely by whether the
+    /// string contains "@". So a value with an "@" is an address, not an object id, however
+    /// it reached us.
+    ///
+    /// The importer synthesises "csv-import-{guid}" for a row that arrives with no object id
+    /// (<see cref="Services.BulkImportService"/>), and no token will ever present one. Such a
+    /// value can only ever match a grant that does nothing — which matters when revoking,
+    /// because a match on it would be reported as access removed when none existed.
+    /// </summary>
+    public static bool IsDirectoryObjectId(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && !value.Contains('@')
+        && !value.StartsWith("csv-import-", StringComparison.Ordinal);
+
     /// <summary>The token's home tenant, when it carries one.</summary>
     public static string? GetTenantId(ClaimsPrincipal user)
     {
