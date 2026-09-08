@@ -582,20 +582,13 @@ builder.Services.AddScoped<ITenantScope, TenantScope>();
 builder.Services.AddScoped<OnCallApi.Hubs.ITenantBroadcaster, OnCallApi.Hubs.TenantBroadcaster>();
 builder.Services.AddScoped<TeamsNotificationService>();
 builder.Services.AddScoped<ITeamsNotificationService>(sp => sp.GetRequiredService<TeamsNotificationService>());
+// Whether this instance owns the timer-driven background work. Decided from the slot the
+// platform reports; see ScheduledWorkPolicy for why that is not an app setting.
+var runsScheduledWork = OnCallApi.Configuration.ScheduledWorkPolicy.ShouldRun(builder.Configuration);
+
 builder.Services.AddSingleton<AuditService>();
 builder.Services.AddSingleton<IAuditService>(sp => sp.GetRequiredService<AuditService>());
 builder.Services.AddHostedService<AuditBackgroundService>();
-
-// The audit table is the fastest-growing thing in the schema and nothing ever pruned it.
-// Rows past the hot window are written to blob storage and only then deleted, so the six
-// years Hipaa:AuditLogRetentionDays asks for are actually kept somewhere. Off unless
-// Hipaa:AuditArchive:Enabled says otherwise — it deletes audit records.
-builder.Services.AddHostedService<AuditArchiveService>();
-
-// Staged import rows are a full copy of an uploaded staff list. An abandoned upload would
-// otherwise keep one indefinitely, so unfinished imports are discarded after a week and a
-// committed import's rows after a month — its header is kept as the record.
-builder.Services.AddHostedService<OnCallApi.Services.Import.ImportJobCleanupService>();
 
 // Sign-in identity directory: same channel + background-flusher shape as the audit log,
 // so recording who signed in costs nothing on the request path.
@@ -604,10 +597,45 @@ builder.Services.AddSingleton<IIdentityDirectoryService>(sp => sp.GetRequiredSer
 builder.Services.AddHostedService<IdentityDirectoryBackgroundService>();
 builder.Services.AddScoped<IAccessRequestService, AccessRequestService>();
 builder.Services.AddScoped<IAdDirectorySyncService, AdDirectorySyncService>();
-builder.Services.AddHostedService<AdSyncBackgroundService>();
-builder.Services.AddHostedService<DepartmentSyncService>();
-builder.Services.AddHostedService<PresenceSyncService>();
-builder.Services.AddHostedService<CalendarSyncService>();
+
+// ── Timer-driven background work: the live slot only ──
+//
+// These seven poll on a timer and act on state every instance shares, so running them in
+// two places at once is not twice the work, it is a race. The staging slot runs alwaysOn
+// against the SAME database, and EscalationService reads a shift's last event before
+// deciding to page with nothing atomic in between — so two copies page the same clinician
+// twice for one unacknowledged shift.
+//
+// Deliberately NOT gated: AuditBackgroundService, IdentityDirectoryBackgroundService and
+// DispatchBackgroundService. Those drain in-process queues rather than polling, so gating
+// them would lose this instance's audit rows and sign-in records, and silently drop any
+// dispatch enqueued here — a silent failure on the safety-critical path.
+//
+// This covers the staging slot, NOT two instances of one slot. Scaling out still needs a
+// lease on the escalation path.
+if (runsScheduledWork)
+{
+    // The audit table is the fastest-growing thing in the schema and nothing ever pruned it.
+    // Rows past the hot window are written to blob storage and only then deleted, so the six
+    // years Hipaa:AuditLogRetentionDays asks for are actually kept somewhere. Off unless
+    // Hipaa:AuditArchive:Enabled says otherwise — it deletes audit records.
+    builder.Services.AddHostedService<AuditArchiveService>();
+
+    // Staged import rows are a full copy of an uploaded staff list. An abandoned upload would
+    // otherwise keep one indefinitely, so unfinished imports are discarded after a week and a
+    // committed import's rows after a month — its header is kept as the record.
+    builder.Services.AddHostedService<OnCallApi.Services.Import.ImportJobCleanupService>();
+
+    builder.Services.AddHostedService<AdSyncBackgroundService>();
+    builder.Services.AddHostedService<DepartmentSyncService>();
+    builder.Services.AddHostedService<PresenceSyncService>();
+    builder.Services.AddHostedService<CalendarSyncService>();
+
+    // Moved up from beside TenantSyncService: this is the one whose duplication pages a
+    // clinician twice, and it belongs with the rest of the timer-driven work.
+    builder.Services.AddHostedService<EscalationBackgroundService>();
+}
+
 // AvailabilityService, TeamsBotService and SharePointPublishingService were registered
 // but injected nowhere — dead surface that reads like working functionality. The classes
 // remain; only the DI registrations are removed, so wiring one up is a deliberate act.
@@ -634,7 +662,6 @@ builder.Services.AddSingleton<DispatchBackgroundService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DispatchBackgroundService>());
 
 builder.Services.AddScoped<TenantSyncService>();
-builder.Services.AddHostedService<EscalationBackgroundService>();
 
 // ── SignalR (real-time notifications) ──
 builder.Services.AddSignalR();
@@ -726,6 +753,16 @@ builder.Services.AddControllers(options =>
     });
 
 var app = builder.Build();
+
+// Say which mode this instance came up in. Without this a mis-set gate is invisible, and
+// the moment it could silently invert is a slot swap — when the platform hands the live
+// slot's identity to what used to be staging.
+app.Logger.LogInformation(
+    "Scheduled background work {State} (slot: {Slot}). Timer-driven sync, archive and " +
+    "escalation run on the live slot only; the audit, identity and dispatch queue drains " +
+    "run on every instance.",
+    runsScheduledWork ? "ENABLED" : "DISABLED",
+    OnCallApi.Configuration.ScheduledWorkPolicy.CurrentSlotName() ?? "none/local");
 
 // ── Startup Graph API Health Check ──
 // Verifies Graph API credentials and connectivity immediately at startup.

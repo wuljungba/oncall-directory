@@ -125,6 +125,19 @@ public class IntegrationDiagnosticsController : ControllerBase
 
         return Ok(new { sent = true, messageSid = result.IncidentId, detail = result.Detail });
     }
+
+    /// <summary>
+    /// Whether this instance runs the timer-driven background services, and the slot that
+    /// decision was made from. Worth checking straight after a slot swap: that is the one
+    /// moment the gate could invert, and a silently idle escalation engine looks exactly
+    /// like a quiet night.
+    /// </summary>
+    [HttpGet("scheduled-work")]
+    public ActionResult<object> GetScheduledWorkState([FromServices] IConfiguration config) => Ok(new
+    {
+        runsScheduledWork = ScheduledWorkPolicy.ShouldRun(config),
+        slot = ScheduledWorkPolicy.CurrentSlotName() ?? "none/local",
+    });
 }
 
 public record TestSmsRequest(string ToPhone);
