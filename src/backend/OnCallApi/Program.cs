@@ -582,8 +582,11 @@ builder.Services.AddScoped<ITenantScope, TenantScope>();
 builder.Services.AddScoped<OnCallApi.Hubs.ITenantBroadcaster, OnCallApi.Hubs.TenantBroadcaster>();
 builder.Services.AddScoped<TeamsNotificationService>();
 builder.Services.AddScoped<ITeamsNotificationService>(sp => sp.GetRequiredService<TeamsNotificationService>());
-// Whether this instance owns the timer-driven background work. Decided from the slot the
-// platform reports; see ScheduledWorkPolicy for why that is not an app setting.
+// Whether this instance owns the timer-driven background work. Decided by the sticky
+// per-slot app setting BackgroundServices:RunScheduledWork; see ScheduledWorkPolicy for why
+// the platform's slot name cannot be relied on here.
+var configuredScheduledWork = builder.Configuration.GetValue<bool?>(
+    OnCallApi.Configuration.ScheduledWorkPolicy.ConfigKey);
 var runsScheduledWork = OnCallApi.Configuration.ScheduledWorkPolicy.ShouldRun(builder.Configuration);
 
 builder.Services.AddSingleton<AuditService>();
@@ -758,11 +761,12 @@ var app = builder.Build();
 // the moment it could silently invert is a slot swap — when the platform hands the live
 // slot's identity to what used to be staging.
 app.Logger.LogInformation(
-    "Scheduled background work {State} (slot: {Slot}). Timer-driven sync, archive and " +
-    "escalation run on the live slot only; the audit, identity and dispatch queue drains " +
-    "run on every instance.",
+    "Scheduled background work {State} (setting={Setting}, WEBSITE_SLOT_NAME={Slot}). " +
+    "Timer-driven sync, archive and escalation run on the live slot only; the audit, " +
+    "identity and dispatch queue drains run on every instance.",
     runsScheduledWork ? "ENABLED" : "DISABLED",
-    OnCallApi.Configuration.ScheduledWorkPolicy.CurrentSlotName() ?? "none/local");
+    configuredScheduledWork?.ToString() ?? "unset",
+    OnCallApi.Configuration.ScheduledWorkPolicy.CurrentSlotName() ?? "not reported");
 
 // ── Startup Graph API Health Check ──
 // Verifies Graph API credentials and connectivity immediately at startup.

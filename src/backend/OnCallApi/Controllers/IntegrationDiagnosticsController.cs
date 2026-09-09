@@ -136,7 +136,9 @@ public class IntegrationDiagnosticsController : ControllerBase
     public ActionResult<object> GetScheduledWorkState([FromServices] IConfiguration config) => Ok(new
     {
         runsScheduledWork = ScheduledWorkPolicy.ShouldRun(config),
-        slot = ScheduledWorkPolicy.CurrentSlotName() ?? "none/local",
+        // Both inputs, so a surprising answer can be explained without reading logs.
+        setting = config.GetValue<bool?>(ScheduledWorkPolicy.ConfigKey),
+        slot = ScheduledWorkPolicy.CurrentSlotName() ?? "not reported",
     });
 }
 

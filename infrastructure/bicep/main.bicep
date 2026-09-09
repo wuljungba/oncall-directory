@@ -303,6 +303,9 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'DevAuth__Enabled', value: 'false' }
       ], concat(applicationSettings, concat(twilioSettings, [
         { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackProd }
+        // The live slot owns the timer-driven background work. Sticky (see slotConfigNames
+        // below), so it does not travel with a swap.
+        { name: 'BackgroundServices__RunScheduledWork', value: 'true' }
       ])))
     }
   }
@@ -341,8 +344,37 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
         { name: 'DevAuth__Enabled', value: 'false' }
       ], concat(applicationSettings, concat(twilioSettings, [
         { name: 'Dispatch__Twilio__StatusCallbackUrl', value: twilioStatusCallbackStaging }
+        // Staging shares production's database, so a second copy of the escalation engine
+        // would page the same clinician twice. It must never run the timer-driven work.
+        { name: 'BackgroundServices__RunScheduledWork', value: 'false' }
       ])))
     }
+  }
+}
+
+// ── Sticky (slot) settings ──
+//
+// These app setting names stay with the slot instead of travelling with a swap. Everything
+// else in appSettings is non-sticky and DOES swap, which is what makes per-slot values
+// dangerous unless they are named here.
+//
+// BackgroundServices__RunScheduledWork is why this resource is now declared rather than
+// left to a manual change: it is false on staging, and if it swapped into production it
+// would silently stop AD sync, presence, calendar push, both retention sweeps and the
+// escalation engine. A quiet escalation engine looks exactly like a quiet night.
+//
+// This list REPLACES whatever is configured, so the two names that were already sticky are
+// repeated here on purpose. Dropping either would be its own outage: the connection string
+// is per-slot, and losing its stickiness can leave production without one after a swap.
+resource slotConfigNames 'Microsoft.Web/sites/config@2023-12-01' = {
+  parent: webApp
+  name: 'slotConfigNames'
+  properties: {
+    appSettingNames: [
+      'ConnectionStrings__DefaultConnection'
+      'Dispatch__Twilio__StatusCallbackUrl'
+      'BackgroundServices__RunScheduledWork'
+    ]
   }
 }
 

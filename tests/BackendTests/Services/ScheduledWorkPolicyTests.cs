@@ -44,6 +44,25 @@ public class ScheduledWorkPolicyTests
         ScheduledWorkPolicy.ShouldRun(configured: null, slotName: slot).Should().BeFalse();
     }
 
+    // ── The case this was actually deployed into ──
+    //
+    // Linux App Service does not put WEBSITE_SLOT_NAME in the app container, so the staging
+    // slot looks identical to a developer laptop: no slot name at all. Relying on the slot
+    // name alone meant the gate read "local development" and started all seven services on
+    // staging, against production's database. The setting is what closes that.
+
+    [Fact]
+    public void ShouldRun_SettingFalse_DecidesEvenWhenNoSlotNameIsReported()
+    {
+        ScheduledWorkPolicy.ShouldRun(configured: false, slotName: null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ShouldRun_SettingTrue_DecidesEvenWhenNoSlotNameIsReported()
+    {
+        ScheduledWorkPolicy.ShouldRun(configured: true, slotName: null).Should().BeTrue();
+    }
+
     [Fact]
     public void ShouldRun_ExplicitTrue_BeatsANonProductionSlot()
     {
@@ -53,9 +72,10 @@ public class ScheduledWorkPolicyTests
     [Fact]
     public void ShouldRun_ExplicitFalse_BeatsTheLiveSlot()
     {
-        // The override cuts both ways on purpose, which is exactly why it must never be set
-        // as an Azure app setting: those are non-sticky and swap between slots on deploy, so
-        // a "false" pinned to staging would follow the swap into production.
+        // The setting cuts both ways on purpose -- in Azure it is what actually decides this,
+        // because WEBSITE_SLOT_NAME is not present in the app container on Linux App Service.
+        // That is also why it must be sticky: a "false" that swapped out of staging would stop
+        // every sync and the escalation engine in production.
         ScheduledWorkPolicy.ShouldRun(configured: false, slotName: "Production").Should().BeFalse();
     }
 }
