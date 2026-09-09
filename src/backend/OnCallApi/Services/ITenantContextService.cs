@@ -17,6 +17,13 @@ public interface ITenantContextService
     /// <summary>Returns true if the user is a super admin (has Admin.Full permission).</summary>
     bool IsSuperAdmin(ClaimsPrincipal user);
 
+    /// <summary>
+    /// Why a named principal (email or object id) can reach the tenants it can reach,
+    /// broken down by the rule that granted each. For diagnosing over-broad access without
+    /// having to sign in as the affected user.
+    /// </summary>
+    Task<TenantAccessExplanation> ExplainTenantAccessAsync(string principal);
+
     /// <summary>Returns true if the user has scoped admin access to any tenant.</summary>
     Task<bool> IsTenantAdminAsync(ClaimsPrincipal user);
 

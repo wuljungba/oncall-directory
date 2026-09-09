@@ -113,11 +113,17 @@ public record BulkEmployeeActionResponse
     public List<BulkItemResult> Results { get; init; } = [];
 }
 
+/// <summary>
+/// <paramref name="AllTenants"/> is the explicit opt-in for a system-wide grant. A request
+/// that names no TenantId and does not set it is rejected: an absent scope must never
+/// resolve to the widest one.
+/// </summary>
 public record BulkGrantRequest(
     int? TenantId,
     [Required][MinLength(1)] List<Guid> EmployeeIds,
     [Required] string Permissions,
-    string? PrincipalType = null);
+    string? PrincipalType = null,
+    bool? AllTenants = null);
 
 public record BulkGrantItemResult
 {

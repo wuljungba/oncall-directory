@@ -86,6 +86,55 @@ public class SuperAdminGrantTests
         return request;
     }
 
+    private static HttpRequestMessage PostGrant(string roleCookie, object body)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/admin/permissions")
+        {
+            Content = System.Net.Http.Json.JsonContent.Create(body),
+        };
+        request.Headers.Add("Cookie", $"X-Dev-Role={roleCookie}");
+        return request;
+    }
+
+    [Fact]
+    public async Task SuperAdmin_OmittingTheScope_IsRejectedRatherThanMeaningEveryTenant()
+    {
+        // A grant with no TenantId resolves to every active tenant. That used to also be
+        // what an omitted field looked like, so a super admin who simply did not say which
+        // subscription silently created the widest grant there is — which is how a
+        // tenant-scoped administrator ended up able to read every subscription's directory.
+        using var factory = CreateFactory(configureSuperAdmin: true);
+        using var client = factory.CreateClient();
+
+        using var response = await client.SendAsync(PostGrant("viewer", new
+        {
+            externalPrincipalId = "newuser@example.test",
+            permissions = "Schedule.Read",
+        }));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    }
+
+    [Fact]
+    public async Task SuperAdmin_AskingForSystemWide_StillGetsIt()
+    {
+        // The capability is unchanged — it just has to be requested. Narrowing it would
+        // silently revoke real super-admin access.
+        using var factory = CreateFactory(configureSuperAdmin: true);
+        using var client = factory.CreateClient();
+
+        using var response = await client.SendAsync(PostGrant("viewer", new
+        {
+            allTenants = true,
+            externalPrincipalId = "newuser@example.test",
+            permissions = "Schedule.Read",
+        }));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var grant = await response.Content.ReadFromJsonAsync<PermissionGrantResponse>();
+        grant!.TenantId.Should().BeNull("system-wide is represented by a null TenantId");
+    }
+
     [Fact]
     public async Task ConfiguredSuperAdmin_ViewerRole_GetsFullAccess()
     {

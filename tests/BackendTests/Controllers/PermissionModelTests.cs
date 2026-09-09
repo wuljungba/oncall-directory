@@ -364,6 +364,53 @@ public class PermissionModelTests
     }
 
     /// <summary>
+    /// The write guard is not the last line of defence. A grant row containing Admin.Full —
+    /// which the API strips on the way in, so such a row can only have arrived some other
+    /// way — must still confer nothing administrative when it is expanded into claims.
+    ///
+    /// This matters more than it looks: IsSuperAdmin is a bare check for the Admin.Full
+    /// claim with no tenant dimension, so a single honoured row would promote its holder to
+    /// every tenant in the deployment.
+    /// </summary>
+    [Fact]
+    public async Task AGrantRowCarryingAdminFullConfersNothingAdministrative()
+    {
+        var factory = CreateFactory($"perm-model-{Guid.NewGuid():N}");
+        const string email = "rowwithadmin@hospital.test";
+
+        string token;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.Tenants.Add(new Tenant
+            {
+                Id = 1, Name = "Main Hospital", IsActive = true, CreatedAt = DateTime.UtcNow,
+            });
+            db.PermissionGrants.Add(new PermissionGrant
+            {
+                TenantId = 1,
+                PrincipalType = "external",
+                ExternalPrincipalId = email,
+                Permissions = $"{Permissions.AdminFull},{Permissions.TenantManage},{Permissions.ScheduleRead}",
+                IsActive = true,
+                CreatedAt = DateTime.UtcNow,
+            });
+            db.SaveChanges();
+
+            var jwt = scope.ServiceProvider.GetRequiredService<LocalJwtService>();
+            token = jwt.GenerateToken(41, email, "Row With Admin", new[] { "OnCall.Viewer" });
+        }
+
+        var permissions = await PermissionsFor(factory, token);
+
+        permissions.Should().NotContain(Permissions.AdminFull);
+        permissions.Should().NotContain(Permissions.TenantManage);
+        permissions.Should().NotContain(Permissions.AdminScoped);
+        permissions.Should().Contain(Permissions.ScheduleRead,
+            "the assignable part of the row is still honoured — only the admin claims are refused");
+    }
+
+    /// <summary>
     /// The grant UI must never be able to mint an administrator. AssignablePermissions
     /// excludes the admin permissions and ParseAssignablePermissionCsv enforces it; this
     /// pins the end-to-end result rather than the constant.

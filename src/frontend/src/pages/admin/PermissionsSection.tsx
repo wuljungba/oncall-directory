@@ -20,10 +20,12 @@ export default function PermissionsSection() {
   const [message, setMessage] = useState<string | null>(null)
 
   const [principal, setPrincipal] = useState('')
-  // Only a super admin may grant system-wide; for anyone else the server rejects it, so
-  // don't offer it and don't default to it.
-  const [tenantId, setTenantId] = useState<number | ''>(
-    activeTenantId ?? (canAdminFull ? '' : tenantIds[0] ?? ''),
+  // '' means nothing chosen yet, NOT system-wide. Those were the same value before, so a
+  // super admin who never touched this field silently created a grant reaching every
+  // subscription. System-wide is now 'all' and has to be picked. Prefilled only when there
+  // is exactly one subscription it could mean.
+  const [tenantId, setTenantId] = useState<number | '' | 'all'>(
+    activeTenantId ?? (tenantIds.length === 1 ? tenantIds[0] : ''),
   )
   const [perms, setPerms] = useState<Set<string>>(new Set(['Schedule.Read', 'Schedule.Write']))
   const tenantTouched = useRef(false)
@@ -74,9 +76,11 @@ export default function PermissionsSection() {
     setMessage(null)
     if (!principal.trim()) { setError('Enter the user email or Entra object id.'); return }
     if (perms.size === 0) { setError('Select at least one permission.'); return }
+    if (tenantId === '') { setError('Choose the subscription this grant applies to.'); return }
     try {
       await permissionsAdminApi.create({
-        tenantId: tenantId === '' ? undefined : Number(tenantId),
+        tenantId: typeof tenantId === 'number' ? tenantId : undefined,
+        allTenants: tenantId === 'all' ? true : undefined,
         externalPrincipalId: principal.trim(),
         permissions: [...perms].join(','),
       })
@@ -154,16 +158,24 @@ export default function PermissionsSection() {
           <div>
             <label className="block text-sm text-gray-500 mb-1">Subscription (tenant)</label>
             <select
-              value={tenantId} onChange={e => { tenantTouched.current = true; setTenantId(e.target.value ? Number(e.target.value) : '') }}
+              value={tenantId}
+              onChange={e => {
+                tenantTouched.current = true
+                const v = e.target.value
+                setTenantId(v === '' ? '' : v === 'all' ? 'all' : Number(v))
+              }}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-amber-600"
             >
-              {canAdminFull && <option value={''}>All tenants (system-wide)</option>}
+              <option value="" disabled>— Select subscription —</option>
               {tenantIds.map(id => <option key={id} value={id}>{tenantName(id)}</option>)}
+              {canAdminFull && <option value="all">All tenants (system-wide)</option>}
             </select>
             <p className="text-xs text-gray-600 mt-1">
-              {canAdminFull
-                ? 'Scope the grant to one subscription, or grant system-wide.'
-                : 'Grants are scoped to the subscriptions you administer.'}
+              {tenantId === 'all'
+                ? 'This grant will reach every subscription, including ones added later.'
+                : canAdminFull
+                  ? 'Scope the grant to one subscription, or choose system-wide deliberately.'
+                  : 'Grants are scoped to the subscriptions you administer.'}
             </p>
           </div>
         </div>

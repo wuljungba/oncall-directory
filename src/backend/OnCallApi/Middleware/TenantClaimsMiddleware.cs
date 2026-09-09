@@ -109,7 +109,9 @@ public class TenantClaimsMiddleware
                 // users receive assignable Schedule.Read/Write permissions from the dashboard.
                 try
                 {
-                    await AddPermissionGrantsAsync(identity, context.User, db);
+                    await AddPermissionGrantsAsync(
+                        identity, context.User, db,
+                        context.RequestServices.GetRequiredService<ILogger<TenantClaimsMiddleware>>());
                 }
                 catch (Exception ex)
                 {
@@ -391,8 +393,17 @@ public class TenantClaimsMiddleware
     /// <c>Permission</c> claims (and a tenant claim when the grant is tenant-scoped).
     /// Match is by Entra object id OR email for external principals; local accounts
     /// match by the same email they sign in with.
+    ///
+    /// Only <see cref="Permissions.AssignablePermissions"/> are honoured. A grant row can
+    /// therefore never confer Admin.Full, Admin.Scoped or Tenant.Manage, whatever it
+    /// contains — which matters because <c>IsSuperAdmin</c> is a bare check for the
+    /// Admin.Full claim with no tenant dimension, so a single such row would promote its
+    /// holder to every tenant. The write paths already strip those, but this is the side
+    /// that decides what a token can do, and it must not depend on a row having been
+    /// written correctly.
     /// </summary>
-    private static async Task AddPermissionGrantsAsync(ClaimsIdentity identity, ClaimsPrincipal user, AppDbContext db)
+    private static async Task AddPermissionGrantsAsync(
+        ClaimsIdentity identity, ClaimsPrincipal user, AppDbContext db, ILogger logger)
     {
         var oid = GetAzureAdObjectId(user);
         var email = GetEmail(user);
@@ -424,7 +435,20 @@ public class TenantClaimsMiddleware
                 identity.AddClaim(new Claim($"TenantId:{grant.TenantId.Value}", "PermissionGrant"));
             }
 
-            foreach (var perm in Permissions.ParsePermissionCsv(grant.Permissions))
+            // Anything the row claims beyond the assignable set is dropped and named. A row
+            // like this cannot be created through the API, so its presence means it was
+            // written some other way and is worth surfacing rather than silently ignoring.
+            var honoured = Permissions.ParseAssignablePermissionCsv(grant.Permissions);
+            var refused = Permissions.ParsePermissionCsv(grant.Permissions).Except(honoured).ToArray();
+            if (refused.Length > 0)
+            {
+                logger.LogWarning(
+                    "PermissionGrant {GrantId} carries non-assignable permission(s) {Refused}; " +
+                    "ignored. A grant can never confer admin rights — check how this row was written.",
+                    grant.Id, string.Join(",", refused));
+            }
+
+            foreach (var perm in honoured)
             {
                 if (!identity.HasClaim(Permissions.ClaimType, perm))
                 {

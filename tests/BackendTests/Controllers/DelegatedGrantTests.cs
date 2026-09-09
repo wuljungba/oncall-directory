@@ -123,9 +123,10 @@ public class DelegatedGrantTests
         using var factory = CreateFactory(asScopedAdmin: true);
         using var client = factory.CreateClient();
 
-        // Omitting tenantId means "all tenants" — a super-admin-only reach.
+        // System-wide has to be asked for explicitly, and is a super-admin-only reach.
         using var response = await client.SendAsync(Post(ScopedAdminToken(factory), new
         {
+            allTenants = true,
             externalPrincipalId = "newuser@example.test",
             permissions = "Schedule.Read",
         }));

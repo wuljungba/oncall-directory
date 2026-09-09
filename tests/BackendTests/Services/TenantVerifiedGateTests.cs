@@ -154,5 +154,9 @@ public class TenantVerifiedGateTests
         public Task<bool> IsTenantAdminAsync(ClaimsPrincipal user) => Task.FromResult(false);
         public Task<Guid?> GetCurrentEmployeeIdAsync(ClaimsPrincipal user) => Task.FromResult<Guid?>(null);
         public Task<int?> GetDepartmentTenantIdAsync(int departmentId) => Task.FromResult<int?>(null);
+
+        // Not exercised by these tests: this gate cares about write access, not attribution.
+        public Task<OnCallApi.Services.TenantAccessExplanation> ExplainTenantAccessAsync(string principal) =>
+            Task.FromResult(new OnCallApi.Services.TenantAccessExplanation { Principal = principal });
     }
 }

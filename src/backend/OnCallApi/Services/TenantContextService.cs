@@ -13,15 +13,153 @@ public class TenantContextService : ITenantContextService
 {
     private readonly AppDbContext _db;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly OnCallApi.Configuration.SuperAdminOptions _superAdmins;
 
     private const string TenantIdsCacheKey = "TenantContext_AuthorizedTenantIds";
     private const string TenantRoleCacheKey = "TenantContext_UserTenantRole";
     private const string IsTenantAdminCacheKey = "TenantContext_IsTenantAdmin";
 
-    public TenantContextService(AppDbContext db, IHttpContextAccessor httpContextAccessor)
+    /// <summary>
+    /// <paramref name="superAdmins"/> is optional so the service can still be constructed
+    /// with two arguments, which a number of tests do. DI always supplies it; without it the
+    /// diagnostic simply reports nobody as a configured super admin.
+    /// </summary>
+    public TenantContextService(
+        AppDbContext db,
+        IHttpContextAccessor httpContextAccessor,
+        Microsoft.Extensions.Options.IOptions<OnCallApi.Configuration.SuperAdminOptions>? superAdmins = null)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
+        _superAdmins = superAdmins?.Value ?? new OnCallApi.Configuration.SuperAdminOptions();
+    }
+
+    /// <summary>Every active tenant. The value a system-wide grant resolves to.</summary>
+    private Task<List<int>> ActiveTenantIdsAsync() =>
+        _db.Tenants.Where(t => t.IsActive).Select(t => t.Id).ToListAsync();
+
+    /// <summary>
+    /// Why a named principal can reach the tenants it can reach.
+    ///
+    /// Takes an email or object id rather than a ClaimsPrincipal, because the point is to
+    /// explain somebody else's access without their token. The consequence is that the
+    /// connected-directory (`tid`) rule cannot be evaluated here — it depends on a claim only
+    /// their token carries — so it is reported as conditional rather than counted.
+    /// </summary>
+    public async Task<TenantAccessExplanation> ExplainTenantAccessAsync(string principal)
+    {
+        var who = (principal ?? string.Empty).Trim();
+        var sources = new List<TenantAccessSource>();
+        var effective = new List<int>();
+
+        if (who.Length == 0)
+            return new TenantAccessExplanation { Principal = who };
+
+        var allActive = await ActiveTenantIdsAsync();
+
+        // ── Configured super admin: the only legitimate source of Admin.Full ──
+        var byEmail = _superAdmins.Emails.Contains(who, StringComparer.OrdinalIgnoreCase);
+        var byOid = _superAdmins.ObjectIds.Contains(who, StringComparer.OrdinalIgnoreCase);
+        if (byEmail || byOid)
+        {
+            sources.Add(new TenantAccessSource
+            {
+                Source = "SuperAdminConfig",
+                TenantIds = allActive,
+                Detail = $"Listed in Authentication:SuperAdmins:{(byEmail ? "Emails" : "ObjectIds")}. "
+                       + "Holds Admin.Full, which short-circuits to every active tenant.",
+            });
+            effective.AddRange(allActive);
+        }
+
+        // ── TenantAdmin rows. Matched on object id, so an address never matches one. ──
+        if (!who.Contains('@'))
+        {
+            var adminRows = await _db.TenantAdmins
+                .Where(a => a.AzureAdObjectId == who && a.Tenant.IsActive)
+                .Select(a => new { a.TenantId, a.Role })
+                .ToListAsync();
+
+            if (adminRows.Count > 0)
+            {
+                sources.Add(new TenantAccessSource
+                {
+                    Source = "TenantAdmin",
+                    TenantIds = adminRows.Select(a => a.TenantId).Distinct().ToList(),
+                    Detail = $"{adminRows.Count} TenantAdmin row(s), role(s) "
+                           + $"{string.Join(", ", adminRows.Select(a => a.Role).Distinct())}. "
+                           + "Confers Admin.Scoped on those tenants only.",
+                });
+                effective.AddRange(adminRows.Select(a => a.TenantId));
+            }
+        }
+
+        // ── Permission grants. A null TenantId is the widest grant there is. ──
+        var grants = await _db.PermissionGrants
+            .Where(g => g.IsActive && g.ExternalPrincipalId == who)
+            .Select(g => new { g.Id, g.TenantId, g.Permissions })
+            .ToListAsync();
+
+        foreach (var g in grants)
+        {
+            if (g.TenantId == null)
+            {
+                sources.Add(new TenantAccessSource
+                {
+                    Source = "PermissionGrant",
+                    TenantIds = allActive,
+                    Detail = $"Grant #{g.Id} has NO TenantId — a system-wide grant, which resolves to "
+                           + $"every active tenant. Permissions: {g.Permissions}.",
+                });
+                effective.AddRange(allActive);
+            }
+            else if (allActive.Contains(g.TenantId.Value))
+            {
+                sources.Add(new TenantAccessSource
+                {
+                    Source = "PermissionGrant",
+                    TenantIds = [g.TenantId.Value],
+                    Detail = $"Grant #{g.Id}, scoped to tenant {g.TenantId.Value}. Permissions: {g.Permissions}.",
+                });
+                effective.Add(g.TenantId.Value);
+            }
+            else
+            {
+                sources.Add(new TenantAccessSource
+                {
+                    Source = "PermissionGrant",
+                    TenantIds = [],
+                    Detail = $"Grant #{g.Id} points at tenant {g.TenantId.Value}, which is not active — contributes nothing.",
+                });
+            }
+        }
+
+        // ── Connected directory. Cannot be settled without their token. ──
+        var connected = await _db.Tenants
+            .Where(t => t.IsActive && t.AzureAdTenantId != null && t.AzureAdTenantId != "")
+            .Select(t => new { t.Id, t.Name, t.AzureAdTenantId })
+            .ToListAsync();
+
+        if (connected.Count > 0)
+        {
+            sources.Add(new TenantAccessSource
+            {
+                Source = "ConnectedDirectory",
+                Conditional = true,
+                TenantIds = connected.Select(c => c.Id).ToList(),
+                Detail = "Applies only if this principal's token carries a tid matching one of: "
+                       + string.Join(", ", connected.Select(c => $"{c.Name}={c.AzureAdTenantId}"))
+                       + ". Not determinable without their token; a Google or local account carries no tid.",
+            });
+        }
+
+        return new TenantAccessExplanation
+        {
+            Principal = who,
+            IsConfiguredSuperAdmin = byEmail || byOid,
+            EffectiveTenantIds = effective.Distinct().OrderBy(id => id).ToList(),
+            Sources = sources,
+        };
     }
 
     public bool IsSuperAdmin(ClaimsPrincipal user)

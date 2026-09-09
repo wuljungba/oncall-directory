@@ -729,7 +729,7 @@ export const adminApi = {
 export const permissionsAdminApi = {
   list: (tenantId?: number) =>
     fetchApi<PermissionGrant[]>(`/admin/permissions${tenantId ? `?tenantId=${tenantId}` : ''}`),
-  create: (data: { tenantId?: number; principalType?: string; externalPrincipalId: string; permissions: string }) =>
+  create: (data: { tenantId?: number; allTenants?: boolean; principalType?: string; externalPrincipalId: string; permissions: string }) =>
     fetchApi<PermissionGrant>('/admin/permissions', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -746,7 +746,7 @@ export const permissionsAdminApi = {
    * uploaded staff have never signed in, so they are absent from the identity list the
    * single-record form is driven from. Replaces rather than adds, so re-running is safe.
    */
-  bulkGrant: (data: { tenantId?: number; employeeIds: string[]; permissions: string }) =>
+  bulkGrant: (data: { tenantId?: number; allTenants?: boolean; employeeIds: string[]; permissions: string }) =>
     fetchApi<BulkGrantResult>('/admin/permissions/bulk', {
       method: 'POST',
       body: JSON.stringify(data),

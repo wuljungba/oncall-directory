@@ -134,14 +134,32 @@ public class BulkGrantTests
         using var factory = CreateFactory($"bulk-grant-{Guid.NewGuid():N}");
         using var client = factory.CreateClient();
 
-        // Omitting the tenant is the widest grant there is — it resolves to every subscription.
+        // System-wide is the widest grant there is — it reaches every subscription — so it
+        // has to be asked for, and only a super admin may have it.
+        using var response = await client.SendAsync(Post(Token(factory), new
+        {
+            allTenants = true,
+            employeeIds = new[] { AliceId },
+            permissions = "Schedule.Read",
+        }));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        Db(factory).PermissionGrants.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task OmittingTheScopeIsRejected_RatherThanMeaningEveryTenant()
+    {
+        using var factory = CreateFactory($"bulk-grant-{Guid.NewGuid():N}");
+        using var client = factory.CreateClient();
+
         using var response = await client.SendAsync(Post(Token(factory), new
         {
             employeeIds = new[] { AliceId },
             permissions = "Schedule.Read",
         }));
 
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         Db(factory).PermissionGrants.Should().BeEmpty();
     }
 

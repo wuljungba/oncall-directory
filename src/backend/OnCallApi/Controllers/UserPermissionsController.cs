@@ -63,6 +63,23 @@ public class UserPermissionsController : ControllerBase
         return Ok(grants.Select(ToResponse).ToList());
     }
 
+    /// <summary>
+    /// Why a principal can reach the tenants it can reach, rule by rule.
+    ///
+    /// Super-admin only despite the controller's wider policy — the two [Authorize]
+    /// attributes are ANDed — because it reports on a named third party, and a scoped admin
+    /// has no business enumerating another subscription's grants.
+    /// </summary>
+    [HttpGet("tenant-access")]
+    [Authorize(Policy = "RequireAdminFull")]
+    public async Task<ActionResult<TenantAccessExplanation>> ExplainTenantAccess([FromQuery] string principal)
+    {
+        if (string.IsNullOrWhiteSpace(principal))
+            return BadRequest(new { error = "A principal (email or Entra object id) is required." });
+
+        return Ok(await _tenants.ExplainTenantAccessAsync(principal));
+    }
+
     /// <summary>Grant a permission set to a user.</summary>
     [HttpPost]
     public async Task<ActionResult<PermissionGrantResponse>> Create(CreatePermissionGrantRequest request)
@@ -80,6 +97,9 @@ public class UserPermissionsController : ControllerBase
         {
             return BadRequest(new { error = "A principal identifier (Entra object id or email) is required." });
         }
+
+        if (ValidateGrantScope(request.TenantId, request.AllTenants) is { } scopeError)
+            return scopeError;
 
         if (request.TenantId.HasValue && !await CanManageTenantAsync(request.TenantId.Value))
             return Forbid();
@@ -135,6 +155,9 @@ public class UserPermissionsController : ControllerBase
             return BadRequest(new { error = "Select at least one person." });
         if (request.EmployeeIds.Count > BulkLimits.MaxBatch)
             return BadRequest(new { error = $"A bulk grant takes at most {BulkLimits.MaxBatch} people at a time." });
+
+        if (ValidateGrantScope(request.TenantId, request.AllTenants) is { } bulkScopeError)
+            return bulkScopeError;
 
         // The same two guards as the single-record path, applied once for the whole request:
         // a scoped admin may only grant inside their own subscriptions, and only a super admin
@@ -404,6 +427,41 @@ public class UserPermissionsController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Rejects a grant whose scope was never stated.
+    ///
+    /// A null TenantId means "every active tenant" — <c>GetAuthorizedTenantIdsAsync</c>
+    /// expands it to all of them, which is deliberately what a super admin picks for
+    /// "All tenants". The hazard is that it is also what an *omitted* field looks like, so a
+    /// caller that simply forgot to say which subscription silently produced the widest grant
+    /// there is. That is how a tenant-scoped administrator ended up able to read every
+    /// subscription's directory.
+    ///
+    /// System-wide therefore has to be asked for. The IsSuperAdmin check on that branch is
+    /// unchanged and still applies; this only ensures the branch was chosen on purpose.
+    /// </summary>
+    private ActionResult? ValidateGrantScope(int? tenantId, bool? allTenants)
+    {
+        if (tenantId.HasValue && allTenants == true)
+        {
+            return BadRequest(new
+            {
+                error = "Specify either a subscription or allTenants, not both.",
+            });
+        }
+
+        if (!tenantId.HasValue && allTenants != true)
+        {
+            return BadRequest(new
+            {
+                error = "A grant needs a scope: set tenantId to one subscription, "
+                      + "or set allTenants=true to grant across every subscription.",
+            });
+        }
+
+        return null;
+    }
+
     private async Task<bool> CanManageTenantAsync(int tenantId)
     {
         if (_tenants.IsSuperAdmin(User)) return true;
@@ -424,7 +482,9 @@ public class UserPermissionsController : ControllerBase
     };
 }
 
-public record CreatePermissionGrantRequest(int? TenantId, string? PrincipalType, string ExternalPrincipalId, string Permissions);
+// AllTenants is the explicit opt-in for a system-wide grant. Absent scope is rejected
+// rather than treated as "every tenant" — see ValidateGrantScope.
+public record CreatePermissionGrantRequest(int? TenantId, string? PrincipalType, string ExternalPrincipalId, string Permissions, bool? AllTenants = null);
 public record UpdatePermissionGrantRequest(string? ExternalPrincipalId, string? PrincipalType, string? Permissions, bool? IsActive);
 
 public class PermissionGrantResponse

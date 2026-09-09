@@ -23,8 +23,10 @@ export default function BulkPermissionModal({ employees, tenants, onClose, onDon
   onDone: (result: BulkGrantResult) => void
 }) {
   const { canAdminFull, tenantIds, activeTenantId } = useAuth()
-  const [tenantId, setTenantId] = useState<number | ''>(
-    activeTenantId ?? (canAdminFull ? '' : tenantIds[0] ?? ''),
+  // '' means nothing chosen yet, NOT system-wide — those were the same value before, so an
+  // untouched field produced a grant reaching every subscription. System-wide is 'all'.
+  const [tenantId, setTenantId] = useState<number | '' | 'all'>(
+    activeTenantId ?? (tenantIds.length === 1 ? tenantIds[0] : ''),
   )
   const [perms, setPerms] = useState<Set<string>>(new Set(DEFAULT_GRANT_PERMISSIONS))
   const [busy, setBusy] = useState(false)
@@ -44,7 +46,9 @@ export default function BulkPermissionModal({ employees, tenants, onClose, onDon
     const rest = employees.filter(e => e.contactType !== 'Department')
     const noEmail = rest.filter(e => !e.email)
     const withEmail = rest.filter(e => e.email)
-    const wrongTenant = tenantId === '' ? [] : withEmail.filter(e => e.tenantId !== tenantId)
+    // Only a specific subscription can put a row in the wrong one; system-wide and
+    // not-yet-chosen both filter nothing.
+    const wrongTenant = typeof tenantId !== 'number' ? [] : withEmail.filter(e => e.tenantId !== tenantId)
     return {
       grantable: withEmail.length - wrongTenant.length,
       noEmail: noEmail.length,
@@ -56,12 +60,14 @@ export default function BulkPermissionModal({ employees, tenants, onClose, onDon
   async function submit() {
     if (perms.size === 0) { setError('Select at least one permission.'); return }
     if (grantable === 0) { setError('None of the selected records can hold a permission grant.'); return }
+    if (tenantId === '') { setError('Choose the subscription this grant applies to.'); return }
 
     setBusy(true)
     setError(null)
     try {
       const result = await permissionsAdminApi.bulkGrant({
-        tenantId: tenantId === '' ? undefined : Number(tenantId),
+        tenantId: typeof tenantId === 'number' ? tenantId : undefined,
+        allTenants: tenantId === 'all' ? true : undefined,
         employeeIds: employees.map(e => e.id),
         permissions: [...perms].join(','),
       })
@@ -103,12 +109,17 @@ export default function BulkPermissionModal({ employees, tenants, onClose, onDon
             <label className="block text-xs text-gray-500 mb-1">Subscription</label>
             <select
               value={tenantId}
-              onChange={e => setTenantId(e.target.value === '' ? '' : Number(e.target.value))}
+              onChange={e => {
+                const v = e.target.value
+                setTenantId(v === '' ? '' : v === 'all' ? 'all' : Number(v))
+              }}
               className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-600"
             >
-              {/* System-wide reaches every subscription there is, so only a full admin is offered it. */}
-              {canAdminFull && <option value={''}>All subscriptions (system-wide)</option>}
+              <option value="" disabled>— Select subscription —</option>
               {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              {/* System-wide reaches every subscription there is, so only a full admin is
+                  offered it, and it must be chosen rather than left as the default. */}
+              {canAdminFull && <option value="all">All subscriptions (system-wide)</option>}
             </select>
           </div>
 
