@@ -86,8 +86,10 @@ public class EscalationTriggerTests
         return db;
     }
 
+    // Unrestricted, which is what TenantScope returns with no request context. The background
+    // engine must see every tenant's shifts or it escalates nobody's.
     private static EscalationService CreateService(AppDbContext db, StubTeams teams) =>
-        new(db, NullLogger<EscalationService>.Instance, teams);
+        new(db, NullLogger<EscalationService>.Instance, TestTenantScopes.Unrestricted, teams);
 
     [Fact]
     public async Task UnacknowledgedShift_Escalates()

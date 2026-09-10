@@ -73,7 +73,7 @@ public class CodeCallDispatchTwilioTests
     /// with an active primary shift whose holder carries <paramref name="mobilePhone"/>.
     /// </summary>
     private static (CodeCallDispatchService Service, RecordingTwilioClient Twilio, int EventId, IServiceProvider Provider)
-        BuildPipeline(string? mobilePhone)
+        BuildPipeline(string? mobilePhone, bool withDepartment = true)
     {
         var dbName = Guid.NewGuid().ToString();
         var twilio = new RecordingTwilioClient();
@@ -101,7 +101,15 @@ public class CodeCallDispatchTwilioTests
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             var dept = new Department { Id = 1, Name = "Cardiology" };
-            var tree = new PhoneTree { Id = 1, Name = "Code Blue", TreeType = "code-blue", DepartmentId = dept.Id };
+            // A departmentless tree is exactly what AppDbContext.HasData seeds for the six
+            // code phone trees, so it is a real shape rather than a contrived one.
+            var tree = new PhoneTree
+            {
+                Id = 1,
+                Name = "Code Blue",
+                TreeType = "code-blue",
+                DepartmentId = withDepartment ? dept.Id : null,
+            };
             var employee = new Employee
             {
                 Id = Guid.NewGuid(),
@@ -181,6 +189,29 @@ public class CodeCallDispatchTwilioTests
         var step = await GetSmsStepAsync(provider, eventId);
         step!.Status.Should().Be("completed");
         step.ProviderMessageId.Should().Be("SMstub");
+    }
+
+    /// <summary>
+    /// A phone tree with no department has no tenant either. The shift lookup used to drop its
+    /// department filter entirely in that case, matching the first active primary shift in the
+    /// WHOLE table — so raising a code could text a clinician at a different hospital. It must
+    /// fail closed, and say which misconfiguration caused it.
+    /// </summary>
+    [Fact]
+    public async Task Dispatch_WhenThePhoneTreeHasNoDepartment_FailsClosedRatherThanPagingAnyone()
+    {
+        // A perfectly reachable number exists on the only on-call provider in the database.
+        // Before the fix this was texted regardless of which tenant they belong to.
+        var (service, twilio, eventId, provider) = BuildPipeline("+12025550134", withDepartment: false);
+
+        await service.ProcessDispatchJobAsync(eventId, "code-blue");
+
+        twilio.SentTo.Should().BeEmpty("nobody should be paged on the strength of a misconfiguration");
+
+        var step = await GetSmsStepAsync(provider, eventId);
+        step!.Status.Should().Be("failed");
+        step.Detail.Should().Contain("no department assigned",
+            "the operator needs to be told what is actually wrong, not 'no number on file'");
     }
 
     [Fact]

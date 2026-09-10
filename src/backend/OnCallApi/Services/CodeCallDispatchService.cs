@@ -223,16 +223,19 @@ public class CodeCallDispatchService : ICodeCallDispatchService
 
                 // Directory numbers are not reliably canonical (AD/Graph and CSV imports
                 // both yield "(202) 555-0134" style values), and Twilio only accepts E.164.
-                var rawMobile = await ResolveOnCallMobileAsync(db, evt);
+                var (rawMobile, configError) = await ResolveOnCallMobileAsync(db, evt);
                 var mobile = ResolveSmsDestination(rawMobile);
 
                 if (string.IsNullOrEmpty(mobile))
                 {
                     // Not "skipped": on a code call, having no reachable number for the
                     // on-call provider is a dispatch failure and must be visible as one.
-                    var reason = string.IsNullOrWhiteSpace(rawMobile)
-                        ? "No on-call provider mobile number on file for this event"
-                        : "On-call provider's mobile number is not a valid phone number";
+                    // A configuration fault is reported as itself, because "no number on
+                    // file" would send someone looking at the wrong thing.
+                    var reason = configError
+                        ?? (string.IsNullOrWhiteSpace(rawMobile)
+                            ? "No on-call provider mobile number on file for this event"
+                            : "On-call provider's mobile number is not a valid phone number");
                     _logger.LogError(
                         "Twilio SMS not sent for event {EventId}: {Reason}", evt.Id, reason);
                     await RecordStepAndNotify(evt.Id, "twilio_sms", "failed", reason);
@@ -447,16 +450,33 @@ public class CodeCallDispatchService : ICodeCallDispatchService
     /// primary shift holder in the event's department (via the phone tree's department),
     /// using their Employee.MobilePhone. Returns null if no holder/number is available.
     /// </summary>
-    private static async Task<string?> ResolveOnCallMobileAsync(AppDbContext db, PhoneTreeEvent evt)
+    private static async Task<(string? Mobile, string? ConfigError)> ResolveOnCallMobileAsync(
+        AppDbContext db, PhoneTreeEvent evt)
     {
         var phoneTree = await db.PhoneTrees
             .FirstOrDefaultAsync(t => t.Id == evt.PhoneTreeId);
         var departmentId = phoneTree?.DepartmentId;
 
+        // A phone tree with no department has no tenant either. The shift query below used to
+        // skip its department filter entirely in that case, so it matched the first active
+        // primary shift in the WHOLE table and texted a clinician who might work for a
+        // different hospital. The six code phone trees seeded by AppDbContext.HasData carry no
+        // department, so this was reachable on any database created from that seed.
+        //
+        // Fail closed and name the misconfiguration. The caller already treats an absent number
+        // as a dispatch FAILURE — logged at Error and recorded as a failed step — so this stays
+        // loud rather than becoming a silent no-op.
+        if (departmentId == null)
+        {
+            return (null, "This code has no department assigned, so the on-call provider "
+                        + "cannot be identified. Assign a department to the phone tree. "
+                        + "Escalate by phone now.");
+        }
+
         var now = DateTime.UtcNow;
         var primary = await db.Shifts
             .Include(s => s.Employee)
-            .Where(s => departmentId == null || (s.Schedule != null && s.Schedule.DepartmentId == departmentId))
+            .Where(s => s.Schedule != null && s.Schedule.DepartmentId == departmentId)
             .Where(s => s.StartTime <= now && s.EndTime >= now
                 && s.Status != "gap"
                 && s.Tier == "primary"
@@ -465,7 +485,7 @@ public class CodeCallDispatchService : ICodeCallDispatchService
             .ThenByDescending(s => s.EndTime)
             .FirstOrDefaultAsync();
 
-        return primary?.Employee?.MobilePhone;
+        return (primary?.Employee?.MobilePhone, null);
     }
 
     private async Task RecordStepAndNotify(

@@ -13,18 +13,61 @@ public class EscalationService
     private readonly AppDbContext _db;
     private readonly ILogger<EscalationService> _logger;
     private readonly ITeamsNotificationService? _teams;
+    private readonly ITenantScope _scope;
 
-    public EscalationService(AppDbContext db, ILogger<EscalationService> logger, ITeamsNotificationService? teams = null)
+    public EscalationService(
+        AppDbContext db,
+        ILogger<EscalationService> logger,
+        ITenantScope scope,
+        ITeamsNotificationService? teams = null)
     {
         _db = db;
         _logger = logger;
+        _scope = scope;
         _teams = teams;
+    }
+
+    /// <summary>
+    /// Refuses a policy that belongs to another tenant, as if it did not exist.
+    ///
+    /// KeyNotFoundException rather than a forbid: whether another customer has a policy with
+    /// a given id is itself something they should not learn. ExceptionHandlingMiddleware maps
+    /// it to 404.
+    ///
+    /// A policy with no department has no tenant either, so a scoped caller cannot reach it.
+    /// That is deliberate and matches how a tenantless permission grant is treated: the
+    /// widest-scoped row is the one a scoped admin has least business touching.
+    /// </summary>
+    private async Task GuardPolicyAsync(int policyId)
+    {
+        // Null means unrestricted: a super admin, or the background engine, which has no
+        // request context and must see every tenant's shifts to escalate them at all.
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds == null) return;
+
+        var policyTenantId = await _db.EscalationPolicies
+            .Where(p => p.Id == policyId)
+            .Select(p => p.Department != null ? p.Department.TenantId : null)
+            .FirstOrDefaultAsync();
+
+        if (policyTenantId == null || !tenantIds.Contains(policyTenantId.Value))
+            throw new KeyNotFoundException($"Policy {policyId} not found");
     }
 
     public async Task<List<EscalationPolicy>> GetPoliciesAsync(int? departmentId = null)
     {
         var q = _db.EscalationPolicies.Include(p => p.Department).AsQueryable();
         if (departmentId.HasValue) q = q.Where(p => p.DepartmentId == departmentId.Value || p.DepartmentId == null);
+
+        // A policy belongs to a tenant through its department, the same way a phone tree does.
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds != null)
+        {
+            q = q.Where(p => p.Department != null
+                && p.Department.TenantId.HasValue
+                && tenantIds.Contains(p.Department.TenantId.Value));
+        }
+
         return await q.Where(p => p.IsActive).ToListAsync();
     }
 
@@ -38,6 +81,8 @@ public class EscalationService
 
     public async Task<EscalationPolicy> UpdatePolicyAsync(EscalationPolicy policy)
     {
+        await GuardPolicyAsync(policy.Id);
+
         var existing = await _db.EscalationPolicies.FindAsync(policy.Id)
             ?? throw new KeyNotFoundException($"Policy {policy.Id} not found");
         _db.Entry(existing).CurrentValues.SetValues(policy);
@@ -47,6 +92,8 @@ public class EscalationService
 
     public async Task DeletePolicyAsync(int id)
     {
+        await GuardPolicyAsync(id);
+
         var policy = await _db.EscalationPolicies.FindAsync(id)
             ?? throw new KeyNotFoundException($"Policy {id} not found");
         _db.EscalationPolicies.Remove(policy);
@@ -62,6 +109,18 @@ public class EscalationService
             .AsQueryable();
 
         if (policyId.HasValue) q = q.Where(e => e.PolicyId == policyId.Value);
+
+        // Events carry Employee and Shift, so an unscoped read hands one customer another
+        // customer's staff and rota.
+        var tenantIds = await _scope.AllowedTenantIdsAsync();
+        if (tenantIds != null)
+        {
+            q = q.Where(e => e.Policy != null
+                && e.Policy.Department != null
+                && e.Policy.Department.TenantId.HasValue
+                && tenantIds.Contains(e.Policy.Department.TenantId.Value));
+        }
+
         return await q.OrderByDescending(e => e.TriggeredAt).Take(limit ?? 50).ToListAsync();
     }
 
@@ -76,6 +135,11 @@ public class EscalationService
             .Include(e => e.Employee)
             .FirstOrDefaultAsync(e => e.Id == eventId)
             ?? throw new KeyNotFoundException($"Escalation event {eventId} not found.");
+
+        // Acknowledging SUPPRESSES every remaining tier, so without this a Schedule.Write
+        // holder in one tenant could silence another tenant's unanswered escalation — a
+        // cross-tenant write on the safety-critical path, not merely a disclosure.
+        await GuardPolicyAsync(escEvent.PolicyId);
 
         escEvent.Status = "resolved";
         escEvent.ResolvedAt = DateTime.UtcNow;
