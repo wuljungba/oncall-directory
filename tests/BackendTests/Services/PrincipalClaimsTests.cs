@@ -63,10 +63,60 @@ public class PrincipalClaimsTests
     [InlineData(ClaimTypes.Email)]
     [InlineData("email")]
     [InlineData("preferred_username")]
+    [InlineData("upn")]
+    [InlineData(ClaimTypes.Upn)]
     public void EmailIsResolvedFromAnyOfTheUsualClaims(string claimType)
     {
         PrincipalClaims.GetEmail(Principal((claimType, "user@example.test")))
             .Should().Be("user@example.test");
+    }
+
+    [Fact]
+    public void AV1TokenCarryingOnlyUpnStillResolves()
+    {
+        // The case that was silently broken. This API issues v1 access tokens, which carry
+        // upn and never preferred_username, and a cloud-only Entra user with no mailbox has
+        // mail: null so no email claim is issued either. Every branch missed, the resolver
+        // returned null, and an email-keyed grant could not match — so the person signed in
+        // and landed with no permissions at all.
+        var user = Principal(
+            ("oid", "a7cb242c-066e-41c0-8fd3-cce9547bccc9"),
+            ("tid", "e9577a81-c4d6-4124-984f-78f3c0efcaf4"),
+            ("upn", "clinician@hospital.test"));
+
+        PrincipalClaims.GetEmail(user).Should().Be("clinician@hospital.test");
+    }
+
+    [Fact]
+    public void AnExplicitEmailStillWinsOverUpn()
+    {
+        // upn is a last resort: adding it must not change any principal that already resolved.
+        var user = Principal(
+            ("email", "real@hospital.test"),
+            ("upn", "different@hospital.test"));
+
+        PrincipalClaims.GetEmail(user).Should().Be("real@hospital.test");
+    }
+
+    [Fact]
+    public void PreferredUsernameStillWinsOverUpn()
+    {
+        var user = Principal(
+            ("preferred_username", "real@hospital.test"),
+            ("upn", "different@hospital.test"));
+
+        PrincipalClaims.GetEmail(user).Should().Be("real@hospital.test");
+    }
+
+    [Fact]
+    public void AGuestUpnIsNotAnAddress()
+    {
+        // A B2B guest's UPN is a mangled internal form. It contains an "@", so every caller
+        // would take it for an address — but nobody could ever have granted access to that
+        // string, so resolving to it would read as "no access" just as the missing claim did.
+        var user = Principal(("upn", "someone_gmail.com#EXT#@tenant.onmicrosoft.com"));
+
+        PrincipalClaims.GetEmail(user).Should().BeNull();
     }
 
     [Fact]

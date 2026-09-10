@@ -30,13 +30,44 @@ public static class PrincipalClaims
     /// <summary>
     /// The principal's email. Permission grants may be keyed on this rather than an object
     /// id, so it must resolve identically wherever grants are matched.
+    ///
+    /// <c>upn</c> is the last resort and it is load-bearing: this API issues v1 access tokens
+    /// (the app registration leaves <c>requestedAccessTokenVersion</c> unset), and a v1 token
+    /// carries <c>upn</c> but never <c>preferred_username</c>, which is a v2 claim. A
+    /// cloud-only Entra user with no mailbox also has <c>mail: null</c>, so no <c>email</c>
+    /// claim is issued either. Without this branch every option missed and the resolver
+    /// returned null, so an email-keyed grant could not match: the person signed in
+    /// successfully and landed with no permissions at all. That is the same failure commit
+    /// 425cb0d found for configured super admins and worked around there by matching on
+    /// object ids; grants had no such escape.
+    ///
+    /// It is also the sounder claim to trust. A UPN requires a domain verified in the issuing
+    /// tenant, whereas the <c>email</c> claim carries no such guarantee — which matters when
+    /// tokens are accepted from any Entra tenant.
     /// </summary>
     public static string? GetEmail(ClaimsPrincipal user)
     {
         return user.FindFirst(ClaimTypes.Email)?.Value
             ?? user.FindFirst("email")?.Value
-            ?? user.FindFirst("preferred_username")?.Value;
+            ?? user.FindFirst("preferred_username")?.Value
+            ?? UsableUpn(user.FindFirst("upn")?.Value)
+            ?? UsableUpn(user.FindFirst(ClaimTypes.Upn)?.Value);
     }
+
+    /// <summary>
+    /// A UPN only when it is actually an address for this person.
+    ///
+    /// A B2B guest's UPN is the mangled internal form
+    /// <c>someone_gmail.com#EXT#@tenant.onmicrosoft.com</c> — it contains an "@", so every
+    /// caller would treat it as an address, but it is not one and it is not what any
+    /// administrator would have typed when granting access. Resolving to it would key a
+    /// principal to a string nobody can grant to, which reads as "no access" in exactly the
+    /// same way the missing claim did.
+    /// </summary>
+    private static string? UsableUpn(string? upn) =>
+        string.IsNullOrWhiteSpace(upn) || upn.Contains("#EXT#", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : upn;
 
     /// <summary>
     /// Whether a stored directory value could actually key a working permission grant.
