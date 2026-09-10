@@ -431,6 +431,8 @@ export interface SignInIdentity {
   tenantAdminOf: number[]
   permissions: string[]
   grantTenantIds: (number | null)[]
+  /** Subscriptions this person is already a directory record in, regardless of access held. */
+  homeTenantIds: number[]
   hasNoAccess: boolean
 }
 

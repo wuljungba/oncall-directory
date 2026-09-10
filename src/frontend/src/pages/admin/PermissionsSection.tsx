@@ -447,6 +447,14 @@ function SignedInUsers({ identities, loading, tenantName, onSelect }: {
                       <span key={p} className="text-xs px-2 py-0.5 rounded-full bg-green-600/20 text-green-500">{p}</span>
                     ))
                   )}
+                  {/* Whose person this is, which is separate from what they can do. Without
+                      it someone who holds no access yet reads as an unattached stranger even
+                      when they are plainly one subscription's contact. */}
+                  {i.homeTenantIds.length > 0 && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-gray-800 text-gray-400">
+                      {i.homeTenantIds.map(t => tenantName(t)).join(', ')}
+                    </span>
+                  )}
                 </div>
                 <p className="text-xs text-gray-500 truncate mt-0.5">
                   {i.email || 'no email on token'} · last seen {relative(i.lastSeenAt)}
