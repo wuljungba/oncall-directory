@@ -363,8 +363,13 @@ resource stagingSlot 'Microsoft.Web/sites/slots@2023-12-01' = {
 // would silently stop AD sync, presence, calendar push, both retention sweeps and the
 // escalation engine. A quiet escalation engine looks exactly like a quiet night.
 //
-// This list REPLACES whatever is configured, so the two names that were already sticky are
-// repeated here on purpose. Dropping either would be its own outage: the connection string
+// Cors__Origin is set per slot above (defaultCorsOrigin / stagingCorsOrigin) but was missing
+// here, so every swap carried the staging URL into production. That breaks more than CORS:
+// the admin page builds its consent-link redirect_uri from it, and the staging /admin URI is
+// not registered on either app registration, so a customer's consent would fail at the end.
+//
+// This list REPLACES whatever is configured, so the names that were already sticky are
+// repeated here on purpose. Dropping any would be its own outage: the connection string
 // is per-slot, and losing its stickiness can leave production without one after a swap.
 resource slotConfigNames 'Microsoft.Web/sites/config@2023-12-01' = {
   parent: webApp
@@ -374,6 +379,7 @@ resource slotConfigNames 'Microsoft.Web/sites/config@2023-12-01' = {
       'ConnectionStrings__DefaultConnection'
       'Dispatch__Twilio__StatusCallbackUrl'
       'BackgroundServices__RunScheduledWork'
+      'Cors__Origin'
     ]
   }
 }
