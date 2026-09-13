@@ -61,11 +61,20 @@ Goal: any authorized hospital organization signs in with **its own** Entra tenan
    ```
 2. **App roles** stay as-is (`OnCall.*`). Each customer tenant's admin assigns
    them to their users; token `roles` claims will carry the matching values.
-3. **Consent** — each customer tenant admin must consent once, via the admin
-   consent URL:
-   `https://login.microsoftonline.com/<customer-tenant-id>/adminconsent?client_id=6569f3cb-47a1-4826-9f35-16e7d4bf3a52`
-   (No consent is needed for the app's *own* `access_as_user` scope — see
-   `docs/superadmin-and-entra-login.md`.)
+3. **Consent** — a customer tenant that does not let users consent to apps (the norm at
+   hospitals, and certain while the publisher is unverified) must have its admin consent
+   to **both** app registrations. Without the first, every user is stopped at
+   "Need admin approval" when signing in, even though `access_as_user` is a
+   user-consentable scope.
+   - **OnCall API** `6569f3cb-47a1-4826-9f35-16e7d4bf3a52` — lets their staff sign in
+   - **OnCall Graph** `406309ef-0376-4358-9499-aa176e4080aa` — lets OnCall read their directory
+
+   On the admin page, set the subscription's Directory Tenant ID and use
+   **Copy consent links**, which builds both. Each link redirects to
+   `https://app-oncall-prod.azurewebsites.net/admin`, which must be registered as a **web**
+   redirect URI on both registrations. OnCall API's `requiredResourceAccess` lists its own
+   `access_as_user` plus Graph `openid`/`profile`/`offline_access`, so admin consent covers
+   exactly what the SPA requests.
 
 ### 1b. Code is already compatible
 
@@ -79,9 +88,12 @@ Goal: any authorized hospital organization signs in with **its own** Entra tenan
 `TenantClaimsMiddleware` now resolves the tenant from the token's `tid` claim
 against `Tenant.AzureAdTenantId` (the approved-tenant allow-list):
 
-- A user whose `tid` matches an **active** tenant's `AzureAdTenantId` is
-  auto-assigned `DepartmentAdmin` (like group-membership assignment) and gets the
-  scoped permission set + a `TenantId:{id}` claim.
+- A user whose `tid` matches an **active** tenant's `AzureAdTenantId` gets
+  read-only `Permissions.ConnectedTenantPermissions` (`Schedule.Read` +
+  `Directory.Read`) and a `TenantId:{id}` claim. No row is written. (This used to
+  auto-assign `DepartmentAdmin`, which let every employee in a customer's directory
+  fire a live code call on first sign-in; it was withdrawn, and
+  `tests/BackendTests/Services/TenantAllowListTests.cs` pins the boundary.)
 - Users from **unapproved or inactive** tenants get no tenant claims and are
   denied by default (no data access).
 - The existing `oid`-based (`TenantAdmin` records) and group-based resolution

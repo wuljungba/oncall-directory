@@ -162,12 +162,20 @@ public class TenantsController : ControllerBase
 }
 
     /// <summary>
-    /// The admin-consent link to send a connected organization.
+    /// The admin-consent links to send a connected organization.
     ///
-    /// Consent has to be granted by an administrator in THEIR directory — that is what
-    /// creates the service principal this app uses to read their users. There is nothing
-    /// we can do from here to bring it about, so the useful thing is to hand the operator
-    /// the exact link and the exact redirect URI it depends on.
+    /// Consent has to be granted by an administrator in THEIR directory, and there are two
+    /// app registrations to grant it to:
+    /// <list type="bullet">
+    /// <item><b>OnCall API</b> — the app their staff sign in to. A directory that does not let
+    /// users consent to apps (the norm at hospitals) stops every one of them at "Need admin
+    /// approval" until this is granted.</item>
+    /// <item><b>OnCall Graph</b> — creates the service principal this app uses to read their
+    /// users.</item>
+    /// </list>
+    /// This used to hand over only the second, which connected a directory whose people still
+    /// could not get in. There is nothing we can do from here to bring either about, so the
+    /// useful thing is to hand the operator both exact links and the redirect URI they share.
     /// </summary>
     [Authorize(Policy = "RequireTenantManage")]
     [HttpGet("{id}/directory-consent-link")]
@@ -184,31 +192,45 @@ public class TenantsController : ControllerBase
             });
         }
 
-        var clientId = _graphOptions.Value.ClientId;
-        if (string.IsNullOrWhiteSpace(clientId) || clientId.Contains("your-", StringComparison.OrdinalIgnoreCase))
+        var signInClientId = _config["AzureAd:ClientId"];
+        if (!IsConfiguredClientId(signInClientId))
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
-                error = "GraphApi:ClientId is not configured, so no consent link can be built.",
+                error = "AzureAd:ClientId is not configured, so no sign-in consent link can be built.",
+            });
+        }
+
+        var directoryClientId = _graphOptions.Value.ClientId;
+        if (!IsConfiguredClientId(directoryClientId))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = "GraphApi:ClientId is not configured, so no directory consent link can be built.",
             });
         }
 
         var origin = (_config["Cors:Origin"] ?? "").TrimEnd('/');
         var redirectUri = $"{origin}/admin";
 
-        var url =
-            $"https://login.microsoftonline.com/{Uri.EscapeDataString(tenant.AzureAdTenantId)}/adminconsent"
-            + $"?client_id={Uri.EscapeDataString(clientId)}"
-            + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}";
-
         return Ok(new
         {
-            url,
-            redirectUri,
             directoryTenantId = tenant.AzureAdTenantId,
+            redirectUri,
+            signInConsentUrl = AdminConsentUrl(tenant.AzureAdTenantId, signInClientId!, redirectUri),
+            directoryConsentUrl = AdminConsentUrl(tenant.AzureAdTenantId, directoryClientId, redirectUri),
             // Stated rather than assumed: consent fails on the final redirect unless this
-            // exact URI is registered on the app registration.
-            note = "This redirect URI must be registered on the OnCall Graph app registration, or consent will fail at the last step.",
+            // exact URI is registered on each app registration.
+            note = "This redirect URI must be registered on both the OnCall API and OnCall Graph app registrations, or consent will fail at the last step.",
         });
     }
+
+    private static bool IsConfiguredClientId(string? clientId) =>
+        !string.IsNullOrWhiteSpace(clientId)
+        && !clientId.Contains("your-", StringComparison.OrdinalIgnoreCase);
+
+    private static string AdminConsentUrl(string directoryTenantId, string clientId, string redirectUri) =>
+        $"https://login.microsoftonline.com/{Uri.EscapeDataString(directoryTenantId)}/adminconsent"
+        + $"?client_id={Uri.EscapeDataString(clientId)}"
+        + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}";
 }

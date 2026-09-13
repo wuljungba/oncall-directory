@@ -1803,14 +1803,19 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
 
 
   /**
-   * Puts the admin-consent URL on the clipboard for the operator to send on. Consent is
-   * granted by an administrator in the customer's own directory; nothing here can do it
-   * for them, so handing over the exact link is the whole job.
+   * Puts both admin-consent links on the clipboard, labeled, for the operator to paste into
+   * a message. Consent is granted by an administrator in the customer's own directory;
+   * nothing here can do it for them, so handing over the exact links is the whole job.
+   * Sending only the directory link used to leave every one of their staff stopped at
+   * "Need admin approval" when they signed in.
    */
   async function copyConsentLink(tenantId: number) {
     try {
       const link = await tenantsApi.getDirectoryConsentLink(tenantId)
-      await navigator.clipboard.writeText(link.url)
+      await navigator.clipboard.writeText(
+        `1. Let your staff sign in to OnCall:\n${link.signInConsentUrl}\n\n`
+        + `2. Let OnCall read your directory:\n${link.directoryConsentUrl}`,
+      )
       setConsentCopied(tenantId)
       setTimeout(() => setConsentCopied(null), 2500)
     } catch (err) {
@@ -1886,7 +1891,7 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                           onClick={() => copyConsentLink(tenant.id)}
                           className="text-gray-400 hover:text-amber-500 underline underline-offset-2"
                         >
-                          {consentCopied === tenant.id ? 'Link copied' : 'Copy consent link'}
+                          {consentCopied === tenant.id ? 'Links copied' : 'Copy consent links'}
                         </button>
                       </p>
                     )}

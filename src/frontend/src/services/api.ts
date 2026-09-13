@@ -655,11 +655,18 @@ export const tenantsApi = {
     fetchApi<Tenant>(`/tenants/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deactivate: (id: number) =>
     fetchApi<void>(`/tenants/${id}`, { method: 'DELETE' }),
-  // The link a connected organization's own administrator has to open. Consent happens in
-  // THEIR directory, so this is a link to hand over, not an action we can take.
+  // The links a connected organization's own administrator has to open. Consent happens in
+  // THEIR directory, so these are links to hand over, not an action we can take. Both are
+  // needed: signInConsentUrl (OnCall API) lets their staff sign in at all, and
+  // directoryConsentUrl (OnCall Graph) lets OnCall read their directory.
   getDirectoryConsentLink: (id: number) =>
-    fetchApi<{ url: string; redirectUri: string; directoryTenantId: string; note: string }>(
-      `/tenants/${id}/directory-consent-link`),
+    fetchApi<{
+      directoryTenantId: string;
+      redirectUri: string;
+      signInConsentUrl: string;
+      directoryConsentUrl: string;
+      note: string
+    }>(`/tenants/${id}/directory-consent-link`),
   getAdmins: (tenantId: number) =>
     fetchApi<TenantAdmin[]>(`/tenants/${tenantId}/admins`),
   assignAdmin: (tenantId: number, data: Record<string, unknown>) =>
