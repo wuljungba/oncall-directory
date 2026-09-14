@@ -1717,7 +1717,8 @@ function TimeOffApprovalSection() {
 // ─── TENANTS (Business/Facility Management) ────────────────────────────────
 
 function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number | null) => void }) {
-  const [consentCopied, setConsentCopied] = useState<number | null>(null)
+  // "<tenantId>:signIn" or "<tenantId>:directory" — which one link was just copied.
+  const [consentCopied, setConsentCopied] = useState<string | null>(null)
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [admins, setAdmins] = useState<Record<number, TenantAdmin[]>>({})
   const [loading, setLoading] = useState(true)
@@ -1803,20 +1804,23 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
 
 
   /**
-   * Puts both admin-consent links on the clipboard, labeled, for the operator to paste into
-   * a message. Consent is granted by an administrator in the customer's own directory;
-   * nothing here can do it for them, so handing over the exact links is the whole job.
-   * Sending only the directory link used to leave every one of their staff stopped at
-   * "Need admin approval" when they signed in.
+   * Puts ONE admin-consent URL on the clipboard, bare, so it can be pasted straight into an
+   * address bar or an email. Consent is granted by an administrator in the customer's own
+   * directory; nothing here can do it for them, so handing over the exact link is the
+   * whole job.
+   *
+   * There are two links and both matter: 'signIn' (OnCall API) lets their staff sign in at
+   * all — without it every one of them stops at "Need admin approval" — and 'directory'
+   * (OnCall Graph) lets OnCall read their directory. They are copied separately because a
+   * labeled block holding both had to be picked apart by hand before either could be used.
    */
-  async function copyConsentLink(tenantId: number) {
+  async function copyConsentLink(tenantId: number, which: 'signIn' | 'directory') {
     try {
       const link = await tenantsApi.getDirectoryConsentLink(tenantId)
       await navigator.clipboard.writeText(
-        `1. Let your staff sign in to OnCall:\n${link.signInConsentUrl}\n\n`
-        + `2. Let OnCall read your directory:\n${link.directoryConsentUrl}`,
+        which === 'signIn' ? link.signInConsentUrl : link.directoryConsentUrl,
       )
-      setConsentCopied(tenantId)
+      setConsentCopied(`${tenantId}:${which}`)
       setTimeout(() => setConsentCopied(null), 2500)
     } catch (err) {
       // Never silent: an operator who thinks they copied a link will paste the previous
@@ -1888,10 +1892,20 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                         {' · '}
                         <button
                           type="button"
-                          onClick={() => copyConsentLink(tenant.id)}
+                          onClick={() => copyConsentLink(tenant.id, 'signIn')}
+                          title="Copies one link. Their Entra admin opens it so their staff can sign in (OnCall API)."
                           className="text-gray-400 hover:text-amber-500 underline underline-offset-2"
                         >
-                          {consentCopied === tenant.id ? 'Links copied' : 'Copy consent links'}
+                          {consentCopied === `${tenant.id}:signIn` ? 'Sign-in link copied' : 'Copy sign-in consent link'}
+                        </button>
+                        {' · '}
+                        <button
+                          type="button"
+                          onClick={() => copyConsentLink(tenant.id, 'directory')}
+                          title="Copies one link. Their Entra admin opens it so OnCall can read their directory (OnCall Graph)."
+                          className="text-gray-400 hover:text-amber-500 underline underline-offset-2"
+                        >
+                          {consentCopied === `${tenant.id}:directory` ? 'Directory link copied' : 'Copy directory consent link'}
                         </button>
                       </p>
                     )}

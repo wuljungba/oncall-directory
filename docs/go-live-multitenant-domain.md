@@ -69,8 +69,9 @@ Goal: any authorized hospital organization signs in with **its own** Entra tenan
    - **OnCall API** `6569f3cb-47a1-4826-9f35-16e7d4bf3a52` — lets their staff sign in
    - **OnCall Graph** `406309ef-0376-4358-9499-aa176e4080aa` — lets OnCall read their directory
 
-   On the admin page, set the subscription's Directory Tenant ID and use
-   **Copy consent links**, which builds both. Each link redirects to
+   On the admin page, set the subscription's Directory Tenant ID, then use
+   **Copy sign-in consent link** and **Copy directory consent link** on its row; each
+   copies one bare URL to send the customer's admin. Each link redirects to
    `https://app-oncall-prod.azurewebsites.net/admin`, which must be registered as a **web**
    redirect URI on both registrations. OnCall API's `requiredResourceAccess` lists its own
    `access_as_user` plus Graph `openid`/`profile`/`offline_access`, so admin consent covers
