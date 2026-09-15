@@ -77,6 +77,13 @@ Goal: any authorized hospital organization signs in with **its own** Entra tenan
    `access_as_user` plus Graph `openid`/`profile`/`offline_access`, so admin consent covers
    exactly what the SPA requests.
 
+   Their admin has no OnCall session, so after accepting they land on our sign-in page
+   rather than on `/admin`. That page now shows whether the consent registered — captured
+   off the redirect at boot in `src/frontend/src/utils/adminConsent.ts`, because the router
+   drops the query string. Microsoft sends `admin_consent=True` on refusals too, with an
+   `error` alongside, so a granted consent is confirmed by an `AllPrincipals` row in the
+   customer's `oauth2PermissionGrants`, not by the redirect alone.
+
 ### 1b. Code is already compatible
 
 - Frontend authority `organizations` → resolves to any org tenant. ✓

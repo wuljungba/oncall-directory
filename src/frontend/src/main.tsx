@@ -5,6 +5,7 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import App from './App'
 import ErrorBoundary from './components/ErrorBoundary'
 import { AuthProvider } from './hooks/useAuth'
+import { captureAdminConsentResult } from './utils/adminConsent'
 import './index.css'
 
 // Global unhandled promise rejection handler
@@ -56,5 +57,10 @@ function renderApp() {
     <React.StrictMode>{withGoogle}</React.StrictMode>,
   )
 }
+
+// Read before the router mounts. A consent redirect lands on /admin, the route guard sends
+// the customer's admin to /login, and the query string is dropped with it — so the outcome
+// has to be taken off the URL first, or it is gone before anything can show it.
+captureAdminConsentResult(window.location.search)
 
 renderApp()

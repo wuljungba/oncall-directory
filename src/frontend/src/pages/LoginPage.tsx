@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { signUpLocal } from '@/services/api'
+import AdminConsentBanner from '@/components/AdminConsentBanner'
 import type { AuthUser, AuthProviderType } from '@/services/auth'
 
 /** The shortest password accepted. Length over composition — it matches the server. */
@@ -111,6 +112,12 @@ export default function LoginPage({
             Sign in to manage on-call schedules and your phone directory
           </p>
         </div>
+
+        {/* A customer's Entra admin arrives here from the consent redirect, having been
+            sent to sign in by the route guard. Whether their consent registered decides
+            whether their whole staff can get in, so it is said plainly rather than left
+            to a bare sign-in page. Renders nothing for everyone else. */}
+        <AdminConsentBanner />
 
         <div className="space-y-3">
             {/* Microsoft */}
