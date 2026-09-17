@@ -586,6 +586,15 @@ public partial class AdminService : IAdminService
         existing.Name = request.Name;
         existing.Description = request.Description ?? existing.Description;
         existing.Category = request.Category ?? existing.Category;
+        // Null means "leave it alone", empty means "clear it" — the same distinction a
+        // tenant's directory id makes. Without the empty case an AD group could be attached
+        // and never detached, and this property is what DepartmentSyncService matches on.
+        if (request.AzureAdGroupId != null)
+        {
+            existing.AzureAdGroupId = string.IsNullOrWhiteSpace(request.AzureAdGroupId)
+                ? null
+                : request.AzureAdGroupId.Trim();
+        }
         if (request.IsActive.HasValue)
             existing.IsActive = request.IsActive.Value;
         // Super admin may move a department to another subscription.

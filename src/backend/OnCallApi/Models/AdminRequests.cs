@@ -84,13 +84,20 @@ public record CreateDepartmentRequest(
     int? TenantId = null
 );
 
-/// <summary>Request to update a department.</summary>
+/// <summary>
+/// Request to update a department.
+///
+/// AzureAdGroupId was missing here while CreateDepartmentRequest had it, so a department's
+/// AD group could be set when it was created and never changed afterwards — and the group is
+/// what DepartmentSyncService matches on. Null leaves it alone; empty clears it.
+/// </summary>
 public record UpdateDepartmentRequest(
     string Name,
     string? Description,
     string? Category,
     bool? IsActive,
-    int? TenantId = null
+    int? TenantId = null,
+    [MaxLength(100)] string? AzureAdGroupId = null
 );
 
 // ── Tenant Requests ──

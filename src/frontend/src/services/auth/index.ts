@@ -8,7 +8,7 @@
  * import { signIn, signOut, getAccessToken } from '@/services/auth'
  */
 
-export { getAuthProvider, getAllProviders, clearProviders, getActiveProviderType } from './authFactory'
+export { getAuthProvider, clearProviders, getActiveProviderType } from './authFactory'
 export { MicrosoftAuthProvider } from './microsoftAuthProvider'
 export { GoogleAuthProvider } from './googleAuthProvider'
 export { LocalAuthProvider } from './localAuthProvider'

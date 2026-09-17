@@ -40,15 +40,6 @@ export function getAuthProvider(type?: AuthProviderType): IAuthProvider {
 }
 
 /**
- * Get all registered providers (for switching between them).
- * Lazy-creates any that don't exist yet.
- */
-export function getAllProviders(): IAuthProvider[] {
-  const types: AuthProviderType[] = ['microsoft', 'google', 'local']
-  return types.map(type => getAuthProvider(type))
-}
-
-/**
  * Clear cached providers (useful on sign-out).
  */
 export function clearProviders(): void {

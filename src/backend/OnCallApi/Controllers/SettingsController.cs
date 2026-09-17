@@ -59,6 +59,25 @@ public class SettingsController : ControllerBase
         await _db.SaveChangesAsync();
         return existing;
     }
+
+    /// <summary>
+    /// Remove a setting, so whatever the code falls back to applies again.
+    ///
+    /// Upsert could write a value but nothing could take one away, so a setting written by
+    /// mistake could only be overwritten with another value — never returned to the built-in
+    /// default, which is what an absent row means.
+    /// </summary>
+    [HttpDelete("{key}")]
+    [Authorize(Policy = "RequireAdminFull")]
+    public async Task<IActionResult> Delete(string key)
+    {
+        var existing = await _db.AppSettings.FindAsync(key);
+        if (existing == null) return NotFound();
+
+        _db.AppSettings.Remove(existing);
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
 }
 
 public record UpsertSettingRequest(

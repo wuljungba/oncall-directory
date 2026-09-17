@@ -234,6 +234,44 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
+        // ── DutyHourRule / DutyHourViolation ──
+        // These two had no configuration at all, so their relationships existed only by
+        // convention — every other entity above states them. Written out deliberately to
+        // match what convention already produced, so nothing changes here: an optional
+        // Department is ClientSetNull, and a violation's required Employee and Rule cascade.
+        //
+        // The cascade is load-bearing, not incidental: AdminService.Bulk's
+        // FindDeleteBlockersAsync scans only the columns configured Restrict against
+        // Employee, and documents that a violation cascades and therefore never blocks a
+        // delete. Tightening either to Restrict would turn "what holds this record" into an
+        // opaque DbUpdateException until that scan learned about violations too.
+        //
+        // It also would not reach production: the schema comes from EnsureCreated (see
+        // Program.cs), which cannot alter an existing database, so a delete-behaviour change
+        // applies to newly created databases only. Whether compliance history should outlive
+        // the employee it was raised against is a real question — it belongs in a change that
+        // also updates the blocker scan and the live schema.
+        modelBuilder.Entity<DutyHourRule>(r =>
+        {
+            r.HasOne(x => x.Department)
+                .WithMany()
+                .HasForeignKey(x => x.DepartmentId)
+                .OnDelete(DeleteBehavior.ClientSetNull);
+        });
+
+        modelBuilder.Entity<DutyHourViolation>(v =>
+        {
+            v.HasOne(x => x.Employee)
+                .WithMany()
+                .HasForeignKey(x => x.EmployeeId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            v.HasOne(x => x.Rule)
+                .WithMany()
+                .HasForeignKey(x => x.RuleId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         // ── Tenant ──
         modelBuilder.Entity<Tenant>(t =>
         {
