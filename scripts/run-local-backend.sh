@@ -39,11 +39,17 @@ export Authentication__Google__ClientId=445006464104-pcq13k9lkmcol1k5hqktu8arcrv
 export Authentication__SuperAdmins__Emails__0=yisadivin@yahoo.fr
 
 # ── Background sync: off ───────────────────────────────────────────────────────
-# AD sync, calendar push and presence all need the Graph client secret, which lives only in
-# Key Vault. Left enabled they would loop on authentication failures and bury real log output.
+# AD sync, calendar push, presence and department sync all need the Graph client secret,
+# which lives only in Key Vault. Left enabled they would loop on authentication failures and
+# bury real log output.
+#
+# Department sync is listed here now: it was absent, and until recently it had no off switch
+# of its own either, so it ran its first cycle 30 seconds after startup against whatever
+# tenant was configured.
 export Sync__AdSyncIntervalMinutes=0
 export Sync__CalendarSyncIntervalMinutes=0
 export Sync__PresenceSyncIntervalMinutes=0
+export Sync__DepartmentSyncIntervalMinutes=0
 
 # ── Twilio SMS: opt-in, credentials from YOUR environment ─────────────────────
 # Deliberately NOT hardcoded. The Auth Token is a secret and must never be committed, so

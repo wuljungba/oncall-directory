@@ -88,7 +88,13 @@ React SPA (port 5173) ──proxy──▶ ASP.NET Core 8 API (port 5000) ──
 2. Start backend first (`dotnet run` on port 5000), then frontend (`npm run dev` on port 5173).
 3. Vite proxies `/api/*` and `/hubs/*` (WebSocket) to `localhost:5000`.
 4. SQLite/InMemory database providers are available for local dev without Azure SQL.
-5. Background sync services (AD, Calendar, Presence) are **disabled** in dev (`Sync:AdSyncIntervalMinutes: 0`).
+5. Background sync services are disabled **per service**, each by its own interval being `<= 0`:
+   `Sync:AdSyncIntervalMinutes`, `Sync:CalendarSyncIntervalMinutes`,
+   `Sync:PresenceSyncIntervalMinutes`, `Sync:DepartmentSyncIntervalMinutes`. A plain
+   `dotnet run` disables **none** of them unless your gitignored
+   `appsettings.Development.json` sets them, and they authenticate to whatever tenant is
+   configured — department sync starts its first cycle 30 seconds in, calendar sync writes to
+   real mailboxes. Use `scripts/run-local-backend.{sh,ps1}`, which set all four to `0`.
 
 ### Multi-Tenant Architecture
 - `Tenant` entity separates data per organization/business unit.
@@ -128,7 +134,7 @@ VITE_GOOGLE_CLIENT_ID=...       # Google OAuth client ID
   "GraphApi": { "TenantId", "ClientId", "ClientSecret" },
   "Authentication": { "Google": { "ClientId" }, "Local": { "SigningKey" } },
   "DevAuth": { "Enabled": true },
-  "Sync": { "AdSyncIntervalMinutes", "CalendarSyncIntervalMinutes", "PresenceSyncIntervalMinutes" },
+  "Sync": { "AdSyncIntervalMinutes", "CalendarSyncIntervalMinutes", "PresenceSyncIntervalMinutes", "DepartmentSyncIntervalMinutes" },
   "ConnectionStrings": { "DefaultConnection" },
   "Cors": { "Origin" },
   "Hipaa": { "SessionTimeoutMinutes", "AuditLogRetentionDays" }

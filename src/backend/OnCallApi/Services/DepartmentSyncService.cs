@@ -24,6 +24,16 @@ public class DepartmentSyncService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // 0 or less means disabled, as it does for AD sync. Without this gate the service had
+        // no off switch at all: it ran its first cycle 30 seconds after startup on every
+        // machine, so a local run authenticated to the configured tenant and pulled a real
+        // directory onto a developer's laptop.
+        if (_intervalMinutes <= 0)
+        {
+            _logger.LogInformation("Department sync is disabled (Sync:DepartmentSyncIntervalMinutes <= 0)");
+            return;
+        }
+
         // Run initial sync after a short delay to let the app initialize
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
         await SyncDepartmentsAsync(stoppingToken);

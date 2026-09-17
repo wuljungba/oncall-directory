@@ -29,9 +29,12 @@ $env:Authentication__Google__ClientId = '445006464104-pcq13k9lkmcol1k5hqktu8arcr
 $env:Authentication__SuperAdmins__Emails__0 = 'yisadivin@yahoo.fr'
 
 # ── Background sync: off (Graph client secret lives only in Key Vault) ─────────
-$env:Sync__AdSyncIntervalMinutes       = '0'
-$env:Sync__CalendarSyncIntervalMinutes = '0'
-$env:Sync__PresenceSyncIntervalMinutes = '0'
+# All four, not three: department sync was missing here and had no off switch of its own,
+# so it ran 30 seconds after startup against the real tenant.
+$env:Sync__AdSyncIntervalMinutes         = '0'
+$env:Sync__CalendarSyncIntervalMinutes   = '0'
+$env:Sync__PresenceSyncIntervalMinutes   = '0'
+$env:Sync__DepartmentSyncIntervalMinutes = '0'
 
 # ── Twilio SMS: opt-in, credentials from YOUR environment ─────────────────────
 # Deliberately NOT hardcoded — the Auth Token is a secret and must never be committed.

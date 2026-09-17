@@ -22,6 +22,15 @@ public class CalendarSyncService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // 0 or less means disabled, as it does for AD sync. This service had no off switch
+        // either, and it writes: its first cycle ran 45 seconds after startup and pushed
+        // calendar events to real mailboxes from wherever it happened to be running.
+        if (_intervalMinutes <= 0)
+        {
+            _logger.LogInformation("Calendar sync is disabled (Sync:CalendarSyncIntervalMinutes <= 0)");
+            return;
+        }
+
         await Task.Delay(TimeSpan.FromSeconds(45), stoppingToken);
         await SyncCalendarEventsAsync(stoppingToken);
 

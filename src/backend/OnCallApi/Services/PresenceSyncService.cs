@@ -25,7 +25,11 @@ public class PresenceSyncService : BackgroundService
         _services = services;
         _logger = logger;
         var intervalMin = config.GetValue<int>("Sync:PresenceSyncIntervalMinutes", 2);
-        _intervalSeconds = Math.Max(intervalMin, 1) * 60;
+        // 0 or less means disabled, as it does for AD sync. The clamp was
+        // Math.Max(intervalMin, 1), which turned "off" into "every minute" — so the setting
+        // used to switch these services off made this one the busiest of them all, and a
+        // developer's machine called Graph about real staff every 60 seconds.
+        _intervalSeconds = intervalMin <= 0 ? 0 : intervalMin * 60;
     }
 
     /// <summary>The three columns a cycle needs to decide whether anything changed.</summary>
@@ -33,6 +37,12 @@ public class PresenceSyncService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        if (_intervalSeconds <= 0)
+        {
+            _logger.LogInformation("Presence sync is disabled (Sync:PresenceSyncIntervalMinutes <= 0)");
+            return;
+        }
+
         // Wait 10 seconds before first sync to let the app initialize
         await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken);
 
