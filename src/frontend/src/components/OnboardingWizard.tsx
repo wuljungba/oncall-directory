@@ -3,6 +3,7 @@ import { CheckCircle, ArrowRight, RefreshCw, Sparkles, Upload, Cloud, AlertTrian
 import { settingsApi, integrationsApi, scheduleApi, departmentsApi, adminApi, ApiError } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useAuth } from '@/hooks/useAuth'
+import { summarizeAdSync } from '@/utils/adSync'
 
 /** Server error bodies can be long; keep the inline message readable. */
 function truncate(message: string, max = 140): string {
@@ -62,13 +63,28 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
     setDirectoryError(null)
     setSyncing(true)
     try {
-      // The only honest proof that Microsoft 365 is wired up is a Graph call that works.
+      // The only honest proof that Microsoft 365 is wired up is a Graph call that works — and
+      // "works" has to be read out of the response. A directory nobody has consented to answers
+      // 200 with succeeded:false, and this step used to call that "Connected".
       const result = await integrationsApi.syncAd()
+      const outcome = summarizeAdSync(result)
+
+      if (!outcome.ok) {
+        setStep1Status('in_progress')
+        setDirectoryError([outcome.headline, outcome.detail].filter(Boolean).join(' '))
+        addToast({
+          type: 'error',
+          title: 'Directory Not Connected',
+          description: outcome.headline,
+        })
+        return
+      }
+
       setStep1Status('done')
       addToast({
         type: 'success',
         title: 'Connected',
-        description: `Directory connection verified — ${result.synced} user(s) found.`,
+        description: outcome.headline,
       })
       setStep(1)
       setStep2Status('in_progress')
@@ -114,8 +130,19 @@ export default function OnboardingWizard({ onComplete }: OnboardingProps) {
       } else {
         // Microsoft mode: trigger AD sync
         const result = await integrationsApi.syncAd()
+        const outcome = summarizeAdSync(result)
+
+        if (!outcome.ok) {
+          // Same reasoning as step one: the call succeeded, the sync did not, and marking the
+          // step done here sends the admin off believing their staff are in the directory.
+          setDirectoryError([outcome.headline, outcome.detail].filter(Boolean).join(' '))
+          addToast({ type: 'error', title: 'Sync Incomplete', description: outcome.headline })
+          setStep2Status('in_progress')
+          return
+        }
+
         setStep2Status('done')
-        addToast({ type: 'success', title: 'Directory Synced', description: `${result.synced} users imported from Active Directory.` })
+        addToast({ type: 'success', title: 'Directory Synced', description: outcome.headline })
         setStep(2)
         setStep3Status('in_progress')
       }

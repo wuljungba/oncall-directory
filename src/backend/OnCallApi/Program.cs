@@ -564,6 +564,9 @@ builder.Services.Configure<OnCallApi.Configuration.SuperAdminOptions>(
     builder.Configuration.GetSection(OnCallApi.Configuration.SuperAdminOptions.SectionName));
 
 // ── Application Services ──
+// Singleton: it caches one Graph client per connected directory, and the token dance behind
+// each one should happen once per process rather than once per request.
+builder.Services.AddSingleton<IGraphClientFactory, GraphClientFactory>();
 builder.Services.AddScoped<IGraphApiService, GraphApiService>();
 builder.Services.AddScoped<IScheduleService, ScheduleService>();
 builder.Services.AddScoped<IDirectoryService, DirectoryService>();

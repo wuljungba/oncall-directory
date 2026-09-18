@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Save, AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react'
 import { settingsApi, integrationsApi } from '@/services/api'
 import { useToast } from '@/components/Toast'
+import { summarizeAdSync } from '@/utils/adSync'
 
 interface AppSettings {
   adSyncInterval: number
@@ -45,7 +46,7 @@ export default function SettingsPage() {
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ synced: number; timestamp: string } | null>(null)
+  const [syncResult, setSyncResult] = useState<{ headline: string; timestamp: string; ok: boolean } | null>(null)
   const { addToast } = useToast()
 
   useEffect(() => {
@@ -133,8 +134,17 @@ export default function SettingsPage() {
     try {
       const result = await integrationsApi.syncAd()
       const timestamp = new Date().toLocaleString()
-      setSyncResult({ synced: result.synced, timestamp })
-      addToast({ type: 'success', title: 'AD Sync Complete', description: `${result.synced} users synced successfully.` })
+      const outcome = summarizeAdSync(result)
+      setSyncResult({ headline: outcome.headline, timestamp, ok: outcome.ok })
+
+      // The API answers 200 even when a directory could not be read — the verdict lives in the
+      // payload, so a toast that ignores it congratulates the admin on a sync that did nothing.
+      if (outcome.ok) {
+        addToast({ type: 'success', title: 'AD Sync Complete', description: outcome.headline })
+      } else {
+        setError([outcome.headline, outcome.detail].filter(Boolean).join(' '))
+        addToast({ type: 'error', title: 'Sync Incomplete', description: outcome.headline })
+      }
     } catch (err) {
       console.error('Failed to sync AD:', err)
       setError('AD sync failed. Please check the Graph API configuration.')
@@ -207,9 +217,13 @@ export default function SettingsPage() {
 
           {/* Sync history */}
           {syncResult && (
-            <div className="flex items-center gap-2 text-xs text-green-400 bg-green-600/10 rounded-lg px-3 py-2">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Last sync: {syncResult.timestamp} — {syncResult.synced} users processed</span>
+            <div className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${
+              syncResult.ok ? 'text-green-400 bg-green-600/10' : 'text-red-400 bg-red-600/10'
+            }`}>
+              {syncResult.ok
+                ? <CheckCircle2 className="w-3.5 h-3.5" />
+                : <AlertTriangle className="w-3.5 h-3.5" />}
+              <span>Last sync: {syncResult.timestamp} — {syncResult.headline}</span>
             </div>
           )}
 

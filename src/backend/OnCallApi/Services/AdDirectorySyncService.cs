@@ -3,6 +3,7 @@ using Microsoft.Extensions.Options;
 using OnCallApi.Configuration;
 using OnCallApi.Data;
 using OnCallApi.Models;
+using OnCallApi.Validators;
 
 namespace OnCallApi.Services;
 
@@ -20,9 +21,17 @@ public record AdSyncResult(
     string? DeltaToken,
     int? TenantId = null,
     string? TenantName = null,
-    bool Succeeded = true)
+    bool Succeeded = true,
+    bool WasFullEnumeration = false,
+    bool Completed = false,
+    int PagesRead = 0,
+    int DeactivatedByRemoval = 0,
+    int DeactivationsRefused = 0)
 {
     public bool AnythingWritten => Created > 0 || Updated > 0 || Deactivated > 0;
+
+    /// <summary>A run that refused its own deactivation batch needs a person to look at it.</summary>
+    public bool NeedsAttention => DeactivationsRefused > 0 || !Succeeded;
 }
 
 public interface IAdDirectorySyncService
@@ -33,15 +42,18 @@ public interface IAdDirectorySyncService
     /// connected directories existed.
     /// </summary>
     Task<AdSyncResult> SyncAsync(
-        int? tenantId, string? entraTenantId, string? deltaToken, CancellationToken ct = default);
+        int? tenantId, string? entraTenantId, string? deltaLink, CancellationToken ct = default);
 
     Task<string?> GetStoredDeltaTokenAsync(int? tenantId, CancellationToken ct = default);
 
     /// <summary>
     /// Syncs every tenant that has a connected directory, plus the home directory. One
     /// tenant failing does not stop the others.
+    ///
+    /// <paramref name="forceFull"/> discards each stored cursor for this run, which is the
+    /// operator's escape hatch when a directory looks wrong.
     /// </summary>
-    Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(bool forceFull = false, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -57,17 +69,34 @@ public class AdDirectorySyncService : IAdDirectorySyncService
     private readonly AppDbContext _db;
     private readonly IGraphApiService _graphApi;
     private readonly IOptions<GraphApiOptions> _graphOptions;
+    private readonly IConfiguration _config;
     private readonly ILogger<AdDirectorySyncService> _logger;
+
+    /// <summary>
+    /// Defaults for the deactivation valve. A quarter of a directory leaving between two sync
+    /// cycles is not turnover, it is a fault — and this service reading one page of a paginated
+    /// directory, then deactivating everyone on the pages it never read, is exactly what that
+    /// fault looked like in production.
+    /// </summary>
+    private const double DefaultMaxDeactivationShare = 0.25;
+
+    /// <summary>
+    /// Below this many active staff the share is meaningless: in a team of three, one departure
+    /// is 33%. Small tenants are reconciled without the valve.
+    /// </summary>
+    private const int DefaultDeactivationGuardFloor = 10;
 
     public AdDirectorySyncService(
         AppDbContext db,
         IGraphApiService graphApi,
         IOptions<GraphApiOptions> graphOptions,
+        IConfiguration config,
         ILogger<AdDirectorySyncService> logger)
     {
         _db = db;
         _graphApi = graphApi;
         _graphOptions = graphOptions;
+        _config = config;
         _logger = logger;
     }
 
@@ -86,7 +115,8 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         return setting?.Value;
     }
 
-    public async Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(
+        bool forceFull = false, CancellationToken ct = default)
     {
         var results = new List<AdSyncResult>();
 
@@ -108,8 +138,8 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         {
             try
             {
-                var homeToken = await GetStoredDeltaTokenAsync(null, ct);
-                results.Add(await SyncAsync(null, null, homeToken, ct));
+                var homeLink = forceFull ? null : await GetStoredDeltaTokenAsync(null, ct);
+                results.Add(await SyncAsync(null, null, homeLink, ct));
             }
             catch (Exception ex)
             {
@@ -123,8 +153,8 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         {
             try
             {
-                var token = await GetStoredDeltaTokenAsync(tenant.Id, ct);
-                results.Add(await SyncAsync(tenant.Id, tenant.AzureAdTenantId, token, ct));
+                var link = forceFull ? null : await GetStoredDeltaTokenAsync(tenant.Id, ct);
+                results.Add(await SyncAsync(tenant.Id, tenant.AzureAdTenantId, link, ct));
             }
             catch (Exception ex)
             {
@@ -140,34 +170,31 @@ public class AdDirectorySyncService : IAdDirectorySyncService
     }
 
     public async Task<AdSyncResult> SyncAsync(
-        int? tenantId, string? entraTenantId, string? deltaToken, CancellationToken ct = default)
+        int? tenantId, string? entraTenantId, string? deltaLink, CancellationToken ct = default)
     {
         var tenantName = tenantId.HasValue
             ? (await _db.Tenants.Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct))
             : null;
 
-        var delta = await _graphApi.SyncUsersDeltaAsync(entraTenantId, deltaToken, ct);
+        var delta = await _graphApi.SyncUsersDeltaAsync(entraTenantId, deltaLink, ct);
         var users = delta.Users;
 
         // A failed read returns no users, which is indistinguishable from a directory in
         // which everyone has left. Deactivating on that basis would empty the tenant's
         // staff list because Graph was briefly unreachable, so a failed cycle changes
         // nothing at all and says so.
-        if (!delta.Succeeded)
+        if (delta.ReadNothing)
         {
             _logger.LogWarning(
-                "Directory read failed for tenant {TenantId}; nothing was written and nobody was deactivated",
-                tenantId);
+                "Directory read failed for tenant {TenantId} ({Detail}); nothing was written and nobody was deactivated",
+                tenantId, delta.FailureDetail);
             return new AdSyncResult(
                 0, 0, 0, 0,
-                ["The directory could not be read, so nothing was changed. Check the connection and try again."],
-                deltaToken, tenantId, tenantName, Succeeded: false);
-        }
-
-        if (users.Count == 0 && deltaToken != null)
-        {
-            await StoreDeltaTokenAsync(delta.DeltaToken, tenantId, ct);
-            return new AdSyncResult(0, 0, 0, 0, [], delta.DeltaToken, tenantId, tenantName);
+                [delta.FailureDetail is { Length: > 0 } why
+                    ? $"The directory could not be read, so nothing was changed: {why}"
+                    : "The directory could not be read, so nothing was changed. Check the connection and try again."],
+                deltaLink, tenantId, tenantName, Succeeded: false,
+                WasFullEnumeration: delta.WasFullEnumeration, Completed: false, PagesRead: delta.PagesRead);
         }
 
         var skipped = new List<string>();
@@ -197,16 +224,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
 
             if (existing != null)
             {
-                existing.FirstName = user.FirstName;
-                existing.LastName = user.LastName;
-                existing.Title = user.Title;
-                existing.Email = user.Email;
-                existing.OfficePhone = user.OfficePhone;
-                existing.MobilePhone = user.MobilePhone;
-                existing.OfficeLocation = user.OfficeLocation;
-                existing.Source = "Ad";
-                existing.LastSyncedAt = DateTime.UtcNow;
-                existing.TenantId ??= tenantId;
+                ApplyGraphUserToEmployee(user, existing, tenantId);
                 updated++;
                 continue;
             }
@@ -233,11 +251,23 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             // filtered them all out and a sync that reported "3 users processed" appeared
             // to have done nothing at all.
             user.TenantId = tenantId;
+            // A disabled account arrives inactive; creating it active would undo on insert what
+            // the departure rules below do on update.
             _db.Employees.Add(user);
             created++;
         }
 
-        var adObjectIds = users.Select(u => u.AzureAdObjectId).ToHashSet();
+        // ── Departures ──────────────────────────────────────────────────────────────────
+        //
+        // A delta response contains only CHANGES. "Absent from the response" therefore means
+        // "unchanged", not "gone", and reading it as departure is precisely the bug this rework
+        // exists to fix: the old code read one page of a paginated directory and deactivated
+        // everybody on the pages it never read.
+        //
+        // So absence may be read as departure ONLY for an enumeration that started from nothing
+        // and reached the end (GraphUserDeltaResult.MayReconcileByAbsence). In every other run,
+        // departure has to be something Graph said outright — a @removed id, or an account it
+        // reported as disabled.
 
         // Only this tenant's people are candidates. Estate-wide, syncing one customer
         // deactivated every other customer's staff, because nobody else's object ids
@@ -245,7 +275,48 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         var activeUsers = await _db.Employees
             .Where(e => e.IsActive && e.TenantId == tenantId)
             .ToListAsync(ct);
-        var toDeactivate = SelectEmployeesToDeactivate(activeUsers, adObjectIds, tenantId);
+
+        var departedIds = new List<string>(delta.RemovedObjectIds);
+
+        if (DeactivateOnDisabledAccount())
+        {
+            // Most directories never delete a leaver; they disable the account. Without this,
+            // an incremental run has almost no departure signal at all.
+            departedIds.AddRange(users.Where(u => !u.IsActive).Select(u => u.AzureAdObjectId));
+        }
+
+        var byRemoval = SelectEmployeesToDeactivateByRemoval(activeUsers, departedIds, tenantId);
+
+        var seenObjectIds = users
+            .Where(u => u.IsActive)
+            .Select(u => u.AzureAdObjectId)
+            // Graph echoes back the id casing it holds, which need not match what we stored.
+            // With an ordinal set, a casing difference reads as "absent" and deactivates a
+            // present colleague. PresenceSyncService learned this the same way.
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var byAbsence = delta.MayReconcileByAbsence
+            ? SelectEmployeesToDeactivate(activeUsers, seenObjectIds, tenantId)
+            : [];
+
+        var toDeactivate = byRemoval
+            .Concat(byAbsence)
+            .DistinctBy(e => e.Id)
+            .ToList();
+
+        var valve = EvaluateDeactivationBatch(
+            activeUsers.Count, toDeactivate.Count, MaxDeactivationShare(tenantId), DeactivationGuardFloor());
+
+        var refused = 0;
+        if (!valve.Allowed)
+        {
+            refused = toDeactivate.Count;
+            toDeactivate = [];
+            skipped.Add(valve.Reason!);
+            _logger.LogError(
+                "Directory sync for tenant {TenantId} refused its deactivation batch: {Reason}",
+                tenantId, valve.Reason);
+        }
 
         foreach (var active in toDeactivate)
         {
@@ -254,7 +325,16 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         }
 
         await _db.SaveChangesAsync(ct);
-        await StoreDeltaTokenAsync(delta.DeltaToken, tenantId, ct);
+
+        // The cursor advances only on a complete read whose conclusions were actually applied.
+        // Advancing after a refusal would turn the alarm off: the next run would be incremental,
+        // see nothing unusual, and the refusal would be forgotten rather than fixed.
+        var storedLink = false;
+        if (delta.Completed && !string.IsNullOrEmpty(delta.DeltaLink) && refused == 0)
+        {
+            await StoreDeltaTokenAsync(delta.DeltaLink, tenantId, ct);
+            storedLink = true;
+        }
 
         if (skipped.Count > 0)
         {
@@ -264,12 +344,21 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         }
 
         _logger.LogInformation(
-            "AD sync: {Fetched} fetched, {Created} created, {Updated} updated, {Deactivated} deactivated, {Skipped} skipped",
-            users.Count, created, updated, toDeactivate.Count, skipped.Count);
+            "AD sync ({Mode}, {Pages} page(s), complete: {Complete}): {Fetched} fetched, {Created} created, "
+            + "{Updated} updated, {Deactivated} deactivated ({ByRemoval} reported gone), {Refused} refused, {Skipped} skipped",
+            delta.WasFullEnumeration ? "full" : "incremental", delta.PagesRead, delta.Completed,
+            users.Count, created, updated, toDeactivate.Count, byRemoval.Count, refused, skipped.Count);
 
         return new AdSyncResult(
-            users.Count, created, updated, toDeactivate.Count, skipped, delta.DeltaToken,
-            tenantId, tenantName);
+            users.Count, created, updated, toDeactivate.Count, skipped,
+            storedLink ? delta.DeltaLink : deltaLink,
+            tenantId, tenantName,
+            Succeeded: delta.Completed,
+            WasFullEnumeration: delta.WasFullEnumeration,
+            Completed: delta.Completed,
+            PagesRead: delta.PagesRead,
+            DeactivatedByRemoval: byRemoval.Count,
+            DeactivationsRefused: refused);
     }
 
     /// <summary>Names a user without assuming any particular field is populated.</summary>
@@ -281,27 +370,77 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             : "an unnamed directory entry";
     }
 
-    private async Task StoreDeltaTokenAsync(string? deltaToken, int? tenantId, CancellationToken ct)
+    private double MaxDeactivationShare(int? tenantId)
     {
-        if (string.IsNullOrEmpty(deltaToken)) return;
+        if (tenantId.HasValue)
+        {
+            var perTenant = _config.GetValue<double?>($"Sync:MaxDeactivationShare:{tenantId.Value}");
+            if (perTenant.HasValue) return perTenant.Value;
+        }
 
-        var key = DeltaTokenKey(tenantId);
-        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
-        if (setting != null)
-        {
-            setting.Value = deltaToken;
-        }
-        else
-        {
-            _db.AppSettings.Add(new AppSetting
-            {
-                Key = key,
-                Value = deltaToken,
-                Description = "Azure AD Graph API delta token for incremental user sync"
-            });
-        }
-        await _db.SaveChangesAsync(ct);
+        return _config.GetValue<double?>("Sync:MaxDeactivationShare") ?? DefaultMaxDeactivationShare;
     }
+
+    private int DeactivationGuardFloor() =>
+        _config.GetValue<int?>("Sync:DeactivationGuardFloor") ?? DefaultDeactivationGuardFloor;
+
+    private bool DeactivateOnDisabledAccount() =>
+        _config.GetValue<bool?>("Sync:DeactivateOnDisabledAccount") ?? true;
+
+    /// <summary>
+    /// Whether a proposed deactivation batch is plausible turnover or evidence of a fault.
+    ///
+    /// Pure so the boundaries are table-testable, and deliberately blunt: a sync that would
+    /// deactivate a quarter of a hospital's staff in one cycle is refused outright, because the
+    /// failure it guards against — reading part of a directory and treating the rest as departed
+    /// — looks exactly like a very successful sync from the inside.
+    /// </summary>
+    internal static (bool Allowed, string? Reason) EvaluateDeactivationBatch(
+        int activeCount, int proposed, double maxShare, int guardFloor)
+    {
+        if (proposed <= 0) return (true, null);
+        if (activeCount <= guardFloor) return (true, null);
+
+        var share = proposed / (double)activeCount;
+        if (share <= maxShare) return (true, null);
+
+        return (false,
+            $"Refused to deactivate {proposed} of {activeCount} active staff ({share:P0}, limit {maxShare:P0}). "
+            + "Nobody was deactivated and the sync cursor was left alone, so this will be re-checked next run. "
+            + "Confirm the directory connection before raising Sync:MaxDeactivationShare.");
+    }
+
+    /// <summary>
+    /// Graph's values win where Graph has one, and are ignored where it does not.
+    ///
+    /// A blank from Graph used to overwrite whatever was stored, so a mobile number an
+    /// administrator had typed in was erased on the next sync — and a clinician with no number
+    /// is a clinician a code call cannot reach. The importer settled this same question the same
+    /// way (BulkImportService.ApplyRowToEmployee); this keeps the two paths consistent.
+    ///
+    /// The cost is stated plainly: a title genuinely cleared in Entra stays until something
+    /// replaces it. Keeping a stale title beats losing a curated phone number.
+    /// </summary>
+    internal static void ApplyGraphUserToEmployee(Employee incoming, Employee existing, int? tenantId)
+    {
+        existing.FirstName = PreferIncoming(incoming.FirstName, existing.FirstName) ?? existing.FirstName;
+        existing.LastName = PreferIncoming(incoming.LastName, existing.LastName) ?? existing.LastName;
+        existing.Title = PreferIncoming(incoming.Title, existing.Title);
+        existing.Email = PreferIncoming(incoming.Email, existing.Email);
+        existing.OfficePhone = PreferIncoming(incoming.OfficePhone, existing.OfficePhone);
+        existing.MobilePhone = PreferIncoming(incoming.MobilePhone, existing.MobilePhone);
+        existing.Extension = PreferIncoming(incoming.Extension, existing.Extension);
+        existing.OfficeLocation = PreferIncoming(incoming.OfficeLocation, existing.OfficeLocation);
+
+        // Unconditional: these describe the sync itself rather than the person.
+        existing.Source = "Ad";
+        existing.LastSyncedAt = DateTime.UtcNow;
+        existing.TenantId ??= tenantId;
+        existing.UpdatedAt = DateTime.UtcNow;
+    }
+
+    private static string? PreferIncoming(string? incoming, string? existing) =>
+        string.IsNullOrWhiteSpace(incoming) ? existing : incoming.Trim();
 
     /// <summary>
     /// Pure rule behind AD deactivation: only records tagged <see cref="Employee.Source"/>
@@ -323,4 +462,49 @@ public class AdDirectorySyncService : IAdDirectorySyncService
         IEnumerable<Employee> activeEmployees, HashSet<string> adObjectIds, int? tenantId) =>
         SelectEmployeesToDeactivate(
             activeEmployees.Where(e => e.TenantId == tenantId), adObjectIds);
+
+    /// <summary>
+    /// Departures Graph named outright — a <c>@removed</c> entry, or an account it reported as
+    /// disabled. Unlike absence, this is a fact about a specific person, so it is safe to act on
+    /// in an incremental run. The same Source and tenant guards apply: a local record that
+    /// happens to carry that object id is still not the directory's to deactivate.
+    /// </summary>
+    internal static List<Employee> SelectEmployeesToDeactivateByRemoval(
+        IEnumerable<Employee> activeEmployees, IReadOnlyCollection<string> removedObjectIds, int? tenantId)
+    {
+        if (removedObjectIds.Count == 0) return [];
+
+        var removed = removedObjectIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return activeEmployees
+            .Where(e => e.TenantId == tenantId
+                && e.Source == "Ad"
+                && !string.IsNullOrWhiteSpace(e.AzureAdObjectId)
+                && removed.Contains(e.AzureAdObjectId))
+            .ToList();
+    }
+
+    private async Task StoreDeltaTokenAsync(string? deltaToken, int? tenantId, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(deltaToken)) return;
+
+        var key = DeltaTokenKey(tenantId);
+        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
+        if (setting != null)
+        {
+            setting.Value = deltaToken;
+        }
+        else
+        {
+            _db.AppSettings.Add(new AppSetting
+            {
+                Key = key,
+                Value = deltaToken,
+                Description = "Azure AD Graph API delta link for incremental user sync"
+            });
+        }
+        await _db.SaveChangesAsync(ct);
+    }
 }

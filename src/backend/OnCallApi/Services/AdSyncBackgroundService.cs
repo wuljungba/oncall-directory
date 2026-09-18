@@ -51,13 +51,25 @@ public class AdSyncBackgroundService : BackgroundService
         {
             using var scope = _services.CreateScope();
             var sync = scope.ServiceProvider.GetRequiredService<IAdDirectorySyncService>();
-            var results = await sync.SyncAllAsync(ct);
+            // Incremental: the timer resumes from each directory's stored cursor. The manual
+            // trigger is the one that forces a full re-enumeration.
+            var results = await sync.SyncAllAsync(forceFull: false, ct);
 
             foreach (var failed in results.Where(r => !r.Succeeded))
             {
                 _logger.LogWarning(
-                    "Directory sync did not complete for tenant {TenantId} ({TenantName})",
-                    failed.TenantId, failed.TenantName);
+                    "Directory sync did not complete for tenant {TenantId} ({TenantName}): read {Pages} page(s)",
+                    failed.TenantId, failed.TenantName, failed.PagesRead);
+            }
+
+            // A refusal is not a failure — the run completed and deliberately declined to apply
+            // what it found. It still needs a person, so it is logged at Error on its own.
+            foreach (var refused in results.Where(r => r.DeactivationsRefused > 0))
+            {
+                _logger.LogError(
+                    "Directory sync for tenant {TenantId} ({TenantName}) refused to deactivate {Count} staff; "
+                    + "nobody was deactivated and the cursor was not advanced",
+                    refused.TenantId, refused.TenantName, refused.DeactivationsRefused);
             }
         }
         catch (Exception ex)

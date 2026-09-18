@@ -9,6 +9,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { formatDateOnly } from '@/utils/date'
 import { SOURCE_FILTERS, matchesSource } from '@/constants/permissions'
 import { contactName, contactInitials } from '@/utils/contacts'
+import { summarizeAdSync } from '@/utils/adSync'
 import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity, BulkActionResult } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
 import BulkPermissionModal from './admin/BulkPermissionModal'
@@ -1266,7 +1267,7 @@ function DepartmentFormModal({ department, tenants, canPickTenant, activeTenantI
 
 function IntegrationsSection() {
   const [syncing, setSyncing] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ synced: number; timestamp: string } | null>(null)
+  const [syncResult, setSyncResult] = useState<{ headline: string; timestamp: string; ok: boolean } | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
@@ -1304,9 +1305,17 @@ function IntegrationsSection() {
     try {
       const result = await integrationsApi.syncAd()
       const timestamp = new Date().toLocaleString()
-      setSyncResult({ synced: result.synced, timestamp })
-      setSuccess(`AD sync complete: ${result.synced} users processed.`)
-      setTimeout(() => setSuccess(null), 4000)
+      const outcome = summarizeAdSync(result)
+      setSyncResult({ headline: outcome.headline, timestamp, ok: outcome.ok })
+
+      // A directory that could not be read comes back as HTTP 200 with succeeded:false, so
+      // the failure has to be read out of the payload rather than caught here.
+      if (outcome.ok) {
+        setSuccess(outcome.headline)
+        setTimeout(() => setSuccess(null), 4000)
+      } else {
+        setError([outcome.headline, outcome.detail].filter(Boolean).join(' '))
+      }
     } catch {
       setError('AD sync failed. Check the Graph API configuration.')
     } finally {
@@ -1372,8 +1381,8 @@ function IntegrationsSection() {
               Automatically sync users every {adInterval} minutes
             </p>
             {syncResult && (
-              <p className="text-xs text-green-500 mt-1">
-                Last sync: {syncResult.timestamp} — {syncResult.synced} users processed
+              <p className={`text-xs mt-1 ${syncResult.ok ? 'text-green-500' : 'text-red-400'}`}>
+                Last sync: {syncResult.timestamp} — {syncResult.headline}
               </p>
             )}
           </div>

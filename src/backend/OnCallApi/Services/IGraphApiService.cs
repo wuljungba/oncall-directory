@@ -5,12 +5,16 @@ namespace OnCallApi.Services;
 public interface IGraphApiService
 {
     Task<List<Employee>> SyncUsersAsync(CancellationToken ct = default);
-    Task<GraphUserDelta> SyncUsersDeltaAsync(string? deltaToken, CancellationToken ct = default);
 
     /// <summary>
     /// Delta sync against a specific connected directory. A blank tenant id means our own.
+    ///
+    /// <paramref name="deltaLink"/> is the absolute URL Graph handed back last time, not a bare
+    /// token — it is named for what it is, because the previous parameter was called a token,
+    /// was never sent, and the enumeration silently restarted every run.
     /// </summary>
-    Task<GraphUserDelta> SyncUsersDeltaAsync(string? entraTenantId, string? deltaToken, CancellationToken ct = default);
+    Task<GraphUserDeltaResult> SyncUsersDeltaAsync(
+        string? entraTenantId, string? deltaLink, CancellationToken ct = default);
     Task<string?> GetUserPresenceAsync(string azureAdObjectId, CancellationToken ct = default);
 
     /// <summary>
@@ -43,11 +47,44 @@ public interface IGraphApiService
 }
 
 /// <summary>
-/// One page of a directory delta read.
+/// A whole directory delta read — every page of it, not one page.
 ///
-/// <paramref name="Succeeded"/> exists because an empty <paramref name="Users"/> list is
-/// ambiguous on its own: it means either "nothing changed" or "the call failed". The
-/// caller deactivates people who are absent from this list, so it must be able to tell
-/// those apart.
+/// The flags exist because an empty <paramref name="Users"/> list means four different things
+/// (nothing changed, the call failed, the directory is empty, or we only read part of it) and the
+/// caller deactivates people based on absence from this list. It must be able to tell them apart:
+///
+/// <list type="bullet">
+/// <item><paramref name="WasFullEnumeration"/> — started from nothing, so the result describes the
+/// entire directory. An incremental run describes only what changed, and absence from it means
+/// "unchanged", never "gone".</item>
+/// <item><paramref name="Completed"/> — every page was read and Graph handed back a deltaLink.
+/// A partial read must never be mistaken for a complete picture.</item>
+/// <item><paramref name="RemovedObjectIds"/> — departures Graph reported outright. A fact about a
+/// named person, unlike absence, so it is safe to act on in any run.</item>
+/// </list>
+///
+/// Invariants, pinned by tests: <c>Completed</c> implies a non-null <paramref name="DeltaLink"/>;
+/// the link is always a deltaLink and never a mid-enumeration skiptoken; and
+/// <c>WasFullEnumeration &amp;&amp; Completed</c> is the ONLY state in which absence means absence.
 /// </summary>
-public record GraphUserDelta(List<Employee> Users, string? DeltaToken, bool Succeeded);
+public sealed record GraphUserDeltaResult(
+    IReadOnlyList<Employee> Users,
+    IReadOnlyList<string> RemovedObjectIds,
+    string? DeltaLink,
+    bool WasFullEnumeration,
+    bool Completed,
+    bool TokenWasRejected,
+    int PagesRead,
+    string? FailureDetail)
+{
+    /// <summary>
+    /// Nothing was read and nothing can be concluded — the run must change nothing and keep the
+    /// cursor it had.
+    /// </summary>
+    public bool ReadNothing => !Completed && Users.Count == 0 && RemovedObjectIds.Count == 0;
+
+    /// <summary>
+    /// Whether absence from <see cref="Users"/> may be read as "this person has left".
+    /// </summary>
+    public bool MayReconcileByAbsence => WasFullEnumeration && Completed && Users.Count > 0;
+}

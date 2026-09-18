@@ -29,13 +29,16 @@ public class IntegrationsController : ControllerBase
     [HttpPost("sync/ad")]
     [Authorize(Policy = "RequireAdminFull")]
     public async Task<ActionResult> SyncActiveDirectory(
-        [FromServices] IAdDirectorySyncService sync, CancellationToken ct)
+        [FromServices] IAdDirectorySyncService sync,
+        CancellationToken ct,
+        [FromQuery] bool full = true)
     {
-        // Full sync rather than delta: someone pressing this wants the directory
-        // reconciled now, not the increment since the last scheduled run. Every connected
-        // directory is covered, so the button means the same thing whether one customer is
-        // connected or ten.
-        var results = await sync.SyncAllAsync(ct);
+        // Full sync rather than delta: someone pressing this wants the directory reconciled
+        // now, not the increment since the last scheduled run. That was already the promise in
+        // this comment, and was not true — the stored cursor was passed straight through. Pass
+        // ?full=false for a plain incremental run. Every connected directory is covered, so the
+        // button means the same thing whether one customer is connected or ten.
+        var results = await sync.SyncAllAsync(full, ct);
 
         return Ok(new
         {
@@ -43,6 +46,8 @@ public class IntegrationsController : ControllerBase
             created = results.Sum(r => r.Created),
             updated = results.Sum(r => r.Updated),
             deactivated = results.Sum(r => r.Deactivated),
+            deactivationsRefused = results.Sum(r => r.DeactivationsRefused),
+            failedDirectories = results.Count(r => !r.Succeeded),
             skipped = results.SelectMany(r => r.Skipped).ToList(),
             // Reported per tenant as well as in total: "0 created" across ten directories
             // hides which one of them actually failed.
@@ -55,6 +60,13 @@ public class IntegrationsController : ControllerBase
                 created = r.Created,
                 updated = r.Updated,
                 deactivated = r.Deactivated,
+                // The three that say whether this run can be believed: how much of the
+                // directory was read, whether it was a full picture, and whether a
+                // deactivation batch was refused as implausible.
+                pagesRead = r.PagesRead,
+                mode = r.WasFullEnumeration ? "full" : "incremental",
+                deactivationsRefused = r.DeactivationsRefused,
+                needsAttention = r.NeedsAttention,
             }),
         });
     }

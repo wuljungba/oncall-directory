@@ -386,9 +386,44 @@ export const settingsApi = {
 }
 
 // ── Integrations ──
+
+/** One directory's share of a sync run. */
+export interface AdSyncTenantResult {
+  tenantId: number | null
+  tenantName: string | null
+  succeeded: boolean
+  fetched: number
+  created: number
+  updated: number
+  deactivated: number
+  /** How much of the directory was actually read. One page for a large directory is a red flag. */
+  pagesRead: number
+  mode: 'full' | 'incremental'
+  /** Deactivations the safety limit declined to apply. */
+  deactivationsRefused: number
+  needsAttention: boolean
+}
+
+/**
+ * What POST /integrations/sync/ad really returns. It was typed as `{ synced: number }`, which
+ * the API has never sent, so every caller rendered `undefined` and — worse — could not see
+ * `succeeded: false` for a directory that was never consented to.
+ */
+export interface AdSyncResponse {
+  fetched: number
+  created: number
+  updated: number
+  deactivated: number
+  deactivationsRefused: number
+  failedDirectories: number
+  skipped: string[]
+  tenants: AdSyncTenantResult[]
+}
+
 export const integrationsApi = {
-  syncAd: () =>
-    fetchApi<{ synced: number }>('/integrations/sync/ad', { method: 'POST' }),
+  /** `full` re-enumerates each directory from scratch, which is what pressing a button means. */
+  syncAd: (full = true) =>
+    fetchApi<AdSyncResponse>(`/integrations/sync/ad?full=${full}`, { method: 'POST' }),
   sendTeamsNotification: (userId: string, title: string, message: string) =>
     fetchApi<{ sent: boolean }>('/integrations/notify/teams', {
       method: 'POST',
