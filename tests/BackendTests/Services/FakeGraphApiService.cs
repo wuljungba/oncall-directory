@@ -43,8 +43,27 @@ internal sealed class FakeGraphApiService : IGraphApiService
     public Task<bool> SendTeamsMessageAsync(string userId, string htmlContent, CancellationToken ct = default) => throw NotUsed();
     public Task CreateOutlookCalendarEventAsync(
         string userId, string subject, DateTime start, DateTime end, CancellationToken ct = default) => throw NotUsed();
-    public Task<List<Employee>> GetDepartmentMembersAsync(string groupId, CancellationToken ct = default) => throw NotUsed();
-    public Task<List<GroupInfo>> GetAllGroupsAsync(CancellationToken ct = default) => throw NotUsed();
+    /// <summary>Scripted group membership, keyed by group id. Unscripted ids throw.</summary>
+    public Dictionary<string, GraphMembersResult> Members { get; } = [];
+
+    /// <summary>Every group-membership read, so a test can assert which directory was asked.</summary>
+    public List<(string? EntraTenantId, string GroupId)> MemberCalls { get; } = [];
+
+    public Task<GraphMembersResult> GetDepartmentMembersAsync(
+        string? entraTenantId, string groupId, CancellationToken ct = default)
+    {
+        MemberCalls.Add((entraTenantId, groupId));
+
+        if (!Members.TryGetValue(groupId, out var result))
+        {
+            throw new InvalidOperationException($"This test scripted no membership for group {groupId}.");
+        }
+
+        return Task.FromResult(result);
+    }
+
+    public Task<GraphGroupsResult> GetAllGroupsAsync(string? entraTenantId, CancellationToken ct = default) =>
+        throw NotUsed();
     public Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default) => throw NotUsed();
     public Task<bool> CheckGraphConnectionAsync(CancellationToken ct = default) => throw NotUsed();
 

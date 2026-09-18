@@ -35,8 +35,22 @@ public interface IGraphApiService
     /// </summary>
     Task<bool> SendTeamsMessageAsync(string userId, string htmlContent, CancellationToken ct = default);
     Task CreateOutlookCalendarEventAsync(string userId, string subject, DateTime start, DateTime end, CancellationToken ct = default);
-    Task<List<Employee>> GetDepartmentMembersAsync(string groupId, CancellationToken ct = default);
-    Task<List<GroupInfo>> GetAllGroupsAsync(CancellationToken ct = default);
+    /// <summary>
+    /// Every group in one directory. A blank tenant id means our own.
+    ///
+    /// Paged, and it says whether it reached the end: the single-page version this replaces
+    /// silently described a directory of 300 groups as the first 100.
+    /// </summary>
+    Task<GraphGroupsResult> GetAllGroupsAsync(string? entraTenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Every member of one group, in one directory. A blank tenant id means our own.
+    ///
+    /// <see cref="GraphMembersResult.Completed"/> matters more here than anywhere else: a caller
+    /// that revokes access for people missing from this list must not act on a partial read.
+    /// </summary>
+    Task<GraphMembersResult> GetDepartmentMembersAsync(
+        string? entraTenantId, string groupId, CancellationToken ct = default);
     Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default);
 
     /// <summary>
@@ -88,3 +102,21 @@ public sealed record GraphUserDeltaResult(
     /// </summary>
     public bool MayReconcileByAbsence => WasFullEnumeration && Completed && Users.Count > 0;
 }
+
+/// <summary>
+/// Groups read from one directory, and whether every page of them was read.
+///
+/// <paramref name="Completed"/> is not decoration. Anything that reconciles against this list —
+/// deciding a department or an admin no longer exists — must refuse to act on a partial read,
+/// because "absent from a truncated page" and "gone" are indistinguishable in the result.
+/// </summary>
+public sealed record GraphGroupsResult(
+    IReadOnlyList<GroupInfo> Groups, bool Completed, string? FailureDetail);
+
+/// <summary>
+/// Members read from one group, and whether every page of them was read. Same warning as
+/// <see cref="GraphGroupsResult"/>, and it bites harder: the tenant-admin sync deletes rows for
+/// members it cannot see.
+/// </summary>
+public sealed record GraphMembersResult(
+    IReadOnlyList<Employee> Members, bool Completed, string? FailureDetail);

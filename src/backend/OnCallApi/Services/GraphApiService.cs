@@ -472,29 +472,60 @@ public class GraphApiService : IGraphApiService
         }
     }
 
-    public async Task<List<GroupInfo>> GetAllGroupsAsync(CancellationToken ct = default)
+    /// <summary>A directory of more than one page of groups is not a rare shape; 100 is Graph's default.</summary>
+    private const int MaxGroupPages = 100;
+
+    public async Task<GraphGroupsResult> GetAllGroupsAsync(
+        string? entraTenantId, CancellationToken ct = default)
     {
+        var directory = entraTenantId ?? _options.Value.TenantId;
         var groups = new List<GroupInfo>();
+        var pages = 0;
+
         try
         {
-            var result = await GetClient().Groups.GetAsync(cancellationToken: ct);
-            if (result?.Value != null)
+            var client = GetClientForTenant(entraTenantId);
+            var page = await client.Groups.GetAsync(
+                config => config.QueryParameters.Select = ["id", "displayName", "description"], ct);
+
+            while (page != null)
             {
-                foreach (var g in result.Value)
+                pages++;
+                foreach (var g in page.Value ?? [])
                 {
                     if (g.Id != null && g.DisplayName != null)
                     {
                         groups.Add(new GroupInfo(g.Id, g.DisplayName, g.Description));
                     }
                 }
+
+                if (string.IsNullOrEmpty(page.OdataNextLink))
+                {
+                    _logger.LogInformation(
+                        "Read {Count} group(s) from directory {TenantId} over {Pages} page(s)",
+                        groups.Count, directory, pages);
+                    return new GraphGroupsResult(groups, Completed: true, null);
+                }
+
+                if (pages >= MaxGroupPages)
+                {
+                    return new GraphGroupsResult(groups, Completed: false,
+                        $"Stopped after {MaxGroupPages} pages without reaching the end of the group list.");
+                }
+
+                ct.ThrowIfCancellationRequested();
+                page = await client.Groups.WithUrl(page.OdataNextLink).GetAsync(cancellationToken: ct);
             }
-            _logger.LogInformation("Retrieved {Count} M365 groups", groups.Count);
+
+            return new GraphGroupsResult(groups, Completed: false, "Graph returned an empty response.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to retrieve M365 groups");
+            // Reported rather than swallowed: an empty list read as "this directory has no
+            // groups" is how a failed call becomes a decision.
+            _logger.LogError(ex, "Failed to read groups from directory {TenantId}", directory);
+            return new GraphGroupsResult(groups, Completed: false, ex.Message);
         }
-        return groups;
     }
 
     public async Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default)
@@ -523,24 +554,53 @@ public class GraphApiService : IGraphApiService
         }
     }
 
-    public async Task<List<Employee>> GetDepartmentMembersAsync(string groupId, CancellationToken ct = default)
+    public async Task<GraphMembersResult> GetDepartmentMembersAsync(
+        string? entraTenantId, string groupId, CancellationToken ct = default)
     {
+        var directory = entraTenantId ?? _options.Value.TenantId;
         var members = new List<Employee>();
+        var pages = 0;
+
         try
         {
-            var groupMembers = await GetClient().Groups[groupId].Members.GetAsync(cancellationToken: ct);
-            if (groupMembers?.Value == null) return members;
+            var client = GetClientForTenant(entraTenantId);
+            var page = await client.Groups[groupId].Members.GetAsync(cancellationToken: ct);
 
-            foreach (var member in groupMembers.Value.OfType<Microsoft.Graph.Models.User>())
+            while (page != null)
             {
-                members.Add(MapGraphUserToEmployee(member));
+                pages++;
+                // Only people. Nested groups, devices and service principals can all be members,
+                // and none of them is a directory contact.
+                foreach (var member in (page.Value ?? []).OfType<Microsoft.Graph.Models.User>())
+                {
+                    members.Add(MapGraphUserToEmployee(member));
+                }
+
+                if (string.IsNullOrEmpty(page.OdataNextLink))
+                {
+                    return new GraphMembersResult(members, Completed: true, null);
+                }
+
+                if (pages >= MaxGroupPages)
+                {
+                    return new GraphMembersResult(members, Completed: false,
+                        $"Stopped after {MaxGroupPages} pages without reaching the end of the membership.");
+                }
+
+                ct.ThrowIfCancellationRequested();
+                page = await client.Groups[groupId].Members
+                    .WithUrl(page.OdataNextLink)
+                    .GetAsync(cancellationToken: ct);
             }
+
+            return new GraphMembersResult(members, Completed: false, "Graph returned an empty response.");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get members for group {GroupId}", groupId);
+            _logger.LogError(ex, "Failed to read members of group {GroupId} in directory {TenantId}",
+                groupId, directory);
+            return new GraphMembersResult(members, Completed: false, ex.Message);
         }
-        return members;
     }
 
     /// <summary>

@@ -63,9 +63,14 @@ public class TenantSyncService
         if (string.IsNullOrEmpty(tenant.AzureAdGroupId))
             return 0;
 
-        // Fetch current group members from Azure AD using the existing Graph API service
-        var members = await _graphApi.GetDepartmentMembersAsync(tenant.AzureAdGroupId);
-        var memberIds = members
+        // Read the group from the customer's OWN directory. This asked our home directory for a
+        // group id that only exists in theirs, so it came back empty every time — and the
+        // empty-result guard below was the only thing standing between that and a wholesale
+        // revocation of their administrators.
+        var members = await _graphApi.GetDepartmentMembersAsync(
+            tenant.AzureAdTenantId, tenant.AzureAdGroupId, cancellationToken);
+
+        var memberIds = members.Members
             .Where(m => !string.IsNullOrEmpty(m.AzureAdObjectId))
             .Select(m => m.AzureAdObjectId)
             .Distinct()
@@ -113,17 +118,31 @@ public class TenantSyncService
             }
         }
 
-        // Remove stale members (no longer in the Azure AD group)
-        var staleAdmins = existingAdmins
-            .Where(a => !memberIds.Contains(a.AzureAdObjectId))
-            .ToList();
-
-        if (staleAdmins.Count > 0)
+        // Remove stale members (no longer in the Azure AD group).
+        //
+        // Absence is only evidence of departure if the whole membership was read. Group members
+        // page at 100, and this deletes rows that grant administrative access — on a truncated
+        // read it would revoke every admin past the first page, every cycle.
+        if (members.Completed)
         {
-            _db.TenantAdmins.RemoveRange(staleAdmins);
-            _logger.LogInformation(
-                "Removed {Count} stale admin(s) from Tenant {TenantId} ({TenantName})",
-                staleAdmins.Count, tenant.Id, tenant.Name);
+            var staleAdmins = existingAdmins
+                .Where(a => !memberIds.Contains(a.AzureAdObjectId))
+                .ToList();
+
+            if (staleAdmins.Count > 0)
+            {
+                _db.TenantAdmins.RemoveRange(staleAdmins);
+                _logger.LogInformation(
+                    "Removed {Count} stale admin(s) from Tenant {TenantId} ({TenantName})",
+                    staleAdmins.Count, tenant.Id, tenant.Name);
+            }
+        }
+        else
+        {
+            _logger.LogWarning(
+                "Only part of the admin group for Tenant {TenantId} ({TenantName}) could be read ({Detail}); "
+                + "nobody was revoked",
+                tenant.Id, tenant.Name, members.FailureDetail);
         }
 
         await _db.SaveChangesAsync(cancellationToken);

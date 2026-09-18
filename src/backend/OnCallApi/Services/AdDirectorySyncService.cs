@@ -154,49 +154,22 @@ public class AdDirectorySyncService : IAdDirectorySyncService
     {
         var results = new List<AdSyncResult>();
 
-        // Same shape TenantSyncService already uses for AzureAdGroupId: find the tenants
-        // that opted in, and work through them one at a time.
-        var connected = await _db.Tenants
-            .Where(t => t.IsActive && t.AzureAdTenantId != null && t.AzureAdTenantId != "")
-            .Select(t => new { t.Id, t.Name, t.AzureAdTenantId })
-            .ToListAsync(ct);
+        var targets = await DirectorySyncTargets.ResolveAsync(_db, _graphOptions.Value.TenantId, ct);
 
-        // The home directory, unless a tenant has claimed it. Syncing it both ways would
-        // create the same people twice — once owned by no tenant and once owned by that
-        // one — and leave two sets of delta state describing one directory.
-        var homeTenantId = _graphOptions.Value.TenantId;
-        var homeIsClaimed = !string.IsNullOrWhiteSpace(homeTenantId)
-            && connected.Any(t => string.Equals(t.AzureAdTenantId, homeTenantId, StringComparison.OrdinalIgnoreCase));
-
-        if (!homeIsClaimed)
+        foreach (var target in targets)
         {
             try
             {
-                var homeLink = forceFull ? null : await GetStoredDeltaTokenAsync(null, ct);
-                results.Add(await SyncAsync(null, null, homeLink, triggeredBy, ct));
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Directory sync failed for the home directory");
-                results.Add(new AdSyncResult(
-                    0, 0, 0, 0, [$"Sync failed: {ex.Message}"], null, null, null, Succeeded: false));
-            }
-        }
-
-        foreach (var tenant in connected)
-        {
-            try
-            {
-                var link = forceFull ? null : await GetStoredDeltaTokenAsync(tenant.Id, ct);
-                results.Add(await SyncAsync(tenant.Id, tenant.AzureAdTenantId, link, triggeredBy, ct));
+                var link = forceFull ? null : await GetStoredDeltaTokenAsync(target.TenantId, ct);
+                results.Add(await SyncAsync(target.TenantId, target.EntraTenantId, link, triggeredBy, ct));
             }
             catch (Exception ex)
             {
                 // One customer's directory being unreachable must not stop the rest.
-                _logger.LogError(ex, "Directory sync failed for tenant {TenantId}", tenant.Id);
+                _logger.LogError(ex, "Directory sync failed for {Directory}", target.Name);
                 results.Add(new AdSyncResult(
                     0, 0, 0, 0, [$"Sync failed: {ex.Message}"], null,
-                    tenant.Id, tenant.Name, Succeeded: false));
+                    target.TenantId, target.TenantId.HasValue ? target.Name : null, Succeeded: false));
             }
         }
 
