@@ -84,7 +84,8 @@ public class AdDirectorySyncInterlockTests
         await db.Employees.AsNoTracking().FirstAsync(e => e.AzureAdObjectId == objectId);
 
     private static async Task<string?> StoredCursorValue(AppDbContext db) =>
-        (await db.AppSettings.AsNoTracking().FirstOrDefaultAsync(s => s.Key == $"AdDeltaToken:{TenantId}"))?.Value;
+        (await db.SyncStates.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.TenantId == TenantId && s.Source == SyncSources.AdUsers))?.DeltaLink;
 
     // ── The interlock ────────────────────────────────────────────────────────────────────
 
@@ -315,6 +316,112 @@ public class AdDirectorySyncInterlockTests
         await CreateService(db, graph).SyncAsync(TenantId, Directory, deltaLink: null);
 
         (await StoredCursorValue(db)).Should().Be(DeltaResults.DeltaLink);
+    }
+
+    // ── The cursor's move out of AppSettings ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task AnOldCursorIsAdoptedFromSettingsAndTheSettingIsRemoved()
+    {
+        using var db = CreateDb();
+        db.AppSettings.Add(new AppSetting { Key = $"AdDeltaToken:{TenantId}", Value = StoredCursor });
+        await db.SaveChangesAsync();
+
+        var adopted = await CreateService(db, new FakeGraphApiService()).GetStoredDeltaTokenAsync(TenantId);
+
+        adopted.Should().Be(StoredCursor);
+        (await StoredCursorValue(db)).Should().Be(StoredCursor);
+        db.AppSettings.Any(s => s.Key == $"AdDeltaToken:{TenantId}").Should()
+            .BeFalse("left behind, it stays readable through GET /api/settings by any schedule reader");
+    }
+
+    [Fact]
+    public async Task AnOldSkiptokenCursorIsDiscardedRatherThanAdopted()
+    {
+        using var db = CreateDb();
+        db.AppSettings.Add(new AppSetting
+        {
+            Key = $"AdDeltaToken:{TenantId}",
+            // What the previous code stored when it read a directory of more than one page.
+            Value = "https://graph.microsoft.com/v1.0/users/delta?$skiptoken=half-way",
+        });
+        await db.SaveChangesAsync();
+
+        var adopted = await CreateService(db, new FakeGraphApiService()).GetStoredDeltaTokenAsync(TenantId);
+
+        adopted.Should().BeNull("replaying a mid-enumeration cursor returns the tail of a stale page set");
+        db.AppSettings.Any(s => s.Key == $"AdDeltaToken:{TenantId}").Should().BeFalse();
+    }
+
+    // ── What a run leaves behind ─────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task EveryRunRecordsWhatItDidAndHowMuchItRead()
+    {
+        using var db = CreateDb();
+        db.Employees.Add(Stored("alice"));
+        await db.SaveChangesAsync();
+
+        var graph = new FakeGraphApiService(DeltaResults.FullComplete([FromGraph("alice")], pages: 4));
+        await CreateService(db, graph).SyncAsync(TenantId, Directory, deltaLink: null, triggeredBy: "someone@hospital.test");
+
+        var run = await db.SyncRuns.AsNoTracking().SingleAsync();
+        run.Outcome.Should().Be(SyncOutcomes.Succeeded);
+        run.Mode.Should().Be(SyncModes.Full);
+        run.PagesRead.Should().Be(4, "one page for a large directory is the fingerprint of the bug this replaced");
+        run.DeltaLinkStored.Should().BeTrue();
+        run.TriggeredBy.Should().Be("someone@hospital.test");
+    }
+
+    [Fact]
+    public async Task ARefusedRunIsRecordedAsRefusedAndAudited()
+    {
+        using var db = CreateDb();
+        for (var i = 0; i < 100; i++) db.Employees.Add(Stored($"person-{i}"));
+        await db.SaveChangesAsync();
+
+        var present = Enumerable.Range(0, 10).Select(i => FromGraph($"person-{i}"));
+        await CreateService(db, new FakeGraphApiService(DeltaResults.FullComplete(present)))
+            .SyncAsync(TenantId, Directory, deltaLink: null);
+
+        var run = await db.SyncRuns.AsNoTracking().SingleAsync();
+        run.Outcome.Should().Be(SyncOutcomes.Refused);
+        run.DeactivationsRefused.Should().Be(90);
+        run.DeltaLinkStored.Should().BeFalse();
+
+        var audit = await db.AuditLogs.AsNoTracking().ToListAsync();
+        audit.Should().ContainSingle(a => a.Action == "DeactivationRefused")
+            .Which.PrincipalId.Should().Be("system:ad-sync", "a timer run is still attributable");
+    }
+
+    [Fact]
+    public async Task EachDeactivationIsAuditedIndividually()
+    {
+        using var db = CreateDb();
+        db.Employees.Add(Stored("alice"));
+        db.Employees.Add(Stored("bob"));
+        await db.SaveChangesAsync();
+
+        await CreateService(db, new FakeGraphApiService(
+                DeltaResults.IncrementalComplete([FromGraph("alice")], removed: ["bob"])))
+            .SyncAsync(TenantId, Directory, StoredCursor);
+
+        var audit = await db.AuditLogs.AsNoTracking().ToListAsync();
+        audit.Should().Contain(a => a.ResourceType == "Employee" && a.Action == "Deactivated");
+        audit.Should().Contain(a => a.ResourceType == "DirectorySync" && a.Action == "Deactivated");
+    }
+
+    [Fact]
+    public async Task AFailedReadIsStillRecordedAsARun()
+    {
+        using var db = CreateDb();
+        await CreateService(db, new FakeGraphApiService(DeltaResults.Failed()))
+            .SyncAsync(TenantId, Directory, StoredCursor);
+
+        var run = await db.SyncRuns.AsNoTracking().SingleAsync();
+        run.Outcome.Should().Be(SyncOutcomes.Failed);
+        run.FailureDetail.Should().NotBeNullOrWhiteSpace(
+            "a directory nobody consented to fails every cycle, and that has to leave a trace");
     }
 
     // ── Phase 2: Graph fills blanks, it does not erase ───────────────────────────────────

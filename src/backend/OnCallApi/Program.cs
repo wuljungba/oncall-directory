@@ -1223,6 +1223,56 @@ using (var scope = app.Services.CreateScope())
                 CREATE INDEX IX_ImportJobRows_Job ON dbo.ImportJobRows (ImportJobId, SheetIndex, SourceRow);
             END;
             """,
+            // SyncRuns / SyncStates: what each directory sync did, and where its delta
+            // enumeration got to. Added after a sync bug ran unrecorded for months — the only
+            // trace it left was staff quietly going inactive. SyncStates also takes the delta
+            // link out of AppSettings, which any Schedule.Read holder can read back.
+            """
+            IF OBJECT_ID(N'dbo.SyncRuns') IS NULL
+            BEGIN
+                CREATE TABLE dbo.SyncRuns (
+                    Id bigint IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NULL,
+                    Source nvarchar(40) NOT NULL,
+                    Mode nvarchar(20) NOT NULL,
+                    Outcome nvarchar(20) NOT NULL,
+                    StartedAt datetime2 NOT NULL,
+                    CompletedAt datetime2 NULL,
+                    PagesRead int NOT NULL,
+                    Fetched int NOT NULL,
+                    Created int NOT NULL,
+                    Updated int NOT NULL,
+                    Skipped int NOT NULL,
+                    Deactivated int NOT NULL,
+                    DeactivatedByRemoval int NOT NULL,
+                    DeactivatedByDisabledAccount int NOT NULL,
+                    DeactivationsRefused int NOT NULL,
+                    DeltaLinkStored bit NOT NULL,
+                    TokenWasRejected bit NOT NULL,
+                    TriggeredBy nvarchar(200) NULL,
+                    FailureDetail nvarchar(2000) NULL,
+                    Notes nvarchar(4000) NULL,
+                    CONSTRAINT FK_SyncRuns_Tenant FOREIGN KEY (TenantId)
+                        REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
+                );
+                CREATE INDEX IX_SyncRuns_Tenant_Source_StartedAt ON dbo.SyncRuns (TenantId, Source, StartedAt);
+                CREATE INDEX IX_SyncRuns_StartedAt ON dbo.SyncRuns (StartedAt);
+            END;
+
+            IF OBJECT_ID(N'dbo.SyncStates') IS NULL
+            BEGIN
+                CREATE TABLE dbo.SyncStates (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NULL,
+                    Source nvarchar(40) NOT NULL,
+                    DeltaLink nvarchar(max) NULL,
+                    UpdatedAt datetime2 NOT NULL,
+                    CONSTRAINT FK_SyncStates_Tenant FOREIGN KEY (TenantId)
+                        REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
+                );
+                CREATE UNIQUE INDEX UQ_SyncStates_Scope ON dbo.SyncStates (TenantId, Source);
+            END;
+            """,
             // Employees: department/unit contacts. A unit reached by phone ("3North",
             // x3434) has a label and a number but no person's name, so DisplayName and
             // Extension are added and ContactType tells the two kinds of row apart.

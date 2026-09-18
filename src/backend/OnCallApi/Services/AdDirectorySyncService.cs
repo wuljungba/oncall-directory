@@ -42,7 +42,8 @@ public interface IAdDirectorySyncService
     /// connected directories existed.
     /// </summary>
     Task<AdSyncResult> SyncAsync(
-        int? tenantId, string? entraTenantId, string? deltaLink, CancellationToken ct = default);
+        int? tenantId, string? entraTenantId, string? deltaLink,
+        string? triggeredBy = null, CancellationToken ct = default);
 
     Task<string?> GetStoredDeltaTokenAsync(int? tenantId, CancellationToken ct = default);
 
@@ -51,9 +52,11 @@ public interface IAdDirectorySyncService
     /// tenant failing does not stop the others.
     ///
     /// <paramref name="forceFull"/> discards each stored cursor for this run, which is the
-    /// operator's escape hatch when a directory looks wrong.
+    /// operator's escape hatch when a directory looks wrong. <paramref name="triggeredBy"/>
+    /// is recorded on each run, so a mass deactivation is attributable to whoever started it.
     /// </summary>
-    Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(bool forceFull = false, CancellationToken ct = default);
+    Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(
+        bool forceFull = false, string? triggeredBy = null, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -108,15 +111,46 @@ public class AdDirectorySyncService : IAdDirectorySyncService
     private static string DeltaTokenKey(int? tenantId) =>
         tenantId.HasValue ? $"AdDeltaToken:{tenantId.Value}" : "AdDeltaToken";
 
+    /// <summary>
+    /// The cursor for one directory, from <see cref="SyncState"/>.
+    ///
+    /// Adopts the old AppSettings row the first time it finds one, then deletes it: left in
+    /// place it stays readable through GET /api/settings by anyone holding Schedule.Read. Only
+    /// a real deltaLink is carried across — a stored nextLink is a mid-enumeration cursor from
+    /// the code this replaced, and replaying one returns the tail of a stale page set.
+    /// </summary>
     public async Task<string?> GetStoredDeltaTokenAsync(int? tenantId, CancellationToken ct = default)
     {
+        var state = await _db.SyncStates
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Source == SyncSources.AdUsers, ct);
+
+        if (state != null) return state.DeltaLink;
+
         var key = DeltaTokenKey(tenantId);
-        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
-        return setting?.Value;
+        var legacy = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
+        if (legacy == null) return null;
+
+        var carriedOver = GraphApiService.IsUsableDeltaLink(legacy.Value) ? legacy.Value : null;
+
+        _db.SyncStates.Add(new SyncState
+        {
+            TenantId = tenantId,
+            Source = SyncSources.AdUsers,
+            DeltaLink = carriedOver,
+            UpdatedAt = DateTime.UtcNow,
+        });
+        _db.AppSettings.Remove(legacy);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Moved the delta cursor for tenant {TenantId} out of AppSettings{Discarded}",
+            tenantId, carriedOver == null ? " and discarded it: it was not a deltaLink" : "");
+
+        return carriedOver;
     }
 
     public async Task<IReadOnlyList<AdSyncResult>> SyncAllAsync(
-        bool forceFull = false, CancellationToken ct = default)
+        bool forceFull = false, string? triggeredBy = null, CancellationToken ct = default)
     {
         var results = new List<AdSyncResult>();
 
@@ -139,7 +173,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             try
             {
                 var homeLink = forceFull ? null : await GetStoredDeltaTokenAsync(null, ct);
-                results.Add(await SyncAsync(null, null, homeLink, ct));
+                results.Add(await SyncAsync(null, null, homeLink, triggeredBy, ct));
             }
             catch (Exception ex)
             {
@@ -154,7 +188,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             try
             {
                 var link = forceFull ? null : await GetStoredDeltaTokenAsync(tenant.Id, ct);
-                results.Add(await SyncAsync(tenant.Id, tenant.AzureAdTenantId, link, ct));
+                results.Add(await SyncAsync(tenant.Id, tenant.AzureAdTenantId, link, triggeredBy, ct));
             }
             catch (Exception ex)
             {
@@ -170,8 +204,10 @@ public class AdDirectorySyncService : IAdDirectorySyncService
     }
 
     public async Task<AdSyncResult> SyncAsync(
-        int? tenantId, string? entraTenantId, string? deltaLink, CancellationToken ct = default)
+        int? tenantId, string? entraTenantId, string? deltaLink,
+        string? triggeredBy = null, CancellationToken ct = default)
     {
+        var startedAt = DateTime.UtcNow;
         var tenantName = tenantId.HasValue
             ? (await _db.Tenants.Where(t => t.Id == tenantId).Select(t => t.Name).FirstOrDefaultAsync(ct))
             : null;
@@ -188,6 +224,24 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             _logger.LogWarning(
                 "Directory read failed for tenant {TenantId} ({Detail}); nothing was written and nobody was deactivated",
                 tenantId, delta.FailureDetail);
+
+            // Recorded like any other run. A directory nobody consented to fails on every cycle,
+            // and a failure that leaves no trace is exactly how that goes unnoticed for months.
+            _db.SyncRuns.Add(new SyncRun
+            {
+                TenantId = tenantId,
+                Source = SyncSources.AdUsers,
+                Mode = delta.WasFullEnumeration ? SyncModes.Full : SyncModes.Incremental,
+                Outcome = SyncOutcomes.Failed,
+                StartedAt = startedAt,
+                CompletedAt = DateTime.UtcNow,
+                PagesRead = delta.PagesRead,
+                TokenWasRejected = delta.TokenWasRejected,
+                TriggeredBy = triggeredBy ?? TimerActor,
+                FailureDetail = Truncate(delta.FailureDetail, 2000),
+            });
+            await _db.SaveChangesAsync(ct);
+
             return new AdSyncResult(
                 0, 0, 0, 0,
                 [delta.FailureDetail is { Length: > 0 } why
@@ -276,16 +330,16 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             .Where(e => e.IsActive && e.TenantId == tenantId)
             .ToListAsync(ct);
 
-        var departedIds = new List<string>(delta.RemovedObjectIds);
+        var byRemoval = SelectEmployeesToDeactivateByRemoval(activeUsers, delta.RemovedObjectIds, tenantId);
 
-        if (DeactivateOnDisabledAccount())
-        {
-            // Most directories never delete a leaver; they disable the account. Without this,
-            // an incremental run has almost no departure signal at all.
-            departedIds.AddRange(users.Where(u => !u.IsActive).Select(u => u.AzureAdObjectId));
-        }
-
-        var byRemoval = SelectEmployeesToDeactivateByRemoval(activeUsers, departedIds, tenantId);
+        // Most directories never delete a leaver; they disable the account. Without this, an
+        // incremental run has almost no departure signal at all. Counted separately because the
+        // two answer different questions: one is "Graph says they are gone", the other is
+        // "Graph says they can no longer sign in".
+        var disabledIds = DeactivateOnDisabledAccount()
+            ? users.Where(u => !u.IsActive).Select(u => u.AzureAdObjectId).ToList()
+            : [];
+        var byDisabledAccount = SelectEmployeesToDeactivateByRemoval(activeUsers, disabledIds, tenantId);
 
         var seenObjectIds = users
             .Where(u => u.IsActive)
@@ -300,6 +354,7 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             : [];
 
         var toDeactivate = byRemoval
+            .Concat(byDisabledAccount)
             .Concat(byAbsence)
             .DistinctBy(e => e.Id)
             .ToList();
@@ -324,17 +379,54 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             active.UpdatedAt = DateTime.UtcNow;
         }
 
-        await _db.SaveChangesAsync(ct);
+        // Audit written in-band rather than through IAuditService, which is a bounded channel
+        // set to DropOldest: fine for read tracing, not for the record of who retired forty
+        // clinicians. Staged in the same SaveChanges as the deactivations, so the evidence
+        // exists if and only if the change did. The bulk admin path settled this the same way.
+        StageDeactivationAudit(toDeactivate, refused, valve.Reason, tenantId, triggeredBy, delta);
 
         // The cursor advances only on a complete read whose conclusions were actually applied.
         // Advancing after a refusal would turn the alarm off: the next run would be incremental,
         // see nothing unusual, and the refusal would be forgotten rather than fixed.
-        var storedLink = false;
-        if (delta.Completed && !string.IsNullOrEmpty(delta.DeltaLink) && refused == 0)
+        var storedLink = delta.Completed && !string.IsNullOrEmpty(delta.DeltaLink) && refused == 0;
+        if (storedLink)
         {
-            await StoreDeltaTokenAsync(delta.DeltaLink, tenantId, ct);
-            storedLink = true;
+            await StageDeltaLinkAsync(delta.DeltaLink!, tenantId, ct);
         }
+
+        var outcome = refused > 0 ? SyncOutcomes.Refused
+            : !delta.Completed ? SyncOutcomes.Partial
+            : SyncOutcomes.Succeeded;
+
+        _db.SyncRuns.Add(new SyncRun
+        {
+            TenantId = tenantId,
+            Source = SyncSources.AdUsers,
+            Mode = delta.WasFullEnumeration ? SyncModes.Full : SyncModes.Incremental,
+            Outcome = outcome,
+            StartedAt = startedAt,
+            CompletedAt = DateTime.UtcNow,
+            PagesRead = delta.PagesRead,
+            Fetched = users.Count,
+            Created = created,
+            Updated = updated,
+            Skipped = skipped.Count,
+            Deactivated = toDeactivate.Count,
+            DeactivatedByRemoval = byRemoval.Count,
+            DeactivatedByDisabledAccount = byDisabledAccount.Count,
+            DeactivationsRefused = refused,
+            DeltaLinkStored = storedLink,
+            TokenWasRejected = delta.TokenWasRejected,
+            TriggeredBy = triggeredBy ?? TimerActor,
+            FailureDetail = Truncate(delta.FailureDetail, 2000),
+            Notes = skipped.Count > 0 ? Truncate(string.Join(" | ", skipped), 4000) : null,
+        });
+
+        // One save for everything this cycle concluded: people, the audit of retiring them, the
+        // record of the run, and the cursor. The cursor used to commit in a second save of its
+        // own, which left a window where it advanced past work that had not been written.
+        await _db.SaveChangesAsync(ct);
+        await PruneRunHistoryAsync(tenantId, ct);
 
         if (skipped.Count > 0)
         {
@@ -486,25 +578,114 @@ public class AdDirectorySyncService : IAdDirectorySyncService
             .ToList();
     }
 
-    private async Task StoreDeltaTokenAsync(string? deltaToken, int? tenantId, CancellationToken ct)
+    /// <summary>
+    /// Points this directory's cursor at the new deltaLink, WITHOUT saving: the caller commits
+    /// it in the same transaction as the people it describes. Saved on its own, a cursor can
+    /// advance past work that was never written.
+    /// </summary>
+    private async Task StageDeltaLinkAsync(string deltaLink, int? tenantId, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(deltaToken)) return;
+        var state = await _db.SyncStates
+            .FirstOrDefaultAsync(s => s.TenantId == tenantId && s.Source == SyncSources.AdUsers, ct);
 
-        var key = DeltaTokenKey(tenantId);
-        var setting = await _db.AppSettings.FirstOrDefaultAsync(s => s.Key == key, ct);
-        if (setting != null)
+        if (state == null)
         {
-            setting.Value = deltaToken;
-        }
-        else
-        {
-            _db.AppSettings.Add(new AppSetting
+            _db.SyncStates.Add(new SyncState
             {
-                Key = key,
-                Value = deltaToken,
-                Description = "Azure AD Graph API delta link for incremental user sync"
+                TenantId = tenantId,
+                Source = SyncSources.AdUsers,
+                DeltaLink = deltaLink,
+                UpdatedAt = DateTime.UtcNow,
+            });
+            return;
+        }
+
+        state.DeltaLink = deltaLink;
+        state.UpdatedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>Who a timer-driven run is attributable to. AuditLog.PrincipalId exists for exactly this.</summary>
+    private const string TimerActor = "system:ad-sync";
+
+    /// <summary>
+    /// The audit trail for retiring people, staged into the caller's transaction.
+    ///
+    /// Written straight to the table rather than through IAuditService, which is a bounded
+    /// channel set to DropOldest — acceptable for read tracing, not for the record of who
+    /// retired forty clinicians. One row per person, capped, plus a summary: an auditor asks
+    /// about individuals, not totals. The bulk admin actions settled this the same way.
+    /// </summary>
+    private void StageDeactivationAudit(
+        IReadOnlyList<Employee> deactivated, int refused, string? refusalReason,
+        int? tenantId, string? triggeredBy, GraphUserDeltaResult delta)
+    {
+        if (deactivated.Count == 0 && refused == 0) return;
+
+        var actor = triggeredBy ?? TimerActor;
+        var mode = delta.WasFullEnumeration ? SyncModes.Full : SyncModes.Incremental;
+        var cap = DeactivationAuditDetailCap();
+
+        foreach (var person in deactivated.Take(cap))
+        {
+            _db.AuditLogs.Add(new AuditLog
+            {
+                UserId = Guid.Empty,
+                PrincipalId = actor,
+                UserName = "Directory sync",
+                Action = "Deactivated",
+                ResourceType = "Employee",
+                ResourceId = person.Id.ToString(),
+                TenantId = tenantId,
+                IpAddress = "system",
+                Details = $"Source=AdUsers;Mode={mode};Pages={delta.PagesRead};ObjectId={person.AzureAdObjectId}",
+                Timestamp = DateTime.UtcNow,
             });
         }
+
+        var truncated = deactivated.Count > cap ? $";DetailRowsCapped={cap}" : "";
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            UserId = Guid.Empty,
+            PrincipalId = actor,
+            UserName = "Directory sync",
+            Action = refused > 0 ? "DeactivationRefused" : "Deactivated",
+            ResourceType = "DirectorySync",
+            ResourceId = tenantId?.ToString() ?? "home",
+            TenantId = tenantId,
+            IpAddress = "system",
+            Details = refused > 0
+                ? $"Source=AdUsers;Mode={mode};Pages={delta.PagesRead};Refused={refused};Reason={refusalReason}"
+                : $"Source=AdUsers;Mode={mode};Pages={delta.PagesRead};Deactivated={deactivated.Count}{truncated}",
+            Timestamp = DateTime.UtcNow,
+        });
+    }
+
+    private int DeactivationAuditDetailCap() =>
+        _config.GetValue<int?>("Sync:DeactivationAuditDetailCap") ?? 200;
+
+    /// <summary>
+    /// Keeps the run history to a window. One row per directory per cycle is ~35k rows a year
+    /// at the fifteen-minute default, and these are operational metrics — the audit rows they
+    /// point at keep their own six-year retention. Done in-band rather than as another
+    /// background service: it is one delete on a table this method just wrote to.
+    /// </summary>
+    private async Task PruneRunHistoryAsync(int? tenantId, CancellationToken ct)
+    {
+        var days = _config.GetValue<int?>("Sync:RunHistoryDays") ?? 90;
+        if (days <= 0) return;
+
+        var cutoff = DateTime.UtcNow.AddDays(-days);
+        var stale = await _db.SyncRuns
+            .Where(r => r.TenantId == tenantId && r.Source == SyncSources.AdUsers && r.StartedAt < cutoff)
+            .ToListAsync(ct);
+
+        if (stale.Count == 0) return;
+
+        _db.SyncRuns.RemoveRange(stale);
         await _db.SaveChangesAsync(ct);
     }
+
+    private static string? Truncate(string? value, int max) =>
+        string.IsNullOrEmpty(value) || value.Length <= max ? value : value[..max];
 }

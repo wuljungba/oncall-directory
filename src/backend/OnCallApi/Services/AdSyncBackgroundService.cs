@@ -53,7 +53,7 @@ public class AdSyncBackgroundService : BackgroundService
             var sync = scope.ServiceProvider.GetRequiredService<IAdDirectorySyncService>();
             // Incremental: the timer resumes from each directory's stored cursor. The manual
             // trigger is the one that forces a full re-enumeration.
-            var results = await sync.SyncAllAsync(forceFull: false, ct);
+            var results = await sync.SyncAllAsync(forceFull: false, triggeredBy: null, ct);
 
             foreach (var failed in results.Where(r => !r.Succeeded))
             {

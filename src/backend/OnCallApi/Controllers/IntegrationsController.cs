@@ -1,5 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using OnCallApi.Authorization;
+using OnCallApi.Data;
+using OnCallApi.Models;
 using OnCallApi.Services;
 
 namespace OnCallApi.Controllers;
@@ -38,7 +42,10 @@ public class IntegrationsController : ControllerBase
         // this comment, and was not true — the stored cursor was passed straight through. Pass
         // ?full=false for a plain incremental run. Every connected directory is covered, so the
         // button means the same thing whether one customer is connected or ten.
-        var results = await sync.SyncAllAsync(full, ct);
+        // Attributable: a human-initiated run that retires half a directory should name who
+        // started it, not "system".
+        var triggeredBy = PrincipalClaims.GetObjectId(User) ?? PrincipalClaims.GetEmail(User) ?? "unknown";
+        var results = await sync.SyncAllAsync(full, triggeredBy, ct);
 
         return Ok(new
         {
@@ -69,6 +76,71 @@ public class IntegrationsController : ControllerBase
                 needsAttention = r.NeedsAttention,
             }),
         });
+    }
+
+    /// <summary>
+    /// The recent directory sync runs: what was read, what changed, and whether it can be believed.
+    ///
+    /// Nothing recorded a sync cycle before this, which is how a bug that read one page of a
+    /// paginated directory and retired everyone on the rest ran for months leaving only a log
+    /// line. <c>pagesRead</c> is its fingerprint — one page for a large directory — and
+    /// <c>deactivationsRefused</c> is the safety valve saying it caught something.
+    /// </summary>
+    [HttpGet("sync/ad/runs")]
+    [Authorize(Policy = "RequireAdminFullOrScoped")]
+    public async Task<ActionResult> GetSyncRuns(
+        [FromServices] AppDbContext db,
+        [FromServices] ITenantContextService tenants,
+        CancellationToken ct,
+        [FromQuery] int? tenantId = null,
+        [FromQuery] string source = SyncSources.AdUsers,
+        [FromQuery] int take = 50)
+    {
+        var query = db.SyncRuns.AsNoTracking().Where(r => r.Source == source);
+
+        // A scoped admin sees their own subscriptions and nothing else. Runs for the home
+        // directory (TenantId null) belong to super admins — they describe every customer's
+        // directory at once.
+        if (!tenants.IsSuperAdmin(User))
+        {
+            var allowed = await tenants.GetAuthorizedTenantIdsAsync(User);
+            query = query.Where(r => r.TenantId != null && allowed.Contains(r.TenantId.Value));
+        }
+
+        if (tenantId.HasValue) query = query.Where(r => r.TenantId == tenantId.Value);
+
+        var runs = await query
+            .OrderByDescending(r => r.StartedAt)
+            .Take(Math.Clamp(take, 1, 200))
+            .Select(r => new
+            {
+                id = r.Id,
+                tenantId = r.TenantId,
+                source = r.Source,
+                mode = r.Mode,
+                outcome = r.Outcome,
+                startedAt = r.StartedAt,
+                completedAt = r.CompletedAt,
+                pagesRead = r.PagesRead,
+                fetched = r.Fetched,
+                created = r.Created,
+                updated = r.Updated,
+                skipped = r.Skipped,
+                deactivated = r.Deactivated,
+                deactivatedByRemoval = r.DeactivatedByRemoval,
+                deactivatedByDisabledAccount = r.DeactivatedByDisabledAccount,
+                deactivationsRefused = r.DeactivationsRefused,
+                deltaLinkStored = r.DeltaLinkStored,
+                tokenWasRejected = r.TokenWasRejected,
+                triggeredBy = r.TriggeredBy,
+                failureDetail = r.FailureDetail,
+                notes = r.Notes,
+                // Deliberately absent: the delta link itself. It is a Graph resource URL, and
+                // this endpoint is open to scoped admins.
+            })
+            .ToListAsync(ct);
+
+        return Ok(runs);
     }
 
     /// <summary>Send a test Teams notification to a user.</summary>

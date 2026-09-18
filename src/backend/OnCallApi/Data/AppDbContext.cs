@@ -36,6 +36,8 @@ public class AppDbContext : DbContext
     public DbSet<PublicShare> PublicShares => Set<PublicShare>();
     public DbSet<SignInIdentity> SignInIdentities => Set<SignInIdentity>();
     public DbSet<AccessRequest> AccessRequests => Set<AccessRequest>();
+    public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
+    public DbSet<SyncState> SyncStates => Set<SyncState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -355,6 +357,31 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
 
             r.HasIndex(x => new { x.ImportJobId, x.SheetIndex, x.SourceRow });
+        });
+
+        // ── Directory sync bookkeeping ──
+        modelBuilder.Entity<SyncRun>(r =>
+        {
+            r.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // "The last few runs for this directory" is the only question this table answers.
+            r.HasIndex(x => new { x.TenantId, x.Source, x.StartedAt });
+            r.HasIndex(x => x.StartedAt);
+        });
+
+        modelBuilder.Entity<SyncState>(s =>
+        {
+            s.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // One cursor per directory per source. A second would mean two enumerations
+            // leapfrogging each other, each quietly undoing the other's progress.
+            s.HasIndex(x => new { x.TenantId, x.Source }).IsUnique();
         });
 
         modelBuilder.Entity<AppSetting>(s =>
