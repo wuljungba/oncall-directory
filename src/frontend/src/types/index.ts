@@ -320,9 +320,11 @@ export interface OnCallReportRow {
 
 export interface AppSetting {
   key: string
-  value: string
+  /** Null when the key is sensitive — the API withholds those values rather than listing them. */
+  value: string | null
   description?: string
   updatedAt: string
+  isSensitive?: boolean
 }
 
 export interface OnCallStatus {
