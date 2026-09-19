@@ -10,7 +10,7 @@ import { formatDateOnly } from '@/utils/date'
 import { SOURCE_FILTERS, matchesSource } from '@/constants/permissions'
 import { contactName, contactInitials } from '@/utils/contacts'
 import { summarizeAdSync } from '@/utils/adSync'
-import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity, BulkActionResult } from '@/types'
+import type { Employee, Department, TimeOff, Tenant, TenantAdmin, ConnectionStatus, SignInIdentity, BulkActionResult, DirectoryStatus, OnboardingInvite } from '@/types'
 import CodeCallLocationsSection from './CodeCallLocationsSection'
 import BulkPermissionModal from './admin/BulkPermissionModal'
 import BulkResultPanel from './admin/BulkResultPanel'
@@ -19,6 +19,8 @@ import SharedSchedulesSection from './admin/SharedSchedulesSection'
 import OnboardingHealthSection from './admin/OnboardingHealthSection'
 import OnCallAuditSection from './admin/OnCallAuditSection'
 import VerificationSection from './admin/VerificationSection'
+import OnboardingInviteModal from './admin/OnboardingInviteModal'
+import DirectoryStatusLine from './admin/DirectoryStatusLine'
 
 type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares' | 'onboarding' | 'audit' | 'verification'
 
@@ -1738,6 +1740,11 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
   const [adminTenantId, setAdminTenantId] = useState<number | null>(null)
   const [expandedTenant, setExpandedTenant] = useState<number | null>(null)
   const [showNewSubscription, setShowNewSubscription] = useState(false)
+  // Asked live, per subscription: whether the connected directory can actually be read.
+  const [statuses, setStatuses] = useState<Record<number, DirectoryStatus>>({})
+  const [statusLoading, setStatusLoading] = useState(true)
+  const [invite, setInvite] = useState<{ tenantName: string; invite: OnboardingInvite } | null>(null)
+  const [issuing, setIssuing] = useState<number | null>(null)
 
   useEffect(() => { loadData() }, [])
 
@@ -1753,8 +1760,45 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
         } catch { adminMap[t.id] = [] }
       }))
       setAdmins(adminMap)
+      loadStatuses(tenantsData)
     } catch { setError('Failed to load tenants.') }
     setLoading(false)
+  }
+
+  /**
+   * Each status is a live Graph probe, so this runs after the list is on screen rather than
+   * holding it back — and one directory being unreachable must not blank out the others.
+   */
+  async function loadStatuses(list: Tenant[]) {
+    setStatusLoading(true)
+    const map: Record<number, DirectoryStatus> = {}
+    await Promise.all(list.map(async t => {
+      try {
+        map[t.id] = await tenantsApi.getDirectoryStatus(t.id)
+      } catch { /* left absent: the row says "unavailable" rather than guessing */ }
+    }))
+    setStatuses(map)
+    setStatusLoading(false)
+  }
+
+  /**
+   * Mints a one-time invitation and shows the links to hand over.
+   *
+   * This is what replaces typing the customer's tenant GUID into the edit form. The links
+   * name no directory at all, so there is nothing to get wrong: whichever directory their
+   * admin signs in to is the one that connects, and the server proves it can read it before
+   * writing anything down.
+   */
+  async function handleInvite(tenant: Tenant) {
+    setIssuing(tenant.id)
+    setError(null)
+    try {
+      setInvite({ tenantName: tenant.name, invite: await tenantsApi.createOnboardingInvite(tenant.id) })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not issue an onboarding invite.')
+    } finally {
+      setIssuing(null)
+    }
   }
 
   async function handleSave(data: Partial<Tenant>) {
@@ -1893,31 +1937,14 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                       {tenant.description || 'No description'}
                       {tenant.contactEmail && ` · ${tenant.contactEmail}`}
                     </p>
-                    {tenant.azureAdTenantId && (
-                      <p className="text-xs text-gray-600 mt-1">
-                        <span className="text-amber-600/80">Directory connected</span>
-                        {' · '}
-                        <span className="font-mono">{tenant.azureAdTenantId}</span>
-                        {' · '}
-                        <button
-                          type="button"
-                          onClick={() => copyConsentLink(tenant.id, 'signIn')}
-                          title="Copies one link. Their Entra admin opens it so their staff can sign in (OnCall API)."
-                          className="text-gray-400 hover:text-amber-500 underline underline-offset-2"
-                        >
-                          {consentCopied === `${tenant.id}:signIn` ? 'Sign-in link copied' : 'Copy sign-in consent link'}
-                        </button>
-                        {' · '}
-                        <button
-                          type="button"
-                          onClick={() => copyConsentLink(tenant.id, 'directory')}
-                          title="Copies one link. Their Entra admin opens it so OnCall can read their directory (OnCall Graph)."
-                          className="text-gray-400 hover:text-amber-500 underline underline-offset-2"
-                        >
-                          {consentCopied === `${tenant.id}:directory` ? 'Directory link copied' : 'Copy directory consent link'}
-                        </button>
-                      </p>
-                    )}
+                    <DirectoryStatusLine
+                      tenantId={tenant.id}
+                      status={statuses[tenant.id]}
+                      loading={statusLoading && !statuses[tenant.id]}
+                      onInvite={() => handleInvite(tenant)}
+                      onCopyConsent={which => copyConsentLink(tenant.id, which)}
+                      copiedKey={consentCopied}
+                    />
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -1931,6 +1958,14 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                       className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors"
                     >
                       + Admin
+                    </button>
+                    <button
+                      onClick={() => handleInvite(tenant)}
+                      disabled={issuing === tenant.id}
+                      title="Issues a one-time link for the customer's Entra admin to connect their directory."
+                      className="text-xs px-2 py-1 rounded bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+                    >
+                      {issuing === tenant.id ? 'Issuing…' : 'Invite'}
                     </button>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
@@ -2009,14 +2044,34 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
         />
       )}
 
+      {/* Onboarding invite links */}
+      {invite && (
+        <OnboardingInviteModal
+          tenantName={invite.tenantName}
+          invite={invite.invite}
+          onClose={() => {
+            setInvite(null)
+            // The directory may have connected while the modal was open, and the row still
+            // says it has not.
+            loadStatuses(tenants)
+          }}
+        />
+      )}
+
       {/* Onboard Subscription Modal */}
       {showNewSubscription && (
         <NewSubscriptionModal
           onClose={() => setShowNewSubscription(false)}
-          onCreated={(id) => {
+          onCreated={(id, name, newInvite, inviteError) => {
             setShowNewSubscription(false)
             setActiveTenantId(id)
             loadData()
+            // Creating the subscription and connecting its directory were two separate
+            // errands, and the second was easy to forget — an empty subscription nobody can
+            // sign in to looks exactly like a working one. So the flow ends holding the
+            // links to send.
+            if (newInvite) setInvite({ tenantName: name, invite: newInvite })
+            else if (inviteError) setError(`${name} was created, but no invite could be issued: ${inviteError}`)
           }}
         />
       )}
@@ -2028,7 +2083,12 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
 
 function NewSubscriptionModal({ onClose, onCreated }: {
   onClose: () => void
-  onCreated: (tenantId: number) => void
+  onCreated: (
+    tenantId: number,
+    tenantName: string,
+    invite: OnboardingInvite | null,
+    inviteError?: string,
+  ) => void
 }) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -2055,7 +2115,17 @@ function NewSubscriptionModal({ onClose, onCreated }: {
       if (adminOid.trim()) {
         await tenantsApi.assignAdmin(tenant.id, { azureAdObjectId: adminOid.trim(), role: adminRole })
       }
-      onCreated(tenantId)
+      // 4) The invitation that connects their directory. Outside the rollback below on
+      // purpose: a subscription that exists without an invite is a working subscription
+      // waiting for a link, and deleting it would be a far worse answer than saying so.
+      let invite: OnboardingInvite | null = null
+      let inviteError: string | undefined
+      try {
+        invite = await tenantsApi.createOnboardingInvite(tenant.id)
+      } catch (err) {
+        inviteError = err instanceof Error ? err.message : 'the invite could not be issued'
+      }
+      onCreated(tenantId, tenant.name, invite, inviteError)
     } catch (err) {
       // Compensation: if steps 2/3 failed, roll back the just-created subscription so we
       // don't leave an orphaned tenant the user can't see.
@@ -2076,7 +2146,7 @@ function NewSubscriptionModal({ onClose, onCreated }: {
           <button onClick={onClose} className="p-1 hover:bg-gray-800 rounded-lg"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-xs text-gray-500">Creates the subscription, a default department, and (optionally) a tenant admin. You can then import or sync users into it.</p>
+          <p className="text-xs text-gray-500">Creates the subscription, a default department and (optionally) a tenant admin, then issues the invitation links that connect the customer's directory.</p>
           {error && (
             <div className="flex items-center gap-2 text-sm text-red-400 bg-red-600/10 rounded-lg px-4 py-3">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />{error}
@@ -2216,6 +2286,12 @@ function TenantFormModal({ tenant, onSave, onClose }: {
               schedules and the phone directory, nothing else. They cannot raise a code call,
               edit anything, or see other subscriptions. Leave blank to keep access
               invitation-only; clearing it withdraws access from everyone it covered.
+              </p>
+            <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
+              To connect a directory, use <span className="text-gray-400">Invite</span> rather
+              than typing an ID here: the customer's own admin signs in and the ID is filled
+              in from a verified consent. A hand-typed ID cannot be checked, and when it is
+              wrong the subscription reads as connected while nobody can sign in.
             </p>
           </div>
           <div>

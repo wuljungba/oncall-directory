@@ -508,6 +508,18 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromHours(1),
             }));
 
+    // The consent callback is the third anonymous write, and the only one that spends anything
+    // on our behalf: each call makes an outbound Graph request to probe a directory. Its own
+    // budget, partitioned by IP like the others.
+    options.AddPolicy("ConsentCallback", ctx =>
+        System.Threading.RateLimiting.RateLimitPartition.GetFixedWindowLimiter(
+            ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new System.Threading.RateLimiting.FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromHours(1),
+            }));
+
     // Signing up is the second anonymous write a stranger can reach. Its own budget, for
     // the same reason: enough for a person creating an account, nowhere near enough to
     // probe which addresses already exist.
@@ -1271,6 +1283,62 @@ using (var scope = app.Services.CreateScope())
                         REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
                 );
                 CREATE UNIQUE INDEX UQ_SyncStates_Scope ON dbo.SyncStates (TenantId, Source);
+            END;
+            """,
+            // TenantOnboardingInvites: the one-time link that ties a customer's admin consent to
+            // one subscription, so the tenant id on the consent redirect can be trusted after a
+            // live Graph read confirms it — rather than an operator typing a GUID and a typo
+            // silently connecting nobody. The Tenants columns are what their own directory says
+            // about itself once connected.
+            """
+            IF OBJECT_ID(N'dbo.TenantOnboardingInvites') IS NULL
+            BEGIN
+                CREATE TABLE dbo.TenantOnboardingInvites (
+                    Id int IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                    TenantId int NOT NULL,
+                    Token uniqueidentifier NOT NULL,
+                    CreatedBy nvarchar(200) NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    ExpiresAt datetime2 NOT NULL,
+                    ConsumedAt datetime2 NULL,
+                    ConsumedDirectoryId nvarchar(100) NULL,
+                    LastError nvarchar(1000) NULL,
+                    CONSTRAINT FK_TenantOnboardingInvites_Tenant FOREIGN KEY (TenantId)
+                        REFERENCES dbo.Tenants(Id) ON DELETE CASCADE
+                );
+                CREATE UNIQUE INDEX UQ_TenantOnboardingInvites_Token
+                    ON dbo.TenantOnboardingInvites (Token);
+                CREATE INDEX IX_TenantOnboardingInvites_Tenant
+                    ON dbo.TenantOnboardingInvites (TenantId, ConsumedAt);
+            END;
+
+            IF COL_LENGTH(N'dbo.Tenants', N'DirectoryDisplayName') IS NULL
+                ALTER TABLE dbo.Tenants ADD DirectoryDisplayName nvarchar(200) NULL;
+            IF COL_LENGTH(N'dbo.Tenants', N'DirectoryDomains') IS NULL
+                ALTER TABLE dbo.Tenants ADD DirectoryDomains nvarchar(1000) NULL;
+            IF COL_LENGTH(N'dbo.Tenants', N'DirectoryVerifiedAt') IS NULL
+                ALTER TABLE dbo.Tenants ADD DirectoryVerifiedAt datetime2 NULL;
+            """,
+            // AccessRequests: which subscription a request belongs to, so the queue can be
+            // scoped. Without it every scoped admin reads every other customer's prospective
+            // staff — their addresses and whatever they typed in the note.
+            """
+            IF COL_LENGTH(N'dbo.AccessRequests', N'TenantId') IS NULL
+                ALTER TABLE dbo.AccessRequests ADD TenantId int NULL;
+            IF COL_LENGTH(N'dbo.AccessRequests', N'MatchedDomain') IS NULL
+                ALTER TABLE dbo.AccessRequests ADD MatchedDomain nvarchar(200) NULL;
+            """,
+            """
+            IF NOT EXISTS (
+                SELECT 1 FROM sys.foreign_keys WHERE name = N'FK_AccessRequests_Tenant')
+            AND COL_LENGTH(N'dbo.AccessRequests', N'TenantId') IS NOT NULL
+            BEGIN
+                -- SetNull, not Cascade: deactivating a subscription must not delete the record
+                -- of who asked to join it.
+                ALTER TABLE dbo.AccessRequests ADD CONSTRAINT FK_AccessRequests_Tenant
+                    FOREIGN KEY (TenantId) REFERENCES dbo.Tenants(Id) ON DELETE SET NULL;
+                CREATE INDEX IX_AccessRequests_Tenant_Status
+                    ON dbo.AccessRequests (TenantId, Status);
             END;
             """,
             // Employees: department/unit contacts. A unit reached by phone ("3North",

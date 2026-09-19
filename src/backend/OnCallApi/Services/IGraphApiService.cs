@@ -54,6 +54,24 @@ public interface IGraphApiService
     Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default);
 
     /// <summary>
+    /// Whether we can read a named directory right now.
+    ///
+    /// This is what makes a consent redirect trustworthy. The tenant id on the redirect is
+    /// attacker-supplied; a successful app-only read against that directory proves our service
+    /// principal genuinely exists there, which only their administrator could have arranged.
+    /// </summary>
+    Task<DirectoryProbeResult> ProbeDirectoryAsync(string? entraTenantId, CancellationToken ct = default);
+
+    /// <summary>
+    /// What a directory says about itself: its display name and verified domains.
+    ///
+    /// Needs Organization.Read.All. A directory that consented before that permission was added
+    /// answers 403, which is reported as "consent again" rather than as a failure — onboarding
+    /// must not fall over because the nice-to-have half is unavailable.
+    /// </summary>
+    Task<DirectoryOrganization> GetOrganizationAsync(string? entraTenantId, CancellationToken ct = default);
+
+    /// <summary>
     /// Tests Graph API connectivity by fetching a single user.
     /// Returns true on success; logs and returns false on failure.
     /// </summary>
@@ -120,3 +138,26 @@ public sealed record GraphGroupsResult(
 /// </summary>
 public sealed record GraphMembersResult(
     IReadOnlyList<Employee> Members, bool Completed, string? FailureDetail);
+
+/// <summary>
+/// The result of asking whether a directory is readable.
+///
+/// <paramref name="NeedsConsent"/> separates "nobody has consented yet" — our application does
+/// not exist in that directory at all — from a directory that is simply unreachable. The first
+/// is an onboarding step the customer has not taken; the second is an outage.
+/// </summary>
+public sealed record DirectoryProbeResult(bool CanRead, bool NeedsConsent, string? FailureDetail)
+{
+    public static DirectoryProbeResult Ok() => new(true, false, null);
+}
+
+/// <summary>
+/// What a customer's directory reports about itself, or why it would not say.
+/// <paramref name="NeedsReconsent"/> means the read was refused for want of a permission the
+/// customer has not granted — actionable, and not the same as broken.
+/// </summary>
+public sealed record DirectoryOrganization(
+    string? DisplayName,
+    IReadOnlyList<string> VerifiedDomains,
+    bool NeedsReconsent,
+    string? FailureDetail);

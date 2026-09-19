@@ -84,10 +84,16 @@ public class DepartmentSyncService : BackgroundService
         }
     }
 
-    private async Task SyncDirectoryAsync(
+    /// <summary>
+    /// One directory's worth of groups and membership. Internal so a test can drive a single
+    /// cycle: the public entry point sleeps thirty seconds and then loops on a timer.
+    /// </summary>
+    internal async Task SyncDirectoryAsync(
         IGraphApiService graphApi, AppDbContext db, DirectoryTarget target, CancellationToken ct)
     {
         var groups = await graphApi.GetAllGroupsAsync(target.EntraTenantId, ct);
+        var filled = 0;
+        var leftAlone = 0;
 
         if (!groups.Completed)
         {
@@ -152,13 +158,38 @@ public class DepartmentSyncService : BackgroundService
                 var employee = await db.Employees.FirstOrDefaultAsync(
                     e => e.TenantId == target.TenantId && e.AzureAdObjectId == member.AzureAdObjectId, ct);
 
-                if (employee != null) employee.DepartmentId = department.Id;
+                if (employee == null) continue;
+
+                // Fills a blank, and only a blank.
+                //
+                // Somebody can belong to several M365 groups, so assigning unconditionally meant
+                // whichever group happened to sync last owned them — a clinician's department
+                // could change on its own every cycle, with nothing recording that it had. It
+                // also silently overwrote a department an admin had set by hand.
+                //
+                // Department decides who a code call pages, so a value a person chose outranks
+                // one inferred from group membership. Moving someone between departments stays
+                // an explicit act on the admin screen.
+                if (employee.DepartmentId == null)
+                {
+                    employee.DepartmentId = department.Id;
+                    filled++;
+                }
+                else if (employee.DepartmentId != department.Id)
+                {
+                    leftAlone++;
+                }
             }
 
             await db.SaveChangesAsync(ct);
         }
 
+        // The third number is the point of the second: departments this sync deliberately did
+        // not change. Without it, "why is this person still in Cardiology" has no answer in
+        // the log.
         _logger.LogInformation(
-            "Department sync for {Directory}: {Count} group(s) processed", target.Name, groups.Groups.Count);
+            "Department sync for {Directory}: {Count} group(s) processed, "
+            + "{Filled} employee(s) given a department, {LeftAlone} left as they were",
+            target.Name, groups.Groups.Count, filled, leftAlone);
     }
 }

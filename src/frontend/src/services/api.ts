@@ -31,8 +31,11 @@ import type {
   OrganizationVerification,
   BulkActionResult,
   BulkGrantResult,
+  OnboardingInvite,
+  DirectoryStatus,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
+import type { ConsentCompletion } from '@/utils/adminConsent'
 
 interface ImportResult {
   totalRows: number
@@ -702,6 +705,19 @@ export const tenantsApi = {
       directoryConsentUrl: string;
       note: string
     }>(`/tenants/${id}/directory-consent-link`),
+
+  // A one-time invitation to connect a directory, for a subscription that has none yet.
+  // Unlike getDirectoryConsentLink these links name no directory — "which directory" is
+  // exactly what is unknown at this point, and the customer's admin answers it by signing
+  // in. The invite token rides along as OAuth `state` so the consent that comes back can be
+  // tied to this subscription.
+  createOnboardingInvite: (id: number) =>
+    fetchApi<OnboardingInvite>(`/tenants/${id}/onboarding-invite`, { method: 'POST' }),
+
+  // Asked live, not read off the tenant row. "Directory connected" in the list has only ever
+  // meant somebody typed a GUID; this says whether the directory can actually be read.
+  getDirectoryStatus: (id: number) =>
+    fetchApi<DirectoryStatus>(`/tenants/${id}/directory-status`),
   getAdmins: (tenantId: number) =>
     fetchApi<TenantAdmin[]>(`/tenants/${tenantId}/admins`),
   assignAdmin: (tenantId: number, data: Record<string, unknown>) =>
@@ -710,6 +726,35 @@ export const tenantsApi = {
     fetchApi<TenantAdmin>(`/tenants/${tenantId}/admins/${adminId}`, { method: 'PUT', body: JSON.stringify(data) }),
   removeAdmin: (tenantId: number, adminId: number) =>
     fetchApi<void>(`/tenants/${tenantId}/admins/${adminId}`, { method: 'DELETE' }),
+}
+
+// ── Consent hand-back (no account, no session) ──
+/**
+ * Where a customer's Entra administrator lands after granting consent.
+ *
+ * Deliberately not routed through fetchApi: the caller has no OnCall account and never will
+ * — they are their organisation's directory administrator, not one of its clinicians — so
+ * asking the auth provider for a token here would at best waste a round trip and at worst
+ * bounce them somewhere. The endpoint is anonymous by design, and earns that by proving the
+ * invite and reading the directory before it writes anything.
+ */
+export const consentApi = {
+  complete: async (body: {
+    state: string
+    tenant?: string
+    error?: string
+    errorDescription?: string
+  }): Promise<ConsentCompletion> => {
+    const res = await fetch(`${API_BASE}/public/consent/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      throw new ApiError(res.status, await readErrorMessage(res, `API error: ${res.status}`))
+    }
+    return res.json()
+  },
 }
 
 // ── Admin (account & department management) ──

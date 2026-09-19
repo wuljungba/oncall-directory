@@ -62,6 +62,92 @@ public class GraphApiService : IGraphApiService
         }
     }
 
+    public async Task<DirectoryProbeResult> ProbeDirectoryAsync(
+        string? entraTenantId, CancellationToken ct = default)
+    {
+        var directory = entraTenantId ?? _options.Value.TenantId;
+
+        try
+        {
+            var users = await GetClientForTenant(entraTenantId).Users.GetAsync(config =>
+            {
+                config.QueryParameters.Top = 1;
+                config.QueryParameters.Select = ["id"];
+            }, ct);
+
+            if (users?.Value == null)
+            {
+                return new DirectoryProbeResult(false, false, "Graph answered but returned nothing.");
+            }
+
+            _logger.LogInformation("Directory {TenantId} is readable", directory);
+            return DirectoryProbeResult.Ok();
+        }
+        catch (ODataError e)
+        {
+            // 401/403 from a directory that exists: the application is there but has not been
+            // granted what it needs.
+            var needsConsent = e.ResponseStatusCode is 401 or 403;
+            _logger.LogWarning("Directory {TenantId} probe failed: {Detail}", directory, DescribeError(e));
+            return new DirectoryProbeResult(false, needsConsent, DescribeError(e));
+        }
+        catch (Exception ex)
+        {
+            // AADSTS700016 / unauthorized_client means our application does not exist in that
+            // directory at all, which is exactly "nobody has consented yet" — an onboarding step
+            // the customer has not taken, not an outage.
+            var needsConsent = ex.Message.Contains("700016", StringComparison.Ordinal)
+                || ex.Message.Contains("unauthorized_client", StringComparison.OrdinalIgnoreCase);
+
+            _logger.LogWarning(ex, "Directory {TenantId} probe failed", directory);
+            return new DirectoryProbeResult(false, needsConsent, ex.Message);
+        }
+    }
+
+    public async Task<DirectoryOrganization> GetOrganizationAsync(
+        string? entraTenantId, CancellationToken ct = default)
+    {
+        var directory = entraTenantId ?? _options.Value.TenantId;
+
+        try
+        {
+            var orgs = await GetClientForTenant(entraTenantId).Organization.GetAsync(
+                config => config.QueryParameters.Select = ["id", "displayName", "verifiedDomains"], ct);
+
+            var org = orgs?.Value?.FirstOrDefault();
+            if (org == null)
+            {
+                return new DirectoryOrganization(null, [], false, "Graph returned no organization.");
+            }
+
+            var domains = (org.VerifiedDomains ?? [])
+                .Select(d => d.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!)
+                .ToList();
+
+            return new DirectoryOrganization(org.DisplayName, domains, false, null);
+        }
+        catch (ODataError e) when (e.ResponseStatusCode is 401 or 403)
+        {
+            // Organization.Read.All is not granted here. Either the application never asked for
+            // it, or this customer consented before it was added — both are fixed by consenting
+            // again, and neither should fail the connection they just completed.
+            _logger.LogInformation(
+                "Directory {TenantId} did not allow reading its organization details ({Detail})",
+                directory, DescribeError(e));
+            return new DirectoryOrganization(null, [], NeedsReconsent: true, DescribeError(e));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not read organization details for directory {TenantId}", directory);
+            return new DirectoryOrganization(null, [], false, ex.Message);
+        }
+    }
+
+    private static string DescribeError(ODataError error) =>
+        $"{error.Error?.Code}: {error.Error?.Message}";
+
     public async Task<List<Employee>> SyncUsersAsync(CancellationToken ct = default)
     {
         var employees = new List<Employee>();

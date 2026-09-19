@@ -36,6 +36,26 @@ public class Tenant
     public string? ContactEmail { get; set; }
 
     /// <summary>
+    /// The organisation's name as its own Entra directory reports it, filled in when a customer
+    /// connects. Kept beside <see cref="Name"/> rather than replacing it: the operator's label
+    /// for a subscription ("MSLC-2") is theirs to choose, and this is evidence about who is on
+    /// the other end of it.
+    /// </summary>
+    [MaxLength(200)]
+    public string? DirectoryDisplayName { get; set; }
+
+    /// <summary>
+    /// Verified domains from that directory, as a JSON array. This is what makes an email address
+    /// checkable against the organisation claiming it — the verification path currently guesses
+    /// from the typed name.
+    /// </summary>
+    [MaxLength(1000)]
+    public string? DirectoryDomains { get; set; }
+
+    /// <summary>When a live Graph read last confirmed we can actually read that directory.</summary>
+    public DateTime? DirectoryVerifiedAt { get; set; }
+
+    /// <summary>
     /// What kind of organization this is. Only the healthcare kinds enter verification --
     /// see <see cref="Models.OrganizationType"/>.
     /// </summary>

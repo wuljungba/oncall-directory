@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using OnCallApi.Authorization;
 using OnCallApi.Configuration;
 using OnCallApi.Data;
 using OnCallApi.Models;
@@ -224,6 +225,141 @@ public class TenantsController : ControllerBase
             note = "This redirect URI must be registered on both the OnCall API and OnCall Graph app registrations, or consent will fail at the last step.",
         });
     }
+
+    /// <summary>
+    /// A one-time invitation to connect a directory to this subscription.
+    ///
+    /// The alternative it replaces is an operator typing the customer's Entra tenant GUID into a
+    /// form. That fails silently: a wrong id matches nobody's token, so the subscription reads as
+    /// connected and their staff simply cannot sign in.
+    ///
+    /// These links name no directory at all — <c>/organizations</c> means "whichever directory
+    /// the admin signs in to" — and carry the invite token as OAuth <c>state</c>. When consent
+    /// comes back, the state says which subscription was being onboarded and a live Graph read
+    /// says the consent was real. The id is then filled in by the app, not by hand.
+    /// </summary>
+    [Authorize(Policy = "RequireTenantManage")]
+    [HttpPost("{id}/onboarding-invite")]
+    public async Task<ActionResult> CreateOnboardingInvite(int id, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FindAsync([id], ct);
+        if (tenant == null) return NotFound();
+
+        var signInClientId = _config["AzureAd:ClientId"];
+        if (!IsConfiguredClientId(signInClientId))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = "AzureAd:ClientId is not configured, so no sign-in consent link can be built.",
+            });
+        }
+
+        var directoryClientId = _graphOptions.Value.ClientId;
+        if (!IsConfiguredClientId(directoryClientId))
+        {
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                error = "GraphApi:ClientId is not configured, so no directory consent link can be built.",
+            });
+        }
+
+        var origin = (_config["Cors:Origin"] ?? "").TrimEnd('/');
+        var redirectUri = $"{origin}/admin";
+
+        var invite = new TenantOnboardingInvite
+        {
+            TenantId = tenant.Id,
+            CreatedBy = PrincipalClaims.GetObjectId(User) ?? PrincipalClaims.GetEmail(User),
+        };
+
+        _db.TenantOnboardingInvites.Add(invite);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Onboarding invite issued for tenant {TenantId} by {CreatedBy}", tenant.Id, invite.CreatedBy);
+
+        return Ok(new
+        {
+            expiresAt = invite.ExpiresAt,
+            signInConsentUrl = InviteConsentUrl(signInClientId!, redirectUri, invite.Token),
+            directoryConsentUrl = InviteConsentUrl(directoryClientId, redirectUri, invite.Token),
+            note = "Single use, and it expires. Both links must be opened by an administrator of "
+                + "the customer's directory: the first lets their staff sign in, the second lets "
+                + "OnCall read their directory.",
+        });
+    }
+
+    /// <summary>
+    /// Whether this subscription's directory is genuinely connected, asked live rather than
+    /// inferred.
+    ///
+    /// "Directory connected" in the admin list has only ever meant that somebody typed a GUID.
+    /// This asks Graph whether the directory can actually be read, and pairs it with what the
+    /// last sync did — the two questions an operator is really asking.
+    /// </summary>
+    [HttpGet("{id}/directory-status")]
+    public async Task<ActionResult> GetDirectoryStatus(
+        int id, [FromServices] IGraphApiService graph, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FindAsync([id], ct);
+        if (tenant == null) return NotFound();
+
+        // NotFound rather than Forbid, as everywhere else here: whether a given subscription
+        // exists is itself something one customer should not learn about another.
+        if (!_tenants.IsSuperAdmin(User))
+        {
+            var allowed = await _tenants.GetAuthorizedTenantIdsAsync(User);
+            if (!allowed.Contains(id)) return NotFound();
+        }
+
+        var lastRun = await _db.SyncRuns.AsNoTracking()
+            .Where(r => r.TenantId == id && r.Source == SyncSources.AdUsers)
+            .OrderByDescending(r => r.StartedAt)
+            .FirstOrDefaultAsync(ct);
+
+        var staffCount = await _db.Employees.CountAsync(e => e.TenantId == id && e.IsActive, ct);
+
+        if (string.IsNullOrWhiteSpace(tenant.AzureAdTenantId))
+        {
+            return Ok(new
+            {
+                directoryTenantId = (string?)null,
+                consentGranted = false,
+                canReadDirectory = false,
+                needsReconsent = false,
+                detail = "No directory is connected yet. Send this subscription an onboarding invite.",
+                lastSyncAt = lastRun?.StartedAt,
+                lastOutcome = lastRun?.Outcome,
+                staffCount,
+            });
+        }
+
+        var probe = await graph.ProbeDirectoryAsync(tenant.AzureAdTenantId, ct);
+
+        return Ok(new
+        {
+            directoryTenantId = tenant.AzureAdTenantId,
+            directoryDisplayName = tenant.DirectoryDisplayName,
+            directoryVerifiedAt = tenant.DirectoryVerifiedAt,
+            consentGranted = probe.CanRead || !probe.NeedsConsent,
+            canReadDirectory = probe.CanRead,
+            needsReconsent = probe.NeedsConsent,
+            detail = probe.CanRead ? null : probe.FailureDetail,
+            lastSyncAt = lastRun?.StartedAt,
+            lastOutcome = lastRun?.Outcome,
+            lastPagesRead = lastRun?.PagesRead,
+            lastDeactivationsRefused = lastRun?.DeactivationsRefused,
+            staffCount,
+        });
+    }
+
+    private static string InviteConsentUrl(string clientId, string redirectUri, Guid state) =>
+        // "organizations" rather than a tenant id: we do not know which directory yet, and that
+        // is the point — the admin's own directory is whichever they sign in to.
+        "https://login.microsoftonline.com/organizations/adminconsent"
+        + $"?client_id={Uri.EscapeDataString(clientId)}"
+        + $"&redirect_uri={Uri.EscapeDataString(redirectUri)}"
+        + $"&state={state:N}";
 
     private static bool IsConfiguredClientId(string? clientId) =>
         !string.IsNullOrWhiteSpace(clientId)

@@ -62,8 +62,43 @@ internal sealed class FakeGraphApiService : IGraphApiService
         return Task.FromResult(result);
     }
 
-    public Task<GraphGroupsResult> GetAllGroupsAsync(string? entraTenantId, CancellationToken ct = default) =>
-        throw NotUsed();
+    /// <summary>Scripted group list, per directory. Null means the test wants the default.</summary>
+    public GraphGroupsResult? Groups { get; set; }
+
+    /// <summary>Every group-list read, so a test can assert which directory was asked.</summary>
+    public List<string?> GroupCalls { get; } = [];
+
+    public Task<GraphGroupsResult> GetAllGroupsAsync(string? entraTenantId, CancellationToken ct = default)
+    {
+        GroupCalls.Add(entraTenantId);
+
+        return Task.FromResult(Groups ?? throw new InvalidOperationException(
+            "This test scripted no group list."));
+    }
+
+    /// <summary>Scripted probe answers per directory; anything unscripted uses the default.</summary>
+    public Dictionary<string, DirectoryProbeResult> Probes { get; } = [];
+
+    public DirectoryProbeResult DefaultProbe { get; set; } = DirectoryProbeResult.Ok();
+
+    /// <summary>Every directory probed, so a test can assert what the callback actually checked.</summary>
+    public List<string?> ProbeCalls { get; } = [];
+
+    public DirectoryOrganization Organization { get; set; } = new(null, [], false, null);
+
+    public Task<DirectoryProbeResult> ProbeDirectoryAsync(
+        string? entraTenantId, CancellationToken ct = default)
+    {
+        ProbeCalls.Add(entraTenantId);
+
+        return Task.FromResult(
+            entraTenantId != null && Probes.TryGetValue(entraTenantId, out var scripted)
+                ? scripted
+                : DefaultProbe);
+    }
+
+    public Task<DirectoryOrganization> GetOrganizationAsync(
+        string? entraTenantId, CancellationToken ct = default) => Task.FromResult(Organization);
     public Task CreateSharePointPageAsync(string siteId, string title, string pageContent, CancellationToken ct = default) => throw NotUsed();
     public Task<bool> CheckGraphConnectionAsync(CancellationToken ct = default) => throw NotUsed();
 

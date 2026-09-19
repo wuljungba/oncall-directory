@@ -7,6 +7,12 @@ export interface Tenant {
   azureAdGroupId?: string
   /** Entra tenant GUID whose users may read this subscription (read-only). */
   azureAdTenantId?: string
+  /** That directory's own name for itself, filled in when a customer connects. */
+  directoryDisplayName?: string
+  /** Its verified domains, as a JSON array — what makes an email address checkable. */
+  directoryDomains?: string
+  /** When a live Graph read last confirmed the directory can actually be read. */
+  directoryVerifiedAt?: string
   contactEmail?: string
   /** Hospital | Clinic | PrivatePractice | SkilledNursing | EMS | Other. */
   organizationType?: string
@@ -14,6 +20,43 @@ export interface Tenant {
   verificationStatus?: string
   isActive: boolean
   createdAt: string
+}
+
+/**
+ * A one-time invitation to connect a directory to a subscription.
+ *
+ * Two links, and both matter: the sign-in one lets the customer's staff sign in at all, and
+ * the directory one lets OnCall read their directory. Neither names a directory — the
+ * customer's admin says which by signing in — and both carry the same invite token.
+ */
+export interface OnboardingInvite {
+  expiresAt: string
+  signInConsentUrl: string
+  directoryConsentUrl: string
+  note: string
+}
+
+/**
+ * Whether a subscription's directory is genuinely connected, asked live rather than inferred
+ * from the presence of a GUID on the tenant row.
+ */
+export interface DirectoryStatus {
+  directoryTenantId: string | null
+  directoryDisplayName?: string
+  directoryVerifiedAt?: string
+  /** Consent exists, as far as Graph will say. */
+  consentGranted: boolean
+  /** The one that matters: the directory answers an app-only read right now. */
+  canReadDirectory: boolean
+  /** Readable only after someone consents again — a newer permission was added. */
+  needsReconsent: boolean
+  /** Why it cannot be read, when it cannot. */
+  detail?: string | null
+  lastSyncAt?: string | null
+  lastOutcome?: string | null
+  lastPagesRead?: number | null
+  lastDeactivationsRefused?: number | null
+  staffCount: number
 }
 
 export interface TenantAdmin {
@@ -524,6 +567,14 @@ export interface AccessRequest {
   organization?: string
   roleRequested?: string
   note?: string
+  /**
+   * The subscription this was attributed to, from the address's domain against a directory
+   * OnCall has read for itself — never from the organization the person typed. Null means
+   * nothing could attribute it, and only admins who see every subscription see those.
+   */
+  tenantId?: number | null
+  /** Which verified domain matched, so the attribution can be seen rather than trusted. */
+  matchedDomain?: string | null
   status: 'pending' | 'approved' | 'denied'
   createdAt: string
   reviewedAt?: string

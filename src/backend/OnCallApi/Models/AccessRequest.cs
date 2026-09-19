@@ -35,6 +35,29 @@ public class AccessRequest
     [MaxLength(1000)]
     public string? Note { get; set; }
 
+    /// <summary>
+    /// The subscription this request was attributed to, or null when nothing could attribute
+    /// it.
+    ///
+    /// Derived from the address's domain against a directory OnCall has actually read — never
+    /// from the organisation the person typed, which is a stranger's claim about themselves.
+    /// It exists so the queue can be scoped: an admin who administers one customer has no
+    /// business reading another customer's prospective staff, their addresses, or the free
+    /// text they wrote in the note.
+    ///
+    /// Null means "nobody could say whose this is", which is the common case early on and is
+    /// deliberately the narrower one: it is visible only to admins who can see everything.
+    /// </summary>
+    public int? TenantId { get; set; }
+    public Tenant? Tenant { get; set; }
+
+    /// <summary>
+    /// Which verified domain matched, so an admin can see why this landed in their queue
+    /// rather than having to take it on trust.
+    /// </summary>
+    [MaxLength(200)]
+    public string? MatchedDomain { get; set; }
+
     /// <summary>pending | approved | denied</summary>
     [MaxLength(20)]
     public string Status { get; set; } = AccessRequestStatus.Pending;

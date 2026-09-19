@@ -28,11 +28,16 @@ namespace OnCallApi.Controllers;
 public class AccessRequestsController : ControllerBase
 {
     private readonly IAccessRequestService _service;
+    private readonly ITenantContextService _tenants;
     private readonly ILogger<AccessRequestsController> _logger;
 
-    public AccessRequestsController(IAccessRequestService service, ILogger<AccessRequestsController> logger)
+    public AccessRequestsController(
+        IAccessRequestService service,
+        ITenantContextService tenants,
+        ILogger<AccessRequestsController> logger)
     {
         _service = service;
+        _tenants = tenants;
         _logger = logger;
     }
 
@@ -61,14 +66,32 @@ public class AccessRequestsController : ControllerBase
         });
     }
 
-    /// <summary>The queue an admin works through.</summary>
+    /// <summary>
+    /// The queue an admin works through, showing only the requests that are theirs to see.
+    ///
+    /// This is open to scoped admins, and the queue holds other customers' prospective staff:
+    /// their names, their work addresses, and whatever they typed into a free-text note. An
+    /// admin who administers one subscription has no business reading another's, so the list
+    /// is narrowed to the subscriptions they actually administer — matched by the address's
+    /// domain against a directory OnCall has read for itself.
+    ///
+    /// Requests nothing could attribute stay with admins who can see every subscription
+    /// anyway. That is the narrow reading of "whose is this?", and the right one: an
+    /// unanswered question is not permission to show it to everybody.
+    /// </summary>
     [HttpGet("/api/admin/access-requests")]
     [Authorize(Policy = "RequireAdminFullOrScoped")]
     public async Task<ActionResult<List<AccessRequest>>> List([FromQuery] string? status, CancellationToken ct)
     {
+        List<int>? visible = null;
+        if (!_tenants.IsSuperAdmin(User))
+        {
+            visible = await _tenants.GetAuthorizedTenantIdsAsync(User);
+        }
+
         try
         {
-            return await _service.ListAsync(status, ct);
+            return await _service.ListAsync(status, visible, ct);
         }
         catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
     }

@@ -123,7 +123,7 @@ export default function PermissionsSection() {
 
       {/* People who asked to be let in from the public pages. Sits above the signed-in
           list because it is the earlier step: they may not have signed in at all yet. */}
-      <AccessRequestQueue canReview={canAdminFull} />
+      <AccessRequestQueue canReview={canAdminFull} tenantName={tenantName} />
 
       {/* Signed-in users. Entra/Google tokens carry no roles, so people arrive with no
           access and used to be invisible here — the grant field below is free text, with
@@ -491,7 +491,16 @@ function SignedInUsers({ identities, loading, tenantName, onSelect }: {
 // access itself is still granted deliberately below, scoped to a tenant. Conflating the
 // two is how someone ends up with more than they were meant to have.
 
-function AccessRequestQueue({ canReview }: { canReview: boolean }) {
+/**
+ * The queue is scoped server-side: an admin of one subscription sees requests from that
+ * subscription's own directory, and nothing that could not be attributed. Showing which
+ * subscription — and the domain that decided it — is what makes that visible rather than
+ * mysterious, and it is the first thing to check when a request is in the wrong place.
+ */
+function AccessRequestQueue({ canReview, tenantName }: {
+  canReview: boolean
+  tenantName: (id?: number) => string
+}) {
   const dialog = useDialog()
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [loading, setLoading] = useState(true)
@@ -573,6 +582,26 @@ function AccessRequestQueue({ canReview }: { canReview: boolean }) {
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
                     {[req.organization, req.roleRequested].filter(Boolean).join(' · ') || 'No organization given'}
+                  </p>
+                  <p className="mt-1.5">
+                    {req.tenantId != null ? (
+                      <span
+                        className="text-[11px] px-2 py-0.5 rounded bg-blue-600/15 text-blue-400"
+                        title={req.matchedDomain
+                          ? `Attributed by the verified domain ${req.matchedDomain}.`
+                          : 'Attributed to this subscription.'}
+                      >
+                        {tenantName(req.tenantId)}
+                        {req.matchedDomain && <span className="text-blue-400/60"> · {req.matchedDomain}</span>}
+                      </span>
+                    ) : (
+                      <span
+                        className="text-[11px] px-2 py-0.5 rounded bg-gray-700/50 text-gray-400"
+                        title="The address matches no connected directory, so nothing says which subscription this belongs to. Only admins who can see every subscription see these."
+                      >
+                        Unattributed
+                      </span>
+                    )}
                   </p>
                   {req.note && (
                     <p className="text-xs text-gray-400 mt-1.5 whitespace-pre-wrap break-words">{req.note}</p>

@@ -38,6 +38,7 @@ public class AppDbContext : DbContext
     public DbSet<AccessRequest> AccessRequests => Set<AccessRequest>();
     public DbSet<SyncRun> SyncRuns => Set<SyncRun>();
     public DbSet<SyncState> SyncStates => Set<SyncState>();
+    public DbSet<TenantOnboardingInvite> TenantOnboardingInvites => Set<TenantOnboardingInvite>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -370,6 +371,32 @@ public class AppDbContext : DbContext
             // "The last few runs for this directory" is the only question this table answers.
             r.HasIndex(x => new { x.TenantId, x.Source, x.StartedAt });
             r.HasIndex(x => x.StartedAt);
+        });
+
+        modelBuilder.Entity<AccessRequest>(a =>
+        {
+            // SetNull, not Cascade: a deactivated subscription must not take the record of who
+            // asked to join it with it. The request simply becomes unattributed again.
+            a.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            // The queue is read by status, scoped to a tenant.
+            a.HasIndex(x => new { x.TenantId, x.Status });
+        });
+
+        modelBuilder.Entity<TenantOnboardingInvite>(i =>
+        {
+            i.HasOne(x => x.Tenant)
+                .WithMany()
+                .HasForeignKey(x => x.TenantId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // The token is looked up by itself, from an anonymous endpoint, and must identify at
+            // most one invite.
+            i.HasIndex(x => x.Token).IsUnique();
+            i.HasIndex(x => new { x.TenantId, x.ConsumedAt });
         });
 
         modelBuilder.Entity<SyncState>(s =>
