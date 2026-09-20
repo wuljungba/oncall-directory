@@ -103,7 +103,12 @@ React SPA (port 5173) ──proxy──▶ ASP.NET Core 8 API (port 5000) ──
 - Frontend `useAuth` hook manages `activeTenantId` across session.
 
 ### HIPAA Compliance
-- PHI-sensitive fields use column encryption (EF Core + Always Encrypted).
+- **PHI is NOT column-encrypted.** There is no Always Encrypted, and no application-level
+  field encryption, anywhere in this codebase. At-rest protection comes from Azure SQL
+  Transparent Data Encryption (on by default for Azure SQL), which encrypts database files
+  — so anything holding a database connection reads PHI in plaintext. This line previously
+  claimed "EF Core + Always Encrypted"; that was never implemented. Do not repeat the old
+  claim in a compliance questionnaire or a customer answer.
 - `HipaaAuditMiddleware` logs all PHI access requests.
 - `AuditBackgroundService` flushes audit logs asynchronously.
 - Session timeout, TLS 1.2+, audit retention (default 2190 days / 6 years).

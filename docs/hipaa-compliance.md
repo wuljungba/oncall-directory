@@ -2,16 +2,21 @@
 
 ## Technical Safeguards
 
+> **Status key:** ✅ implemented · ⚠️ partially implemented · ❌ not implemented.
+> Every row below was re-verified against the code and the live tenant on **2026-09-20**.
+> Four rows previously read ✅ and were wrong; they are corrected here. Do not restore a ✅
+> to any row without checking the thing it claims.
+
 | Requirement | Implementation | Status |
 |-------------|---------------|--------|
 | Access Control | Entra ID RBAC + per-resource authorization | ✅ |
 | Unique User IDs | Azure AD identity per user | ✅ |
-| Automatic Logoff | 15-min inactivity timeout (configurable) | ✅ |
-| Encryption in Transit | TLS 1.3 for all endpoints | ✅ |
-| Encryption at Rest | Azure SQL TDE + column-level encryption for PHI fields | ✅ |
-| Audit Controls | All PHI access logged with user, timestamp, action, resource | ✅ |
-| Integrity Controls | Checksums on critical schedule data | ✅ |
-| Person/Entity Auth | Multi-factor auth via Entra ID Conditional Access | ✅ |
+| Automatic Logoff | Inactivity timeout, configurable via `Hipaa:SessionTimeoutMinutes` | ✅ |
+| Encryption in Transit | TLS **1.2** floor enforced (`minTlsVersion: '1.2'`, `infrastructure/bicep/main.bicep`); 1.3 is negotiated where the client supports it, but is not the enforced minimum | ✅ |
+| Encryption at Rest | Azure SQL TDE, which encrypts database files. **There is no column-level or application-level PHI encryption** — no Always Encrypted, no field encryption in code. Anything holding a database connection reads PHI in plaintext | ⚠️ |
+| Audit Controls | All PHI access logged with user, timestamp, action, resource (`HipaaAuditMiddleware`, flushed by `AuditBackgroundService`) | ✅ |
+| Integrity Controls | **Not implemented.** No checksums exist on schedule data; the only HMAC in the codebase is JWT signing in `LocalJwtService` | ❌ |
+| Person/Entity Auth | **Not configured.** The tenant holds no licensed SKUs (Entra ID Free), where Conditional Access is unavailable, and it has **0 Conditional Access policies**. Any MFA would have to come from security defaults, which could not be read and remains unverified | ❌ |
 
 ## Physical Safeguards (Delegated to Azure)
 
