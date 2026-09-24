@@ -95,7 +95,7 @@ This creates:
 - ✅ App Service Plan (P0v3, Linux) + Web App
 - ✅ Staging deployment slot — **note it shares production's database**; see
   [backup-and-recovery.md](backup-and-recovery.md)
-- ✅ Key Vault with SQL connection string secret (purge protection on, 90-day soft delete)
+- ✅ Key Vault with SQL connection string secret (purge protection on, 7-day soft delete — Azure minimum, immutable after creation)
 - ✅ Blob Storage (GRS, versioning on, 90-day soft delete) with containers: `import-files`,
   `audit-archive`, `compliance-reports`, `incident-archive`
 - ✅ Application Insights + Log Analytics

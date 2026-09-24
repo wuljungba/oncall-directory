@@ -235,14 +235,20 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     }
     tenantId: subscription().tenantId
     enableRbacAuthorization: true
-    // 90 rather than the 7-day minimum, and purge protection on. This vault holds the SQL
-    // connection string, the Graph client secret and the JWT signing key: without purge
-    // protection a deleted vault can be permanently purged inside the soft-delete window,
-    // which would make the database unreachable and every issued token unverifiable.
-    //
-    // Purge protection cannot be switched off once enabled. That is the point of it.
-    softDeleteRetentionInDays: 90
+    // This vault holds the SQL connection string, the Graph client secret and the JWT signing
+    // key. Without purge protection a deleted vault can be permanently purged inside the
+    // soft-delete window, leaving the database unreachable and every issued token
+    // unverifiable. It cannot be switched off once enabled — that is the point of it.
     enablePurgeProtection: true
+
+    // Stays 7 because Azure makes softDeleteRetentionInDays IMMUTABLE once a vault exists:
+    // raising it on the live vault is rejected with
+    //   BadRequest: The property "softDeleteRetentionInDays" has been set already
+    // and a template declaring 90 would fail every redeploy against that vault.
+    //
+    // 90 is the better value and 7 is the minimum, so if this vault is ever recreated, raise
+    // it then — it is the only opportunity there will be.
+    softDeleteRetentionInDays: 7
   }
 }
 

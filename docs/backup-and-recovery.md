@@ -18,7 +18,7 @@ has been corrected.
 | Blob versioning | **on** | An overwritten archive blob can be rolled back |
 | Blob / container soft delete | **90 days** | A deleted archive file can be recovered |
 | Delete locks | SQL server, Key Vault, storage account | `az group delete` cannot take the data with it |
-| Key Vault soft delete | 90 days | A deleted vault can be recovered |
+| Key Vault soft delete | **7 days**, purge protection **on** | A deleted vault is recoverable for 7 days and cannot be purged early. 7 is Azure's minimum and is **immutable once a vault is created** — raising it needs a new vault |
 | Audit archive | blob NDJSON, `audit-archive` | Audit rows outlive the database table |
 | Incident archive | blob NDJSON, `incident-archive` | Code-call history exists outside SQL, **and stays in it** |
 
