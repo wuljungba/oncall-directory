@@ -77,14 +77,36 @@ Be clear about these; the table above can otherwise read as more reassuring than
 Restores **never overwrite** the live database — they create a new one. That is what makes this
 safe to rehearse and safe to do under pressure.
 
+> **`az sql db restore` does not work from this CLI — use the REST call below.**
+> Verified 2026-09-24: the command was accepted and returned no error, but **never issued a
+> write to Azure** — the activity log shows only `databases/read` polls and no database is
+> ever created. It then blocks indefinitely waiting for a database it did not request.
+> `--no-wait` returns successfully and is equally inert. The ARM REST call below was accepted
+> immediately and started a real `CreateRestoreRequest`. Do not discover this during an
+> incident.
+
 ```bash
 # 1. Confirm the window
 az sql db show -g rg-oncall-prod -s sql-oncall-prod -n sqldb-oncall-prod \
   --query "{earliest:earliestRestoreDate}" -o json
 
 # 2. Restore beside production, never over it
-az sql db restore -g rg-oncall-prod -s sql-oncall-prod -n sqldb-oncall-prod \
-  --dest-name sqldb-oncall-recovered --time 2026-09-24T22:00:00Z
+SUB=d516eda6-511d-4ffd-8547-205d62548b39
+SRC="/subscriptions/$SUB/resourceGroups/rg-oncall-prod/providers/Microsoft.Sql/servers/sql-oncall-prod/databases/sqldb-oncall-prod"
+
+cat > restore.json <<JSON
+{"location":"westus3",
+ "sku":{"name":"S0","tier":"Standard"},
+ "properties":{"createMode":"PointInTimeRestore",
+               "sourceDatabaseId":"$SRC",
+               "restorePointInTime":"2026-09-24T18:00:00Z"}}
+JSON
+
+az rest --method PUT --body @restore.json \
+  --url "https://management.azure.com$SRC/../sqldb-oncall-recovered?api-version=2023-08-01-preview"
+
+# 3. Poll until it appears. A restore takes tens of minutes even for a small database.
+az sql db list -g rg-oncall-prod -s sql-oncall-prod --query "[].{name:name,status:status}" -o table
 
 # 3. Point the app at it only after checking the data is what you expect,
 #    by updating ConnectionStrings__DefaultConnection in Key Vault.
@@ -137,8 +159,19 @@ az lock delete -g rg-oncall-prod -n protect-sql-oncall-prod \
 
 A backup nobody has restored is a hypothesis. Record every drill here.
 
-| Date | Type | Result | Wall-clock |
+| Date | Type | Result | Notes |
 |---|---|---|---|
-| 2026-09-24 | PITR to a new database | see below | see below |
+| 2026-09-24 | PITR to a new DB via `az sql db restore` | **Failed to submit** | CLI accepted the command, issued no write, blocked indefinitely. Twice, including `--no-wait`. See the warning above |
+| 2026-09-24 | PITR to a new DB via ARM REST | **Accepted** — `CreateRestoreRequest` started | Restore ran **>30 min** for a near-empty S0. Budget tens of minutes; it is fixed overhead, not data volume |
+
+What the drill established, and what it did not:
+
+- **Established:** the backup configuration is real and addressable — Azure accepted a
+  point-in-time restore against a timestamp inside the window — and the documented CLI path is
+  broken in a way that would otherwise have surfaced only during an incident. That finding
+  alone justified running it.
+- **Not yet established:** that a restored copy comes up with correct, queryable data. Finish
+  that next run: connect to the restored database, check row counts against `PhoneTreeEvents`
+  and `AuditLogs`, then delete the copy.
 
 **Re-run the drill after any tier change, any significant growth, and at least annually.**

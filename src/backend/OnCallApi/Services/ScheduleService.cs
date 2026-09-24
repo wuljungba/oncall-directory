@@ -392,9 +392,30 @@ public class ScheduleService : IScheduleService
         return existing;
     }
 
+    /// <summary>
+    /// Removes a schedule.
+    ///
+    /// Refuses once shifts have been worked. Schedule → Shift is a cascade, so deleting a
+    /// schedule that has history takes every shift under it — the record of who was on call,
+    /// which is what an incident review reconstructs a timeline from and what duty-hour
+    /// compliance is calculated against.
+    ///
+    /// Shifts that are entirely in the future are a plan, not a record, so a schedule created
+    /// by mistake can still be removed. Deleting one that has been used is a deactivation, not
+    /// a delete — and the same reasoning the employee path already applies, which refuses a
+    /// hard delete and tells the caller to deactivate instead.
+    /// </summary>
     public async Task DeleteScheduleAsync(int id)
     {
         var schedule = await RequireScheduleAsync(id);
+
+        var worked = await _db.Shifts.CountAsync(s => s.ScheduleId == id && s.StartTime < DateTime.UtcNow);
+        if (worked > 0)
+        {
+            throw new InvalidOperationException(
+                $"\"{schedule.Name}\" has {worked} shift(s) that have already started. Deleting it would "
+                + "remove the record of who was on call. Deactivate the schedule instead.");
+        }
 
         _db.Schedules.Remove(schedule);
         await _db.SaveChangesAsync();

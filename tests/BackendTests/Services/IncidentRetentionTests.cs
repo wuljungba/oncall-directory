@@ -41,6 +41,9 @@ public class IncidentRetentionTests
         return db;
     }
 
+    private static ScheduleService NewScheduleService(AppDbContext db) =>
+        new(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
+
     private static PhoneTree SeedTree(AppDbContext db, string name = "Code Blue")
     {
         var tree = new PhoneTree { Name = name, TreeType = "code-blue", DepartmentId = 1, IsActive = true };
@@ -103,6 +106,59 @@ public class IncidentRetentionTests
         methods.Should().NotContain("DeleteEventAsync");
         methods.Should().NotContain(n => n.Contains("Delete", StringComparison.Ordinal)
                                          && n.Contains("Event", StringComparison.Ordinal));
+    }
+
+    // ── Deleting a schedule must not take the on-call record ────────────────────────────
+
+    /// <summary>
+    /// Schedule → Shift is a cascade with no blocker check, unlike the employee path which
+    /// refuses a hard delete outright. A worked shift is the record of who was on call, which
+    /// is what an incident timeline is reconstructed from.
+    /// </summary>
+    [Fact]
+    public async Task AScheduleWithWorkedShiftsCannotBeDeleted()
+    {
+        using var db = CreateDb();
+        var schedule = new Schedule { Name = "Cardiology Nights", DepartmentId = 1, IsActive = true };
+        db.Schedules.Add(schedule);
+        db.SaveChanges();
+
+        db.Shifts.Add(new Shift
+        {
+            ScheduleId = schedule.Id,
+            StartTime = DateTime.UtcNow.AddDays(-2),
+            EndTime = DateTime.UtcNow.AddDays(-2).AddHours(12),
+        });
+        db.SaveChanges();
+
+        var service = NewScheduleService(db);
+
+        var act = () => service.DeleteScheduleAsync(schedule.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*on call*");
+        db.Shifts.Count().Should().Be(1);
+    }
+
+    /// <summary>A schedule whose shifts are all still ahead is a plan, not a record.</summary>
+    [Fact]
+    public async Task AScheduleOfFutureShiftsCanStillBeDeleted()
+    {
+        using var db = CreateDb();
+        var schedule = new Schedule { Name = "Drafted By Mistake", DepartmentId = 1, IsActive = true };
+        db.Schedules.Add(schedule);
+        db.SaveChanges();
+
+        db.Shifts.Add(new Shift
+        {
+            ScheduleId = schedule.Id,
+            StartTime = DateTime.UtcNow.AddDays(7),
+            EndTime = DateTime.UtcNow.AddDays(7).AddHours(12),
+        });
+        db.SaveChanges();
+
+        await NewScheduleService(db).DeleteScheduleAsync(schedule.Id);
+
+        db.Schedules.Any(s => s.Id == schedule.Id).Should().BeFalse();
     }
 
     // ── Retention that is actually enforced ──────────────────────────────────────────────
