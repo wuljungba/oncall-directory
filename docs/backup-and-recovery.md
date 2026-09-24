@@ -10,6 +10,11 @@ has been corrected.
 
 ## What is in place
 
+> **Restore is unproven.** The policies below are verified as *configured*, but no restore has
+> ever completed on this server — three attempts on 2026-09-24 produced nothing, silently. See
+> [Runbook](#runbook). Configuration is not recovery.
+
+
 | Control | Setting | What it buys |
 |---|---|---|
 | Point-in-time restore | **35 days** | Restore to any second in the last 35 days |
@@ -77,13 +82,31 @@ Be clear about these; the table above can otherwise read as more reassuring than
 Restores **never overwrite** the live database — they create a new one. That is what makes this
 safe to rehearse and safe to do under pressure.
 
-> **`az sql db restore` does not work from this CLI — use the REST call below.**
-> Verified 2026-09-24: the command was accepted and returned no error, but **never issued a
-> write to Azure** — the activity log shows only `databases/read` polls and no database is
-> ever created. It then blocks indefinitely waiting for a database it did not request.
-> `--no-wait` returns successfully and is equally inert. The ARM REST call below was accepted
-> immediately and started a real `CreateRestoreRequest`. Do not discover this during an
-> incident.
+> ## ⚠️ RESTORE IS UNPROVEN — READ THIS BEFORE YOU NEED IT
+>
+> **No method tried on 2026-09-24 produced a restored database.**
+> Three attempts, none of which created anything:
+>
+> 1. `az sql db restore` — accepted, returned no error, **issued no write to Azure**, then
+>    blocked indefinitely waiting for a database it never requested.
+> 2. The same with `--no-wait` — returned successfully, equally inert.
+> 3. The ARM REST `PUT` below — returned `{"operation":"CreateRestoreRequest"}`, which looks
+>    like acceptance, but **no database ever appeared and no write operation was ever recorded
+>    in the activity log**.
+>
+> Ruled out: the subscription is `Enabled`, and other ARM writes against this resource group
+> on the same day succeeded (long-term retention policy, point-in-time retention, resource
+> locks, Key Vault purge protection). So writes work in general; restores specifically do not
+> start, and Azure reports no error explaining why.
+>
+> **What this means.** The backup *configuration* is verified — the policies below were all
+> read back from Azure. Whether a backup can actually be restored is **not** verified, and
+> three attempts say it is not straightforward. Treat recovery as an open risk until someone
+> completes a restore, ideally through the Azure Portal, which surfaces errors the API is
+> swallowing here.
+>
+> **This is the single most important open item in this document.** Backups whose restore path
+> has never worked are not yet backups.
 
 ```bash
 # 1. Confirm the window
@@ -152,8 +175,8 @@ az lock delete -g rg-oncall-prod -n protect-sql-oncall-prod \
 - **RPO — point-in-time:** effectively seconds. Azure SQL takes continuous log backups; any
   second within the 35-day window is addressable.
 - **RPO — long-term:** one month, from the monthly LTR backups, for anything older than 35 days.
-- **RTO:** measured by drill, below. Restore time scales with database size, so re-measure as
-  the database grows.
+- **RTO: unknown.** No restore has ever completed here — see the drill log. Every figure in
+  this section is a property of the configuration, not a demonstrated recovery.
 
 ### Drill log
 
@@ -162,16 +185,20 @@ A backup nobody has restored is a hypothesis. Record every drill here.
 | Date | Type | Result | Notes |
 |---|---|---|---|
 | 2026-09-24 | PITR to a new DB via `az sql db restore` | **Failed to submit** | CLI accepted the command, issued no write, blocked indefinitely. Twice, including `--no-wait`. See the warning above |
-| 2026-09-24 | PITR to a new DB via ARM REST | **Accepted** — `CreateRestoreRequest` started | Restore ran **>30 min** for a near-empty S0. Budget tens of minutes; it is fixed overhead, not data volume |
+| 2026-09-24 | PITR to a new DB via ARM REST | **No database produced** | Returned `CreateRestoreRequest`, but nothing was created and no write appears in the activity log, 40+ min later |
 
 What the drill established, and what it did not:
 
-- **Established:** the backup configuration is real and addressable — Azure accepted a
-  point-in-time restore against a timestamp inside the window — and the documented CLI path is
-  broken in a way that would otherwise have surfaced only during an incident. That finding
-  alone justified running it.
-- **Not yet established:** that a restored copy comes up with correct, queryable data. Finish
-  that next run: connect to the restored database, check row counts against `PhoneTreeEvents`
-  and `AuditLogs`, then delete the copy.
+- **Established:** the documented restore path does not work, by any of three routes, and
+  fails *silently* — no error, no database. Had this been attempted for the first time during
+  an incident, the failure would have been discovered at the worst possible moment. That alone
+  justified running the drill.
+- **Not established:** that any backup here can be restored at all. Next step is a restore
+  from the **Azure Portal**, which reports errors the CLI and REST API are swallowing. Until
+  that succeeds, the recovery story is unproven — and no amount of retention policy
+  substitutes for it.
+
+**RTO is therefore unknown, not "tens of minutes".** Do not quote one until a restore has
+completed.
 
 **Re-run the drill after any tier change, any significant growth, and at least annually.**
