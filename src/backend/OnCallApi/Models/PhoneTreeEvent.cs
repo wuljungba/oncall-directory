@@ -46,6 +46,17 @@ public class PhoneTreeEvent
     [MaxLength(200)]
     public string? InitiatedByName { get; set; }
 
+    /// <summary>
+    /// Email of the signed-in account that triggered the code call, taken from the token.
+    ///
+    /// Stored beside the display name rather than derived from <see cref="InitiatedBy"/>,
+    /// because that navigation is null whenever the operator has no Employee profile — which
+    /// is exactly when knowing who they were matters most. A name can be ambiguous on a large
+    /// staff; an address identifies one account.
+    /// </summary>
+    [MaxLength(200)]
+    public string? InitiatedByEmail { get; set; }
+
     /// <summary>Free-text name of the person who called in / ordered the code (the reporter).</summary>
     [MaxLength(200)]
     public string? RequestedByName { get; set; }

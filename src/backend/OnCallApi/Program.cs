@@ -128,6 +128,15 @@ if (localSigningKey.Length < 32)
     }
 }
 
+// ── Retention ──
+// Checked at startup for the same reason DevAuth is: the setting below used to be read by
+// nothing, so a value that did not meet the policy would have been discovered only when a
+// record was asked for and had already been discarded.
+OnCallApi.Configuration.RetentionPolicy.Validate(
+    builder.Configuration,
+    builder.Environment,
+    LoggerFactory.Create(c => c.AddConsole()).CreateLogger("RetentionPolicy"));
+
 // ── Authentication ──
 var devAuthEnabled = builder.Configuration.GetValue<bool>("DevAuth:Enabled");
 
@@ -634,10 +643,16 @@ builder.Services.AddScoped<IAdDirectorySyncService, AdDirectorySyncService>();
 if (runsScheduledWork)
 {
     // The audit table is the fastest-growing thing in the schema and nothing ever pruned it.
-    // Rows past the hot window are written to blob storage and only then deleted, so the six
-    // years Hipaa:AuditLogRetentionDays asks for are actually kept somewhere. Off unless
+    // Rows past the hot window are written to blob storage and only then deleted, so the
+    // seven years Hipaa:AuditLogRetentionDays asks for are actually kept somewhere. Off unless
     // Hipaa:AuditArchive:Enabled says otherwise — it deletes audit records.
     builder.Services.AddHostedService<AuditArchiveService>();
+
+    // Code-call history, exported to blob storage month by month and left in SQL. Unlike the
+    // audit archive this deletes nothing — the seven-year incident record has to stay readable
+    // in the console, and a second copy is protection against a logical loss that the database
+    // backups would faithfully reproduce. On by default, because it only ever adds a copy.
+    builder.Services.AddHostedService<IncidentArchiveService>();
 
     // Staged import rows are a full copy of an uploaded staff list. An abandoned upload would
     // otherwise keep one indefinitely, so unfinished imports are discarded after a week and a
@@ -1184,6 +1199,13 @@ using (var scope = app.Services.CreateScope())
                 );
                 CREATE INDEX IX_DebriefNotes_PhoneTreeEventId ON dbo.DebriefNotes (PhoneTreeEventId);
             END;
+            """,
+            // PhoneTreeEvents.InitiatedByEmail: which account raised a code call, not just
+            // what it was called. The display name alone is ambiguous on a large staff, and
+            // was in practice null on the Entra path until the capture was fixed.
+            """
+            IF COL_LENGTH(N'dbo.PhoneTreeEvents', N'InitiatedByEmail') IS NULL
+                ALTER TABLE dbo.PhoneTreeEvents ADD InitiatedByEmail nvarchar(200) NULL;
             """,
             // ImportJobs / ImportJobRows: an upload held between being read and being
             // committed, so the mapping can be corrected and the errors seen before

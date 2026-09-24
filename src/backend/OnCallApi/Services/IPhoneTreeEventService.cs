@@ -8,7 +8,6 @@ public interface IPhoneTreeEventService
     Task<PhoneTreeEvent?> GetEventByIdAsync(int eventId);
     Task<PhoneTreeEvent> CreateEventAsync(PhoneTreeEvent evt);
     Task<PhoneTreeEvent> UpdateEventAsync(PhoneTreeEvent evt);
-    Task DeleteEventAsync(int eventId);
     Task<PhoneTreeEventParticipant> AddParticipantAsync(int eventId, PhoneTreeEventParticipant participant);
     Task RemoveParticipantAsync(int participantId);
 

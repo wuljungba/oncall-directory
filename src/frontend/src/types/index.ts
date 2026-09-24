@@ -401,6 +401,8 @@ export interface PhoneTreeEvent {
   initiatedById?: string
   initiatedBy?: Employee
   initiatedByName?: string
+  /** Address of the account that raised it, captured from its token. */
+  initiatedByEmail?: string
   requestedByName?: string
   notifiedByName?: string
   location?: string

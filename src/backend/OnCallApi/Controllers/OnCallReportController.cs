@@ -58,6 +58,7 @@ public class OnCallReportController : ControllerBase
                     EndedAt = i.EndedAt,
                     RequestedByName = i.RequestedByName ?? "",
                     InitiatedByName = i.InitiatedByName ?? "",
+                    InitiatedByEmail = i.InitiatedByEmail ?? "",
                     NotifiedByName = i.NotifiedByName ?? "",
                     Location = i.Location ?? "",
                     Status = i.Status ?? "",
@@ -89,6 +90,8 @@ public class IncidentSummary
     public DateTime? EndedAt { get; set; }
     public string RequestedByName { get; set; } = "";
     public string InitiatedByName { get; set; } = "";
+    /// <summary>The triggering account's address, so the report names one account not just a label.</summary>
+    public string InitiatedByEmail { get; set; } = "";
     public string NotifiedByName { get; set; } = "";
     public string Location { get; set; } = "";
     public string Status { get; set; } = "";

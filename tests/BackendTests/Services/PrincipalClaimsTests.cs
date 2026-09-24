@@ -119,6 +119,70 @@ public class PrincipalClaimsTests
         PrincipalClaims.GetEmail(user).Should().BeNull();
     }
 
+    // ── Display name: who a record gets attributed to ───────────────────────────────────
+
+    /// <summary>
+    /// The case that was broken in production.
+    ///
+    /// Starting a code call recorded the operator with User.Identity?.Name alone.
+    /// Microsoft.Identity.Web's default name claim is preferred_username, which is a v2
+    /// claim, and this API issues v1 tokens — so on the Entra path the name was null and
+    /// every code call raised was attributed to nobody at all.
+    /// </summary>
+    [Fact]
+    public void AV1EntraTokenStillYieldsAName()
+    {
+        var user = Principal(
+            (LongFormOid, "a7cb242c-066e-41c0-8fd3-cce9547bccc9"),
+            ("upn", "divine@hospital.test"));
+
+        PrincipalClaims.GetDisplayName(user).Should().Be("divine@hospital.test");
+    }
+
+    [Fact]
+    public void APresentDisplayNameIsPreferredOverTheAddress()
+    {
+        var user = Principal(
+            (ClaimTypes.Name, "Divine Yisa"),
+            (ClaimTypes.Email, "divine@hospital.test"));
+
+        PrincipalClaims.GetDisplayName(user).Should().Be("Divine Yisa");
+    }
+
+    [Fact]
+    public void TheShortNameClaimIsAcceptedToo()
+    {
+        PrincipalClaims.GetDisplayName(Principal(("name", "Charge Nurse"))).Should().Be("Charge Nurse");
+    }
+
+    /// <summary>A blank name must not beat a usable address.</summary>
+    [Fact]
+    public void AWhitespaceNameFallsThroughToTheAddress()
+    {
+        var user = Principal((ClaimTypes.Name, "   "), ("email", "nurse@hospital.test"));
+
+        PrincipalClaims.GetDisplayName(user).Should().Be("nurse@hospital.test");
+    }
+
+    /// <summary>
+    /// Nothing identifiable is null, not a placeholder. A caller that records "unknown" as if
+    /// it were a name produces a record that looks attributed and is not.
+    /// </summary>
+    [Fact]
+    public void AnUnidentifiablePrincipalYieldsNull()
+    {
+        PrincipalClaims.GetDisplayName(Principal(("sub", "abc123"))).Should().BeNull();
+    }
+
+    /// <summary>A guest's mangled UPN is not an address, so it is not a name either.</summary>
+    [Fact]
+    public void AGuestUpnIsNotUsedAsAName()
+    {
+        var user = Principal(("upn", "someone_gmail.com#EXT#@tenant.onmicrosoft.com"));
+
+        PrincipalClaims.GetDisplayName(user).Should().BeNull();
+    }
+
     [Fact]
     public void TenantIdIsResolvedFromEitherForm()
     {

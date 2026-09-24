@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { AlertTriangle, CheckCircle, Play, X, PhoneCall } from 'lucide-react'
 import { commandCenterApi, phoneTreesApi, codeCallLocationsApi, departmentsApi } from '@/services/api'
 import { useSignalR } from '@/hooks/useSignalR'
+import { contactName } from '@/utils/contacts'
 import type { PhoneTreeEvent, PhoneTree, CodeCallLocation, Department, DebriefNote } from '@/types'
 import { useDialog } from '@/components/ui/Dialog'
 
@@ -302,10 +303,16 @@ function codeAccent(treeType?: string) {
   }
 }
 
-/** Operator who triggered the code — pinned signed-in name, else resolved employee name. */
+/**
+ * Operator who triggered the code — the name pinned from the signed-in account, else the
+ * linked employee's.
+ *
+ * Falls back through contactName rather than joining first and last by hand: a contact that
+ * carries only a displayName (a unit reached by phone) rendered as an empty string here.
+ */
 function trigName(inc: PhoneTreeEvent) {
   if (inc.initiatedByName) return inc.initiatedByName
-  if (inc.initiatedBy) return `${inc.initiatedBy.firstName} ${inc.initiatedBy.lastName}`.trim()
+  if (inc.initiatedBy) return contactName(inc.initiatedBy)
   return ''
 }
 
@@ -329,7 +336,7 @@ function matchesSearch(inc: PhoneTreeEvent, q: string) {
   const s = q.trim().toLowerCase()
   if (!s) return true
   const code = inc.phoneTree?.name || inc.phoneTree?.treeType || ''
-  return `${inc.id} ${inc.location || ''} ${code} ${inc.requestedByName || ''} ${inc.initiatedByName || ''} ${trigName(inc)} ${inc.notifiedByName || ''} ${inc.outcome || ''}`.toLowerCase().includes(s)
+  return `${inc.id} ${inc.location || ''} ${code} ${inc.requestedByName || ''} ${inc.initiatedByName || ''} ${trigName(inc)} ${inc.initiatedByEmail || ''} ${inc.notifiedByName || ''} ${inc.outcome || ''}`.toLowerCase().includes(s)
 }
 
 /**
@@ -543,7 +550,7 @@ function dispatchReachedNobody(evt: PhoneTreeEvent) {
                 <th className="px-5 py-3 font-medium">People</th>
                 <th className="px-5 py-3 font-medium">Window</th>
                 <th className="px-5 py-3 font-medium text-right">Response</th>
-                <th className="px-5 py-3 font-medium">Outcome</th>
+                <th className="px-5 py-3 font-medium">Triggered by</th>
                 <th className="px-5 py-3 font-medium">Debrief note</th>
               </tr>
             </thead>
@@ -573,15 +580,12 @@ function dispatchReachedNobody(evt: PhoneTreeEvent) {
 
                       {/* Was one run-on sentence; each role now reads on its own line. */}
                       <td className="px-5 py-4">
-                        {!inc.requestedByName && !trigName(inc) && !inc.notifiedByName ? (
+                        {!inc.requestedByName && !inc.notifiedByName ? (
                           <span className="text-sm text-gray-600">—</span>
                         ) : (
                           <div className="space-y-1">
                             {inc.requestedByName && (
                               <p className="text-xs"><span className="text-gray-600">Reported </span><span className="text-gray-300">{inc.requestedByName}</span></p>
-                            )}
-                            {trigName(inc) && (
-                              <p className="text-xs"><span className="text-gray-600">Triggered </span><span className="text-gray-300">{trigName(inc)}</span></p>
                             )}
                             {inc.notifiedByName && (
                               <p className="text-xs"><span className="text-gray-600">Notified </span><span className="text-gray-300">{inc.notifiedByName}</span></p>
@@ -605,14 +609,33 @@ function dispatchReachedNobody(evt: PhoneTreeEvent) {
                         ) : <span className="text-sm text-gray-600">—</span>}
                       </td>
 
+                      {/* The account that raised the code, from its own token — not typed
+                          by anyone. Outcome stood here and was structurally always empty: no
+                          code path has ever written it, so the column could only ever say
+                          "Not recorded". Who pressed the button is the question a review
+                          actually asks. */}
                       <td className="px-5 py-4">
-                        {inc.outcome ? (
-                          <span className="inline-block text-[11px] px-2 py-1 rounded-full bg-green-600/15 text-green-400">
-                            {inc.outcome}
-                          </span>
+                        {trigName(inc) || inc.initiatedByEmail ? (
+                          <div className="min-w-0">
+                            {trigName(inc) && (
+                              <p className="text-xs text-gray-300 truncate">{trigName(inc)}</p>
+                            )}
+                            {inc.initiatedByEmail && (
+                              <p className="text-[11px] text-gray-500 truncate" title={inc.initiatedByEmail}>
+                                {inc.initiatedByEmail}
+                              </p>
+                            )}
+                          </div>
                         ) : (
-                          <span className="inline-block text-[11px] px-2 py-1 rounded-full bg-gray-800 text-gray-500">
-                            Not recorded
+                          // Never a guess. Incidents raised before the account was captured,
+                          // and those the EHR webhook raises with no operator at all, say so
+                          // plainly: "unknown" and "nobody recorded it" are different
+                          // findings in a review.
+                          <span
+                            className="inline-block text-[11px] px-2 py-1 rounded-full bg-gray-800 text-gray-500"
+                            title="No signed-in account was recorded against this incident."
+                          >
+                            Not captured
                           </span>
                         )}
                       </td>

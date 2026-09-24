@@ -90,14 +90,20 @@ az deployment group create \
 ```
 
 This creates:
-- ✅ Azure SQL Database (General Purpose, 2 vCores, 500 GB, geo-backup)
-- ✅ App Service Plan (PremiumV2) + Web App
-- ✅ Staging deployment slot
-- ✅ Key Vault with SQL connection string secret
-- ✅ Azure Redis Cache (Standard C1)
-- ✅ Blob Storage (GRS) with containers: `import-files`, `audit-archive`, `compliance-reports`
+- ✅ Azure SQL Database (Standard S0, 250 GB, geo-redundant backup storage, 35-day
+  point-in-time restore, 7-year long-term retention)
+- ✅ App Service Plan (P0v3, Linux) + Web App
+- ✅ Staging deployment slot — **note it shares production's database**; see
+  [backup-and-recovery.md](backup-and-recovery.md)
+- ✅ Key Vault with SQL connection string secret (purge protection on, 90-day soft delete)
+- ✅ Blob Storage (GRS, versioning on, 90-day soft delete) with containers: `import-files`,
+  `audit-archive`, `compliance-reports`, `incident-archive`
 - ✅ Application Insights + Log Analytics
-- ✅ Diagnostic settings for SQL, App Service, Key Vault
+- ✅ Delete locks on the SQL server, Key Vault and storage account
+
+Not created, despite earlier revisions of this guide saying so: Redis, diagnostic settings,
+and the `dashboard.bicep` / `autoscale.bicep` / `frontdoor.bicep` templates referenced below —
+those files do not exist in this repository.
 - ✅ RBAC role assignments for managed identity
 
 ### Configure Managed Identity Access
@@ -369,6 +375,12 @@ az deployment group create \
 ---
 
 ## Rollback
+
+**This rolls back code only.** A slot swap does not undo a schema change or a data change, and
+staging shares production's database — so by the time you are reading this, any DDL the new
+build ran has already been applied to production data. For data recovery see
+[backup-and-recovery.md](backup-and-recovery.md); a point-in-time restore creates a *new*
+database and never overwrites the live one.
 
 ```bash
 # Swap staging and production back

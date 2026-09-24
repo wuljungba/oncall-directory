@@ -153,6 +153,21 @@ public class AuditArchiveService : BackgroundService
         var containerName = _config.GetValue("Hipaa:AuditArchive:ContainerName", DefaultContainerName)
             ?? DefaultContainerName;
 
+        // Fails closed. This pass is the only thing in the system that deletes an audit row,
+        // so if the retention it is supposed to honour is configured below the policy floor,
+        // the safe reading is "do not delete anything" rather than "delete on a schedule
+        // nobody has agreed". Startup already refuses to boot on this outside Development.
+        var retentionDays = OnCallApi.Configuration.RetentionPolicy.ConfiguredDays(_config);
+        if (retentionDays < OnCallApi.Configuration.RetentionPolicy.MinimumDays)
+        {
+            _logger.LogError(
+                "Not archiving: {Key} is {Days} days, below the {Floor}-day floor. "
+                + "No audit rows will be moved or deleted while that is true.",
+                OnCallApi.Configuration.RetentionPolicy.ConfigKey, retentionDays,
+                OnCallApi.Configuration.RetentionPolicy.MinimumDays);
+            return;
+        }
+
         var cutoff = ResolveCutoff(DateTime.UtcNow, hotDays);
         var container = CreateContainerClient(storageEndpoint, containerName);
 

@@ -111,7 +111,11 @@ React SPA (port 5173) ──proxy──▶ ASP.NET Core 8 API (port 5000) ──
   claim in a compliance questionnaire or a customer answer.
 - `HipaaAuditMiddleware` logs all PHI access requests.
 - `AuditBackgroundService` flushes audit logs asynchronously.
-- Session timeout, TLS 1.2+, audit retention (default 2190 days / 6 years).
+- Session timeout, TLS 1.2+, record retention **2555 days / 7 years**. That value is
+  enforced, not decorative: `Configuration/RetentionPolicy.cs` reads it, startup fails outside
+  Development if it is below the floor, and the audit archive refuses to delete while it is.
+- Code-call incident records cannot be deleted — there is no endpoint, and deleting a code type
+  that has been used is refused. See `docs/backup-and-recovery.md`.
 
 ### Real-Time Communication
 - SignalR hub at `/hubs/notifications` for live updates.

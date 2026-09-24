@@ -46,7 +46,8 @@ param schedulingTimeZone string = 'America/New_York'
 
 // ── HIPAA ──
 param hipaaSessionTimeoutMinutes int = 15
-param hipaaAuditLogRetentionDays int = 2190
+@description('How long records must be retained, in days. 2555 = seven years; the app refuses to start below this outside Development.')
+param hipaaAuditLogRetentionDays int = 2555
 
 // The API's audience, which token validation checks. Defaults to the app ID URI derived
 // from the SPA client id. Omitting this from the template would delete it on redeploy and
@@ -193,6 +194,36 @@ resource sqlDb 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   }
 }
 
+// Point-in-time restore, stated rather than inherited.
+//
+// This was never declared, so the database ran on the Azure default of 7 days and nothing in
+// the repo said so — a loss noticed on the eighth day was unrecoverable, and nobody would have
+// known that until they tried. 35 is the maximum for this tier and costs only backup storage.
+resource sqlDbShortTermRetention 'Microsoft.Sql/servers/databases/backupShortTermRetentionPolicies@2023-08-01-preview' = {
+  parent: sqlDb
+  name: 'default'
+  properties: {
+    retentionDays: 35
+  }
+}
+
+// Long-term retention: the seven years the retention policy claims.
+//
+// Without this there was NO backup older than the point-in-time window — weekly, monthly and
+// yearly were all PT0S. The audit and incident records are required to be producible for seven
+// years, and a backup set that stops at 35 days cannot do it. Monthly for 84 months gives a
+// restore point per month across the whole period rather than seven annual ones.
+resource sqlDbLongTermRetention 'Microsoft.Sql/servers/databases/backupLongTermRetentionPolicies@2023-08-01-preview' = {
+  parent: sqlDb
+  name: 'default'
+  properties: {
+    weeklyRetention: 'P12W'
+    monthlyRetention: 'P84M'
+    yearlyRetention: 'P7Y'
+    weekOfYear: 1
+  }
+}
+
 // ── Key Vault ──
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: kvName
@@ -204,7 +235,14 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     }
     tenantId: subscription().tenantId
     enableRbacAuthorization: true
-    softDeleteRetentionInDays: 7
+    // 90 rather than the 7-day minimum, and purge protection on. This vault holds the SQL
+    // connection string, the Graph client secret and the JWT signing key: without purge
+    // protection a deleted vault can be permanently purged inside the soft-delete window,
+    // which would make the database unreachable and every issued token unverifiable.
+    //
+    // Purge protection cannot be switched off once enabled. That is the point of it.
+    softDeleteRetentionInDays: 90
+    enablePurgeProtection: true
   }
 }
 
@@ -234,7 +272,12 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01'
   parent: storageAccount
   name: 'default'
   properties: {
-    deleteRetentionPolicy: { enabled: true, days: 7 }
+    // The archive containers below are a second, independent copy of records that must last
+    // seven years, and audit blobs are written with overwrite enabled. Versioning is what
+    // makes an overwrite recoverable; without it a bad write silently replaced the only copy.
+    isVersioningEnabled: true
+    deleteRetentionPolicy: { enabled: true, days: 90 }
+    containerDeleteRetentionPolicy: { enabled: true, days: 90 }
   }
 }
 
@@ -251,6 +294,13 @@ resource auditArchiveContainer 'Microsoft.Storage/storageAccounts/blobServices/c
 resource complianceReportsContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   parent: blobService
   name: 'compliance-reports'
+}
+
+// Code-call history, exported monthly by IncidentArchiveService. A copy: nothing is deleted
+// from SQL, because the console has to keep showing it.
+resource incidentArchiveContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'incident-archive'
 }
 
 // ── App Service Plan + Web App (serves both API and frontend static files) ──

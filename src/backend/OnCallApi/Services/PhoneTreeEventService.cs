@@ -107,15 +107,6 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         return existing;
     }
 
-    public async Task DeleteEventAsync(int eventId)
-    {
-        var evt = await RequireEventAsync(eventId);
-
-        _db.PhoneTreeEvents.Remove(evt);
-        await _db.SaveChangesAsync();
-        _logger.LogInformation("Deleted phone tree event {Id}", eventId);
-    }
-
     public async Task<PhoneTreeEventParticipant> AddParticipantAsync(int eventId, PhoneTreeEventParticipant participant)
     {
         await RequireEventAsync(eventId);
@@ -193,7 +184,9 @@ public class PhoneTreeEventService : IPhoneTreeEventService
 
         evt.Status = "completed";
         evt.EndedAt = DateTime.UtcNow;
-        evt.Outcome = outcome;
+        // Guarded like NotifiedByName below. Unconditional assignment meant resolving an
+        // incident erased any outcome already recorded on it.
+        if (!string.IsNullOrWhiteSpace(outcome)) evt.Outcome = outcome;
         if (!string.IsNullOrWhiteSpace(notifiedByName)) evt.NotifiedByName = notifiedByName.Trim();
         evt.ResponseTimeSeconds = evt.AcknowledgedAt.HasValue
             ? (int)(evt.AcknowledgedAt.Value - evt.StartedAt).TotalSeconds

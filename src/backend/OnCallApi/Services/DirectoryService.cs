@@ -227,9 +227,30 @@ public class DirectoryService : IDirectoryService
         return existing;
     }
 
+    /// <summary>
+    /// Removes a code type.
+    ///
+    /// Refuses once it has been used. PhoneTree → PhoneTreeEvent is a cascade, and each event
+    /// cascades again to its participants, dispatch steps and debrief log — so deleting a tree
+    /// that has been activated silently destroys the record of every code call ever raised
+    /// under it. That record is the account of who was paged during an emergency, it is
+    /// retained for seven years, and no amount of tidying up a code list is worth it.
+    ///
+    /// A code type that is no longer used can be left in place; it costs nothing.
+    /// </summary>
     public async Task DeletePhoneTreeAsync(int id)
     {
         var tree = await RequireTreeAsync(id);
+
+        var incidents = await _db.PhoneTreeEvents.CountAsync(e => e.PhoneTreeId == id);
+        if (incidents > 0)
+        {
+            throw new InvalidOperationException(
+                $"\"{tree.Name}\" has {incidents} code call(s) recorded against it. Deleting it would "
+                + "destroy that history, which is retained for seven years. Leave the code type in "
+                + "place — an unused one costs nothing.");
+        }
+
         _db.PhoneTrees.Remove(tree);
         await _db.SaveChangesAsync();
     }

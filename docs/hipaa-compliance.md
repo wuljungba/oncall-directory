@@ -18,6 +18,22 @@
 | Integrity Controls | **Not implemented.** No checksums exist on schedule data; the only HMAC in the codebase is JWT signing in `LocalJwtService` | ❌ |
 | Person/Entity Auth | **Not configured.** The tenant holds no licensed SKUs (Entra ID Free), where Conditional Access is unavailable, and it has **0 Conditional Access policies**. Any MFA would have to come from security defaults, which could not be read and remains unverified | ❌ |
 
+## Contingency Plan — §164.308(a)(7)
+
+Backups, recovery, retention and the restore runbook: **[backup-and-recovery.md](backup-and-recovery.md)**.
+
+| Requirement | Implementation | Status |
+|---|---|---|
+| Data Backup Plan | Azure SQL: 35-day point-in-time restore, geo-redundant backup storage, and long-term backups kept weekly 12w / monthly 84m / yearly 7y. Audit rows and code-call history additionally exported to blob storage as NDJSON | ✅ |
+| Disaster Recovery Plan | Restore runbook with verified timings in backup-and-recovery.md. **No failover group or geo-replica** — regional recovery is a restore, not a failover | ⚠️ |
+| Emergency Mode Operation | Not documented | ❌ |
+| Testing and Revision | One restore drill performed 2026-09-24; logged in backup-and-recovery.md. Annual re-run required and not yet scheduled | ⚠️ |
+| Applications and Data Criticality Analysis | Not documented | ❌ |
+
+Retention is seven years (`Hipaa:AuditLogRetentionDays` = 2555), and it is enforced: the
+application refuses to start outside Development if configured below that floor, and the audit
+archive refuses to delete anything while it is.
+
 ## Physical Safeguards (Delegated to Azure)
 
 - Azure SOC 1/2/3 Type II certified

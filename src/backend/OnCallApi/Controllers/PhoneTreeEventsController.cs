@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using OnCallApi.Authorization;
 using OnCallApi.Hubs;
 using OnCallApi.Models;
 using OnCallApi.Services;
@@ -124,10 +125,7 @@ public class PhoneTreeEventsController : ControllerBase
     /// Display name of the signed-in user, for attributing a debrief entry. Taken from the
     /// token rather than the request body so an entry cannot be filed under someone else.
     /// </summary>
-    private string? CurrentUserName() =>
-        User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
-        ?? User.FindFirst("name")?.Value
-        ?? User.FindFirst("preferred_username")?.Value;
+    private string? CurrentUserName() => PrincipalClaims.GetDisplayName(User);
 
     /// <summary>Record a dispatch pipeline step.</summary>
     [HttpPost("events/{eventId}/dispatch-step")]
@@ -189,10 +187,16 @@ public class PhoneTreeEventsController : ControllerBase
             Notes = request.Notes,
             RequestedByName = request.RequestedByName,
 
-            // Triggered-by: pin the signed-in account's name; the reporter is free-text
+            // Triggered-by: pin the signed-in account; the reporter is free-text
             // RequestedByName. Employee.Id is captured best-effort (caller may lack a profile).
+            //
+            // Name and email both, and both from the token. This read User.Identity?.Name
+            // alone, which is null on the Entra path — the default name claim is the v2
+            // preferred_username and this API issues v1 tokens — so every code call raised in
+            // production recorded no operator. See PrincipalClaims.GetDisplayName.
             InitiatedById = await _tenantContext.GetCurrentEmployeeIdAsync(User),
-            InitiatedByName = User.Identity?.Name,
+            InitiatedByName = PrincipalClaims.GetDisplayName(User),
+            InitiatedByEmail = PrincipalClaims.GetEmail(User),
         };
 
         var created = await _service.CreateEventAsync(evt);
@@ -238,25 +242,16 @@ public class PhoneTreeEventsController : ControllerBase
         }
     }
 
-    /// <summary>Delete a phone tree event (admin only).</summary>
-    [HttpDelete("events/{eventId}")]
-    [Authorize(Policy = "RequireAdminFull")]
-    public async Task<ActionResult> DeleteEvent(int eventId)
-    {
-        try
-        {
-            // Resolved before the delete, while the row that carries the tenant still exists.
-            var tenantId = await _broadcast.TenantForEventAsync(eventId);
-            await _service.DeleteEventAsync(eventId);
-            await _broadcast.ToTenantAsync(
-                tenantId, "IncidentUpdated", new { eventId, deleted = true }, safetyCritical: true);
-            return NoContent();
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
-    }
+    // There is deliberately no endpoint that deletes an incident.
+    //
+    // One existed, admin-only, and it hard-deleted the row — taking its debrief log, dispatch
+    // steps and participants with it by cascade. That record is the account of who was paged
+    // during an emergency and how long it took them: the single thing a review, a coroner or a
+    // regulator would ask for, and it must be retained for seven years. The console's Delete
+    // button was removed for that reason; the route it called outlived it.
+    //
+    // A code call that was raised in error is still a code call that was raised. If one needs
+    // annotating, that is what the append-only debrief log is for.
 
     /// <summary>Add a participant to an event.</summary>
     [HttpPost("events/{eventId}/participants")]

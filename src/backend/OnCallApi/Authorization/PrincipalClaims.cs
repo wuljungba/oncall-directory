@@ -55,6 +55,30 @@ public static class PrincipalClaims
     }
 
     /// <summary>
+    /// A human-readable name for the principal, for attributing a record to the person who
+    /// created it.
+    ///
+    /// The fallback chain is the point. Two paths captured the acting user with two different
+    /// implementations: a debrief note used a three-claim chain and worked, while starting a
+    /// code call used <c>User.Identity?.Name</c> alone and did not. Microsoft.Identity.Web's
+    /// default name claim is <c>preferred_username</c>, which is a v2 claim, and this API
+    /// issues v1 tokens (see <see cref="GetEmail"/>) — so on the Entra path
+    /// <c>Identity.Name</c> is null and the code call recorded no operator at all. An
+    /// emergency page with nobody's name against it is not a record anyone can review.
+    ///
+    /// Falls through to the email last: an address is a worse label than a display name but a
+    /// far better one than nothing, and it is the claim most likely to survive.
+    /// </summary>
+    public static string? GetDisplayName(ClaimsPrincipal user)
+    {
+        var name = user.FindFirst(ClaimTypes.Name)?.Value
+            ?? user.FindFirst("name")?.Value
+            ?? user.FindFirst("preferred_username")?.Value;
+
+        return string.IsNullOrWhiteSpace(name) ? GetEmail(user) : name;
+    }
+
+    /// <summary>
     /// A UPN only when it is actually an address for this person.
     ///
     /// A B2B guest's UPN is the mangled internal form
