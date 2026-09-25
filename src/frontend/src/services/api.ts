@@ -33,6 +33,7 @@ import type {
   BulkGrantResult,
   OnboardingInvite,
   DirectoryStatus,
+  TenantRestoreReport,
 } from '@/types'
 import { getAuthProvider } from '@/services/auth'
 import type { ConsentCompletion } from '@/utils/adminConsent'
@@ -718,6 +719,35 @@ export const tenantsApi = {
   // meant somebody typed a GUID; this says whether the directory can actually be read.
   getDirectoryStatus: (id: number) =>
     fetchApi<DirectoryStatus>(`/tenants/${id}/directory-status`),
+
+  // Downloads this subscription's own data. Not routed through fetchApi because the response
+  // is a file, not JSON — fetchApi would parse it and throw away the filename the server chose.
+  downloadBackup: async (id: number): Promise<{ blob: Blob; filename: string }> => {
+    const token = await getAuthToken()
+    const res = await fetch(`${API_BASE}/tenants/${id}/backup`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!res.ok) {
+      throw new ApiError(res.status, await readErrorMessage(res, `API error: ${res.status}`))
+    }
+
+    // The server names the file (it knows the subscription name and the date). Fall back only
+    // if the header is missing, so a downloaded archive is never called "download".
+    const disposition = res.headers.get('content-disposition') ?? ''
+    const match = /filename="?([^";]+)"?/i.exec(disposition)
+    return {
+      blob: await res.blob(),
+      filename: match?.[1] ?? `oncall-backup-${id}.json`,
+    }
+  },
+
+  // Merges an archive back in. Additive: it never deletes, and never writes back incident
+  // history — the report says what it did and what it deliberately did not.
+  restoreBackup: (id: number, archive: unknown) =>
+    fetchApi<TenantRestoreReport>(`/tenants/${id}/restore`, {
+      method: 'POST',
+      body: JSON.stringify(archive),
+    }),
   getAdmins: (tenantId: number) =>
     fetchApi<TenantAdmin[]>(`/tenants/${tenantId}/admins`),
   assignAdmin: (tenantId: number, data: Record<string, unknown>) =>

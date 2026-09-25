@@ -21,6 +21,7 @@ import OnCallAuditSection from './admin/OnCallAuditSection'
 import VerificationSection from './admin/VerificationSection'
 import OnboardingInviteModal from './admin/OnboardingInviteModal'
 import DirectoryStatusLine from './admin/DirectoryStatusLine'
+import TenantBackupPanel from './admin/TenantBackupPanel'
 
 type Tab = 'overview' | 'accounts' | 'departments' | 'integrations' | 'timeoff' | 'locations' | 'tenants' | 'permissions' | 'shares' | 'onboarding' | 'audit' | 'verification'
 
@@ -1991,6 +1992,10 @@ function TenantsSection({ setActiveTenantId }: { setActiveTenantId: (id: number 
                 {/* Expanded admin list */}
                 {expandedTenant === tenant.id && (
                   <div className="px-5 pb-4 border-t border-gray-800">
+                    {/* Their own copy of their own data. The database backups cover the
+                        deployment and cannot be restored for one subscription alone. */}
+                    <TenantBackupPanel tenantId={tenant.id} tenantName={tenant.name} />
+
                     <div className="mt-3 space-y-2">
                       <p className="text-xs text-gray-500 mb-2">Assigned Admins</p>
                       {(!admins[tenant.id] || admins[tenant.id].length === 0) ? (

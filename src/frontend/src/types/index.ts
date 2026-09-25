@@ -59,6 +59,28 @@ export interface DirectoryStatus {
   staffCount: number
 }
 
+/**
+ * What a restore actually did. Reported item by item rather than as "done", because a restore
+ * deliberately does less than a backup contains — incident history is never written back.
+ */
+export interface TenantRestoreReport {
+  tenantId: number
+  tenantName: string
+  departmentsCreated: number
+  departmentsSkipped: number
+  employeesCreated: number
+  employeesSkipped: number
+  phoneTreesCreated: number
+  phoneTreesSkipped: number
+  phoneTreeNodesCreated: number
+  phoneTreeNodesSkipped: number
+  /** Present in the archive and deliberately not restored. */
+  incidentsInArchive: number
+  settingsWithheldInArchive: number
+  /** Said out loud, so "restored" is never read as "everything came back". */
+  notRestored: string[]
+}
+
 export interface TenantAdmin {
   id: number
   tenantId: number
