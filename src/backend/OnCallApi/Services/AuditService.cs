@@ -21,29 +21,46 @@ public class AuditService : IAuditService
     /// </summary>
     private long _dropped;
 
-    public AuditService(ILogger<AuditService> logger) => _logger = logger;
+    private readonly Channel<AuditLog> _channel;
 
-    private readonly Channel<AuditLog> _channel = Channel.CreateBounded<AuditLog>(new BoundedChannelOptions(2000)
+    public AuditService(ILogger<AuditService> logger)
     {
-        // DropWrite, not DropOldest. Both lose a record when the queue is full, but this one
-        // loses the newest — the write that is still on the stack and can be reported with its
-        // own context — rather than quietly evicting an older record that was already accepted.
-        FullMode = BoundedChannelFullMode.DropWrite
-    });
+        _logger = logger;
+
+        // The itemDropped callback is the whole point, and the reason the channel is built here
+        // rather than in a field initializer.
+        //
+        // With DropWrite or DropOldest, Writer.TryWrite returns TRUE even when the item was
+        // discarded — the channel considers "dropped it as configured" a successful write. So
+        // checking its return value detects nothing, and a first attempt at this logged nothing
+        // at all while believing it logged everything. This overload hands back the item that
+        // was actually dropped, which is the only reliable signal.
+        _channel = Channel.CreateBounded<AuditLog>(
+            new BoundedChannelOptions(2000)
+            {
+                // DropWrite, not DropOldest: lose the newest write, which is still on the stack
+                // and can be reported with its own context, rather than silently evicting a
+                // record that was already accepted.
+                FullMode = BoundedChannelFullMode.DropWrite,
+            },
+            OnDropped);
+    }
+
+    private void OnDropped(AuditLog dropped)
+    {
+        var total = Interlocked.Increment(ref _dropped);
+        _logger.LogError(
+            "Audit queue full — dropped an access record for {Action} on {ResourceType} "
+            + "({Dropped} dropped this process). The audit trail is incomplete from here.",
+            dropped.Action, dropped.ResourceType, total);
+    }
 
     public ChannelReader<AuditLog> Reader => _channel.Reader;
 
-    public void Enqueue(AuditLog log)
-    {
-        if (_channel.Writer.TryWrite(log)) return;
-
-        // Never throws: failing to record an access must not also fail the request that made
-        // it. But it is an Error, because a dropped row is a HIPAA record that no longer
-        // exists and no later process can reconstruct it.
-        var total = Interlocked.Increment(ref _dropped);
-        _logger.LogError(
-            "Audit queue full — dropped an access record for {Action} on {ResourceType} ({Dropped} dropped this process). "
-            + "The audit trail is incomplete from here.",
-            log.Action, log.ResourceType, total);
-    }
+    /// <summary>
+    /// Never throws. Failing to record an access must not also fail the request that made it —
+    /// a full queue is a degraded audit trail, not an outage. Anything discarded is reported
+    /// through <see cref="OnDropped"/>.
+    /// </summary>
+    public void Enqueue(AuditLog log) => _channel.Writer.TryWrite(log);
 }

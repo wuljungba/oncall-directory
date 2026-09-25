@@ -120,9 +120,26 @@ public class IncidentArchiveService : BackgroundService
         }
     }
 
-    /// <summary>The blob holding one calendar month of incidents.</summary>
-    internal static string BuildBlobName(int year, int month) =>
-        string.Create(CultureInfo.InvariantCulture, $"{year:D4}/{month:D2}/incidents-{year:D4}-{month:D2}.jsonl");
+    /// <summary>
+    /// The blob holding one subscription's incidents for one calendar month.
+    ///
+    /// Partitioned by tenant FIRST, and that ordering is the point. A single month file holding
+    /// every customer's incidents would be unusable for the thing this archive exists to do:
+    /// hand a customer their own history. Anyone doing that would have shipped every other
+    /// hospital's code calls — their locations, their operators, their debrief notes — along
+    /// with it. Tenant-per-prefix means one customer's archive can be copied, granted, or
+    /// deleted without touching anyone else's.
+    ///
+    /// Events that resolve to no subscription (a code tree with no department, or a department
+    /// with no tenant) go under "unassigned" rather than being dropped or silently folded into
+    /// somebody else's prefix.
+    /// </summary>
+    internal static string BuildBlobName(int? tenantId, int year, int month) =>
+        string.Create(CultureInfo.InvariantCulture,
+            $"{TenantPrefix(tenantId)}/{year:D4}/{month:D2}/incidents-{year:D4}-{month:D2}.jsonl");
+
+    internal static string TenantPrefix(int? tenantId) =>
+        tenantId is null ? "unassigned" : string.Create(CultureInfo.InvariantCulture, $"tenant-{tenantId}");
 
     /// <summary>
     /// Whether a month is still open to change, and so must be rewritten on every pass.
@@ -152,31 +169,39 @@ public class IncidentArchiveService : BackgroundService
         var containerName = _config.GetValue("Hipaa:IncidentArchive:ContainerName", DefaultContainerName)
             ?? DefaultContainerName;
 
-        var container = CreateContainerClient(storageEndpoint, containerName);
-        await container.CreateIfNotExistsAsync(cancellationToken: ct);
+        await PrepareStoreAsync(storageEndpoint, containerName, ct);
 
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        // Which months have anything in them at all. Cheap, and it means an empty deployment
-        // does no work rather than probing blob storage for months that never existed.
-        var months = await db.PhoneTreeEvents
-            .Select(e => new { e.StartedAt.Year, e.StartedAt.Month })
+        // Which subscription/month pairs have anything in them at all. Cheap, and it means an
+        // empty deployment does no work rather than probing blob storage for months that never
+        // existed. An incident's tenant is reached through its code tree's department — the
+        // event itself carries no tenant id.
+        var partitions = await db.PhoneTreeEvents
+            .Select(e => new
+            {
+                TenantId = e.PhoneTree != null && e.PhoneTree.Department != null
+                    ? e.PhoneTree.Department.TenantId
+                    : null,
+                e.StartedAt.Year,
+                e.StartedAt.Month,
+            })
             .Distinct()
             .ToListAsync(ct);
 
         var now = DateTime.UtcNow;
         var written = 0;
 
-        foreach (var m in months.OrderBy(x => x.Year).ThenBy(x => x.Month))
+        foreach (var m in partitions.OrderBy(x => x.TenantId).ThenBy(x => x.Year).ThenBy(x => x.Month))
         {
             if (ct.IsCancellationRequested) return;
 
-            var blob = container.GetBlobClient(BuildBlobName(m.Year, m.Month));
+            var blobName = BuildBlobName(m.TenantId, m.Year, m.Month);
 
             // A closed month that is already written is finished. This is what keeps the cost
             // of a pass flat as history accumulates.
-            if (!IsReconsolidating(now, m.Year, m.Month) && await blob.ExistsAsync(ct))
+            if (!IsReconsolidating(now, m.Year, m.Month) && await ArchiveExistsAsync(blobName, ct))
             {
                 continue;
             }
@@ -184,12 +209,17 @@ public class IncidentArchiveService : BackgroundService
             var from = new DateTime(m.Year, m.Month, 1, 0, 0, 0, DateTimeKind.Utc);
             var to = from.AddMonths(1);
 
+            // Scoped to this subscription as well as this month. Without the tenant clause every
+            // customer's incidents would land in whichever partition was being written.
             var incidents = await db.PhoneTreeEvents
                 .Include(e => e.PhoneTree)
                 .Include(e => e.Participants)
                 .Include(e => e.DispatchSteps)
                 .Include(e => e.DebriefLog)
                 .Where(e => e.StartedAt >= from && e.StartedAt < to)
+                .Where(e => (e.PhoneTree != null && e.PhoneTree.Department != null
+                                ? e.PhoneTree.Department.TenantId
+                                : null) == m.TenantId)
                 .OrderBy(e => e.Id)
                 .AsNoTracking()
                 .ToListAsync(ct);
@@ -234,13 +264,12 @@ public class IncidentArchiveService : BackgroundService
             // overwrite: true with a deterministic name, exactly as the audit archive does — a
             // pass interrupted halfway rewrites the same blob next time rather than leaving a
             // duplicate or a gap.
-            await blob.UploadAsync(
-                new BinaryData(Encoding.UTF8.GetBytes(payload)), overwrite: true, cancellationToken: ct);
+            await WriteArchiveAsync(blobName, payload, ct);
 
             written++;
             _logger.LogInformation(
-                "Archived {Count} incident(s) for {Year:D4}-{Month:D2} to {BlobName}",
-                incidents.Count, m.Year, m.Month, blob.Name);
+                "Archived {Count} incident(s) for tenant {TenantId} {Year:D4}-{Month:D2} to {BlobName}",
+                incidents.Count, m.TenantId, m.Year, m.Month, blobName);
         }
 
         if (written > 0)
@@ -251,12 +280,38 @@ public class IncidentArchiveService : BackgroundService
         }
     }
 
-    private static BlobContainerClient CreateContainerClient(string storageEndpoint, string containerName)
+    // ── Storage, behind three seams ──────────────────────────────────────────────────────
+    //
+    // Not indirection for its own sake. The one property this class exists to guarantee is
+    // that it DELETES NOTHING from SQL, and that was unverifiable while every path ran through
+    // a real Azure client: a test could not reach ExportAsync at all. A fake store lets the
+    // invariant be asserted directly — seed incidents, run a pass, count the rows.
+
+    private BlobContainerClient? _container;
+
+    protected virtual async Task PrepareStoreAsync(
+        string storageEndpoint, string containerName, CancellationToken ct)
     {
         var service = storageEndpoint.StartsWith("http", StringComparison.OrdinalIgnoreCase)
             ? new BlobServiceClient(new Uri(storageEndpoint), new DefaultAzureCredential())
             : new BlobServiceClient(storageEndpoint);
 
-        return service.GetBlobContainerClient(containerName);
+        _container = service.GetBlobContainerClient(containerName);
+        await _container.CreateIfNotExistsAsync(cancellationToken: ct);
     }
+
+    protected virtual async Task<bool> ArchiveExistsAsync(string blobName, CancellationToken ct) =>
+        _container != null && await _container.GetBlobClient(blobName).ExistsAsync(ct);
+
+    protected virtual async Task WriteArchiveAsync(string blobName, string payload, CancellationToken ct)
+    {
+        if (_container == null) return;
+
+        await _container.GetBlobClient(blobName).UploadAsync(
+            new BinaryData(Encoding.UTF8.GetBytes(payload)), overwrite: true, cancellationToken: ct);
+    }
+
+    /// <summary>Test seam: runs one pass against whatever store the subclass provides.</summary>
+    internal Task RunOnePassAsync(string storageEndpoint, CancellationToken ct = default) =>
+        ExportAsync(storageEndpoint, ct);
 }

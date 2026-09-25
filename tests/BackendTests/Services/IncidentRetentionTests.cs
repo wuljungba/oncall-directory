@@ -41,6 +41,9 @@ public class IncidentRetentionTests
         return db;
     }
 
+    private static PhoneTreeEventService NewEventService(AppDbContext db) =>
+        new(db, TestTenantScopes.Unrestricted, NullLogger<PhoneTreeEventService>.Instance);
+
     private static ScheduleService NewScheduleService(AppDbContext db) =>
         new(db, NullLogger<ScheduleService>.Instance, TestTenantScopes.Unrestricted);
 
@@ -159,6 +162,63 @@ public class IncidentRetentionTests
         await NewScheduleService(db).DeleteScheduleAsync(schedule.Id);
 
         db.Schedules.Any(s => s.Id == schedule.Id).Should().BeFalse();
+    }
+
+    // ── Who responded, on a closed incident, is part of the record ──────────────────────
+
+    /// <summary>
+    /// The last delete still reaching retained incident data. A participant row carries who was
+    /// paged and when they acknowledged; removing one from a resolved code call edits the answer
+    /// to "who responded, and how long did they take".
+    /// </summary>
+    [Fact]
+    public async Task AParticipantCannotBeRemovedFromAResolvedIncident()
+    {
+        using var db = CreateDb();
+        var tree = SeedTree(db);
+        var evt = new PhoneTreeEvent
+        {
+            PhoneTreeId = tree.Id, StartedAt = DateTime.UtcNow.AddDays(-9),
+            EndedAt = DateTime.UtcNow.AddDays(-9).AddMinutes(6), Status = "completed",
+        };
+        db.PhoneTreeEvents.Add(evt);
+        db.SaveChanges();
+
+        var participant = new PhoneTreeEventParticipant
+        {
+            PhoneTreeEventId = evt.Id, Role = "responder", AcknowledgedAt = DateTime.UtcNow.AddDays(-9),
+        };
+        db.PhoneTreeEventParticipants.Add(participant);
+        db.SaveChanges();
+
+        var service = NewEventService(db);
+
+        var act = () => service.RemoveParticipantAsync(participant.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*retained record*");
+        db.PhoneTreeEventParticipants.Count().Should().Be(1);
+    }
+
+    /// <summary>While the code is still running, correcting the roster is ordinary work.</summary>
+    [Fact]
+    public async Task AParticipantCanStillBeRemovedWhileTheIncidentIsActive()
+    {
+        using var db = CreateDb();
+        var tree = SeedTree(db);
+        var evt = new PhoneTreeEvent
+        {
+            PhoneTreeId = tree.Id, StartedAt = DateTime.UtcNow.AddMinutes(-4), Status = "active",
+        };
+        db.PhoneTreeEvents.Add(evt);
+        db.SaveChanges();
+
+        var participant = new PhoneTreeEventParticipant { PhoneTreeEventId = evt.Id, Role = "responder" };
+        db.PhoneTreeEventParticipants.Add(participant);
+        db.SaveChanges();
+
+        await NewEventService(db).RemoveParticipantAsync(participant.Id);
+
+        db.PhoneTreeEventParticipants.Should().BeEmpty();
     }
 
     // ── Retention that is actually enforced ──────────────────────────────────────────────

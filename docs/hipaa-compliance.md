@@ -25,14 +25,19 @@ Backups, recovery, retention and the restore runbook: **[backup-and-recovery.md]
 | Requirement | Implementation | Status |
 |---|---|---|
 | Data Backup Plan | Azure SQL: 35-day point-in-time restore, geo-redundant backup storage, and long-term backups kept weekly 12w / monthly 84m / yearly 7y. Audit rows and code-call history additionally exported to blob storage as NDJSON | ✅ |
-| Disaster Recovery Plan | Restore runbook with verified timings in backup-and-recovery.md. **No failover group or geo-replica** — regional recovery is a restore, not a failover | ⚠️ |
+| Disaster Recovery Plan | Runbook exists in backup-and-recovery.md, but **no restore has ever succeeded** on this server — three attempts on 2026-09-24 produced nothing. No failover group or geo-replica either | ❌ |
 | Emergency Mode Operation | Not documented | ❌ |
-| Testing and Revision | One restore drill performed 2026-09-24; logged in backup-and-recovery.md. Annual re-run required and not yet scheduled | ⚠️ |
+| Testing and Revision | A drill was **attempted** 2026-09-24 and **failed** — all three restore methods produced no database, silently. Logged in backup-and-recovery.md. This row must not read ✅ until a restore has actually completed | ❌ |
 | Applications and Data Criticality Analysis | Not documented | ❌ |
 
 Retention is seven years (`Hipaa:AuditLogRetentionDays` = 2555), and it is enforced: the
 application refuses to start outside Development if configured below that floor, and the audit
 archive refuses to delete anything while it is.
+
+> **Do not represent §164.308(a)(7) as satisfied.** Backups are configured and verified as
+> configured; recovery from them is unproven. An earlier revision of this table said a drill had
+> been performed, which was true only in the sense that one was attempted — it failed. Retention
+> policy without a working restore is a filing system, not a contingency plan.
 
 ## Physical Safeguards (Delegated to Azure)
 

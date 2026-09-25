@@ -623,6 +623,10 @@ builder.Services.AddSingleton<IdentityDirectoryService>();
 builder.Services.AddSingleton<IIdentityDirectoryService>(sp => sp.GetRequiredService<IdentityDirectoryService>());
 builder.Services.AddHostedService<IdentityDirectoryBackgroundService>();
 builder.Services.AddScoped<IAccessRequestService, AccessRequestService>();
+// Lets one subscription take its own data out and put it back. The database backups cover the
+// deployment, not a single customer: every tenant shares one database, so a point-in-time
+// restore would roll all of them back together.
+builder.Services.AddScoped<ITenantBackupService, TenantBackupService>();
 builder.Services.AddScoped<IAdDirectorySyncService, AdDirectorySyncService>();
 
 // ── Timer-driven background work: the live slot only ──

@@ -118,6 +118,19 @@ public class PhoneTreeEventService : IPhoneTreeEventService
         return participant;
     }
 
+    /// <summary>
+    /// Takes somebody off an incident that is still running.
+    ///
+    /// Refuses once the incident is resolved. A participant row carries who was paged and when
+    /// they acknowledged — it is part of the same seven-year record as the incident itself, and
+    /// removing one from a closed code call edits the answer to "who responded, and how long did
+    /// they take". While the code is still active, correcting the roster is ordinary operational
+    /// work; afterwards it is rewriting history, and the debrief log is the way to add what
+    /// actually happened.
+    ///
+    /// This was the last delete still reaching retained incident data after the incident-delete
+    /// endpoint was removed and the phone-tree and schedule cascades were guarded.
+    /// </summary>
     public async Task RemoveParticipantAsync(int participantId)
     {
         var participant = await _db.PhoneTreeEventParticipants.FindAsync(participantId)
@@ -125,7 +138,15 @@ public class PhoneTreeEventService : IPhoneTreeEventService
 
         // Resolve the parent event through the scoped query, so a participant id cannot be
         // used to reach into another tenant's incident.
-        await RequireEventAsync(participant.PhoneTreeEventId);
+        var evt = await RequireEventAsync(participant.PhoneTreeEventId);
+
+        if (evt.Status == "completed" || evt.EndedAt != null)
+        {
+            throw new InvalidOperationException(
+                $"Incident #{evt.Id} is resolved. Who was paged and when they acknowledged is part "
+                + "of the retained record and cannot be edited afterwards — add a debrief note "
+                + "instead.");
+        }
 
         _db.PhoneTreeEventParticipants.Remove(participant);
         await _db.SaveChangesAsync();

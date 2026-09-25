@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -351,6 +353,130 @@ public class TenantsController : ControllerBase
             lastDeactivationsRefused = lastRun?.DeactivationsRefused,
             staffCount,
         });
+    }
+
+    /// <summary>
+    /// Downloads everything this subscription owns, as a JSON archive.
+    ///
+    /// The nightly database backups protect the deployment, not a customer: every tenant lives
+    /// in one database, so a point-in-time restore rolls all of them back together and can
+    /// never be the answer to "we deleted our directory by mistake". This is the per-customer
+    /// answer, and for a subscription whose staff were uploaded from a spreadsheet rather than
+    /// synced from Entra it is the only one — nothing upstream holds a second copy.
+    ///
+    /// Scoped like everything else here: a subscription can export itself and nothing else.
+    /// Sensitive settings are withheld, since an archive gets mailed around. The export is
+    /// audited in band, because a whole directory leaving in one file is exactly the event an
+    /// audit trail exists to record.
+    /// </summary>
+    [HttpGet("{id}/backup")]
+    public async Task<ActionResult> ExportBackup(
+        int id, [FromServices] ITenantBackupService backups, CancellationToken ct)
+    {
+        var tenant = await _db.Tenants.FindAsync([id], ct);
+        if (tenant == null) return NotFound();
+
+        // NotFound rather than Forbid, as everywhere else here.
+        if (!_tenants.IsSuperAdmin(User))
+        {
+            var allowed = await _tenants.GetAuthorizedTenantIdsAsync(User);
+            if (!allowed.Contains(id)) return NotFound();
+        }
+
+        var backup = await backups.ExportAsync(id, ct);
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            UserId = Guid.Empty,
+            PrincipalId = PrincipalClaims.GetObjectId(User) ?? "",
+            UserName = PrincipalClaims.GetDisplayName(User) ?? "unknown",
+            Action = "Exported",
+            ResourceType = "TenantBackup",
+            ResourceId = id.ToString(),
+            TenantId = id,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            Details = $"Employees={backup.Employees.Count};Departments={backup.Departments.Count};"
+                + $"Shifts={backup.Shifts.Count};Incidents={backup.Incidents.Count}",
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+
+        var json = JsonSerializer.Serialize(backup, TenantBackupService.JsonOptions);
+        var stamp = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var safeName = string.Join("-", tenant.Name.Split(Path.GetInvalidFileNameChars(),
+            StringSplitOptions.RemoveEmptyEntries));
+
+        return File(System.Text.Encoding.UTF8.GetBytes(json), "application/json",
+            $"oncall-backup-{safeName}-{stamp}.json");
+    }
+
+    /// <summary>
+    /// Merges an archive back into this subscription.
+    ///
+    /// Additive only: anything already present is left alone and counted as skipped, so running
+    /// it twice is safe and it can never destroy what survived. It does NOT write back code-call
+    /// history — see <see cref="TenantBackupService.RestoreAsync"/> for why an audit trail must
+    /// not be something an uploaded file can author.
+    /// </summary>
+    [HttpPost("{id}/restore")]
+    public async Task<ActionResult> RestoreBackup(
+        int id,
+        [FromBody] TenantBackup backup,
+        [FromServices] ITenantBackupService backups,
+        CancellationToken ct)
+    {
+        if (backup == null) return BadRequest(new { error = "No archive was supplied." });
+
+        var tenant = await _db.Tenants.FindAsync([id], ct);
+        if (tenant == null) return NotFound();
+
+        if (!_tenants.IsSuperAdmin(User))
+        {
+            var allowed = await _tenants.GetAuthorizedTenantIdsAsync(User);
+            if (!allowed.Contains(id)) return NotFound();
+        }
+
+        TenantRestoreReport report;
+        try
+        {
+            report = await backups.RestoreAsync(id, backup, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+
+        // Said out loud in the response, not just the docs: an operator who reads "restored"
+        // and assumes their incident history came back has been misled by us, not by the file.
+        report.NotRestored.Add(
+            $"{report.IncidentsInArchive} code-call incident(s) are in this archive and were not "
+            + "written back. Incident history cannot be restored from a file — recovering it is a "
+            + "database restore performed by an operator.");
+
+        if (report.SettingsWithheldInArchive > 0)
+        {
+            report.NotRestored.Add(
+                $"{report.SettingsWithheldInArchive} sensitive setting(s) were withheld when this "
+                + "archive was exported and must be re-entered by hand.");
+        }
+
+        _db.AuditLogs.Add(new AuditLog
+        {
+            UserId = Guid.Empty,
+            PrincipalId = PrincipalClaims.GetObjectId(User) ?? "",
+            UserName = PrincipalClaims.GetDisplayName(User) ?? "unknown",
+            Action = "Restored",
+            ResourceType = "TenantBackup",
+            ResourceId = id.ToString(),
+            TenantId = id,
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            Details = $"EmployeesCreated={report.EmployeesCreated};DepartmentsCreated={report.DepartmentsCreated};"
+                + $"PhoneTreesCreated={report.PhoneTreesCreated};ArchiveFrom={backup.ExportedAt:o}",
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(report);
     }
 
     private static string InviteConsentUrl(string clientId, string redirectUri, Guid state) =>
