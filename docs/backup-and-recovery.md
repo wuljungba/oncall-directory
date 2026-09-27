@@ -10,9 +10,13 @@ has been corrected.
 
 ## What is in place
 
-> **Restore is unproven.** The policies below are verified as *configured*, but no restore has
-> ever completed on this server — three attempts on 2026-09-24 produced nothing, silently. See
-> [Runbook](#runbook). Configuration is not recovery.
+> **An external copy now exists.** A complete client-side `.bacpac` was taken on 2026-09-27,
+> encrypted, and verified — see [Drill log](#drill-log). It lives outside the Azure
+> subscription, which matters because that subscription has been in a billing hold twice.
+>
+> **Azure's own restore is still unproven.** The policies below are verified as *configured*,
+> but no Azure PITR restore has ever completed here — three attempts on 2026-09-24 produced
+> nothing, silently. The bacpac route deliberately bypasses that API.
 
 
 | Control | Setting | What it buys |
@@ -146,6 +150,48 @@ az sql db ltr-backup restore --dest-database sqldb-oncall-recovered \
   --backup-id <id from the list above>
 ```
 
+### Take a complete copy out of Azure (the one that works)
+
+Client-side, so it does not touch the Azure export/restore API that has repeatedly failed here.
+Takes under two minutes for this dataset.
+
+```bash
+dotnet tool install -g microsoft.sqlpackage --version 162.5.57   # 170.x needs .NET 10.0.11
+
+# Open the SQL firewall for this machine. NOTE: the CanNotDelete lock on the server means you
+# cannot DELETE this rule afterwards — narrow it to 127.0.0.1 instead, which grants nothing.
+MYIP=$(curl -s https://api.ipify.org)
+az sql server firewall-rule create -g rg-oncall-prod -s sql-oncall-prod   -n backup-operator-temp --start-ip-address $MYIP --end-ip-address $MYIP
+
+# Credentials into variables only — never echoed, never written to disk.
+# (run from PowerShell: Git Bash mangles /a:Export into a path)
+#   $cs = az keyvault secret show --vault-name kv-prod-naxpflhimpaii --name SqlConnectionString --query value -o tsv
+#   $su = [regex]::Match($cs,'(?<=User ID=)[^;]*').Value
+#   $sp = [regex]::Match($cs,'(?<=Password=)[^;]*').Value
+#   sqlpackage /a:Export /ssn:sql-oncall-prod.database.windows.net /sdn:sqldb-oncall-prod #     /su:$su /sp:$sp /tf:"oncall-prod-$(Get-Date -f yyyy-MM-dd).bacpac"
+
+# Close the hole again
+az sql server firewall-rule update -g rg-oncall-prod -s sql-oncall-prod   -n backup-operator-temp --start-ip-address 127.0.0.1 --end-ip-address 127.0.0.1
+
+# Encrypt before it goes anywhere. The bacpac is plaintext PHI.
+gpg --batch --symmetric --cipher-algo AES256 --passphrase-file KEY   --output oncall-prod-DATE.bacpac.gpg oncall-prod-DATE.bacpac
+
+# ALWAYS verify the round trip before deleting the plaintext.
+gpg --batch --decrypt --passphrase-file KEY --output check.bacpac oncall-prod-DATE.bacpac.gpg
+cmp oncall-prod-DATE.bacpac check.bacpac && rm oncall-prod-DATE.bacpac check.bacpac
+```
+
+**Restoring it** needs SQL Server — `sqlpackage /a:Import /tsn:<host> /tdn:<newdb> /sf:<file>`,
+against a local instance, a container, or a fresh Azure SQL database. None is installed on the
+operator machine as of 2026-09-27, so the import half remains untested.
+
+**What a bacpac does and does not cover.** It is the complete database, so it is strictly more
+complete than the per-tenant JSON export. It does **not** include the blob archives — and once
+audit rows start aging past `Hipaa:AuditArchive:HotDays` (90), the rows the archive evicts from
+SQL will exist only in `audit-archive`. The database was created 2026-08-30, so as of
+2026-09-27 nothing has aged out yet and the bacpac is genuinely complete. **That stops being
+true around 2026-11-28**, after which a bacpac alone is no longer a full backup.
+
 ### Read the archives without a database
 
 Both containers hold NDJSON — one JSON object per line, readable with `jq` or any text tool,
@@ -186,11 +232,15 @@ A backup nobody has restored is a hypothesis. Record every drill here.
 |---|---|---|---|
 | 2026-09-24 | PITR to a new DB via `az sql db restore` | **Failed to submit** | CLI accepted the command, issued no write, blocked indefinitely. Twice, including `--no-wait`. See the warning above |
 | 2026-09-24 | PITR to a new DB via ARM REST | **No database produced** | Returned `CreateRestoreRequest`, but nothing was created and no write appears in the activity log, 40+ min later |
+| 2026-09-27 | **Client-side bacpac export** via `sqlpackage /a:Export` | **Succeeded** | 1m51s. 107 KB, 24 tables with data including the full `AuditLogs`. Encrypted (AES256), decryption verified byte-for-byte, plaintext deleted. **Does not use the Azure export API that keeps failing** |
 
 What the drill established, and what it did not:
 
-- **Established:** the documented restore path does not work, by any of three routes, and
-  fails *silently* — no error, no database. Had this been attempted for the first time during
+- **Established 2026-09-27:** data CAN be got out of the subscription, completely, in under
+  two minutes, by a client-side `sqlpackage` export that never touches the Azure export API.
+  That is now the primary way to obtain a copy, and the first thing to reach for.
+- **Established:** the documented *Azure* restore path does not work, by any of three routes,
+  and fails *silently* — no error, no database. Had this been attempted for the first time during
   an incident, the failure would have been discovered at the worst possible moment. That alone
   justified running the drill.
 - **Not established:** that any backup here can be restored at all. Next step is a restore
