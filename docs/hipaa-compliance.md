@@ -55,19 +55,35 @@ archive refuses to delete anything while it is.
 
 ## PHI Data Inventory
 
+> **Nothing in this system is column-encrypted.** Five rows of this table used to say
+> "Column-encrypted" for the most sensitive fields here — name, phone, email, schedule
+> assignments and swap requests. That was never implemented and directly contradicted the
+> technical-safeguards table above. Corrected 2026-09-27. At-rest protection everywhere is
+> Azure SQL **Transparent Data Encryption**, which encrypts database *files* — anything
+> holding a database connection reads every field below in plaintext.
+
 | Data Element | PHI? | Stored | Encrypted | Retention |
 |-------------|------|--------|-----------|-----------|
-| Employee Name | Yes | Local DB + AD Sync | Column-encrypted | Duration of employment + 6yr |
-| Department | No | Local DB | N/A | Indefinite |
-| Role/Title | No | Local DB | N/A | Indefinite |
-| Phone Number | Yes | Local DB + AD | Column-encrypted | Duration of employment + 6yr |
-| Email | Yes | Local DB + AD | Column-encrypted | Duration of employment + 6yr |
-| Office Location | No | Local DB | N/A | Indefinite |
-| Schedule (who is on call) | No | Local DB | N/A | Indefinite (aggregate) |
-| Schedule (assignments) | Yes | Local DB | Column-encrypted | 6 years |
-| Swap Requests | Yes | Local DB | Column-encrypted | 6 years |
-| Time-Off Records | No | Local DB | N/A | 3 years |
-| Audit Logs | Yes | Azure Monitor | At-rest encrypted | 6 years |
+| Employee Name | Yes | Local DB + AD Sync | TDE only (file-level) | Duration of employment + 7yr |
+| Department | No | Local DB | TDE only | Indefinite |
+| Role/Title | No | Local DB | TDE only | Indefinite |
+| Phone Number | Yes | Local DB + AD | TDE only (file-level) | Duration of employment + 7yr |
+| Email | Yes | Local DB + AD | TDE only (file-level) | Duration of employment + 7yr |
+| Office Location | No | Local DB | TDE only | Indefinite |
+| Schedule (who is on call) | No | Local DB | TDE only | Indefinite (aggregate) |
+| Schedule (assignments) | Yes | Local DB | TDE only (file-level) | 7 years |
+| Swap Requests | Yes | Local DB | TDE only (file-level) | 7 years |
+| Time-Off Records | No | Local DB | TDE only | 3 years |
+| Audit Logs | Yes | **Azure SQL `AuditLogs` table**, archived to blob storage after 90 days | TDE / Azure Storage SSE | 7 years (`Hipaa:AuditLogRetentionDays` = 2555, enforced at startup) |
+| Code-call incidents | Yes | Local DB + `incident-archive` blob | TDE / Azure Storage SSE | 7 years; cannot be deleted through the app |
+| Debrief notes | Yes — free-text clinical narrative | Local DB + `incident-archive` blob | TDE / Azure Storage SSE | 7 years, append-only |
+
+Two corrections to the "Stored" column beyond encryption: audit logs live in the SQL
+`AuditLogs` table and then in blob storage, **not** in Azure Monitor as this table previously
+claimed — Azure Monitor here retains 30 days, which would not satisfy any of these rows. And
+any exported copy of this data (a per-tenant backup, a bacpac, a blob archive) carries every
+field above in plaintext, so it must be encrypted before it leaves Azure — see
+[backup-and-recovery.md](backup-and-recovery.md).
 
 ## BAA Responsibilities
 
