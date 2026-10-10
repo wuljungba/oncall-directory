@@ -265,16 +265,19 @@ function AdminOverview({ onSelectTab }: { onSelectTab: (tab: Tab) => void }) {
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
           <div className="p-4 bg-gray-800/50 rounded-lg">
-            <h3 className="font-medium text-amber-400 mb-1">HIPAA Compliance</h3>
-            <p className="text-gray-400">All PHI fields column-encrypted. Access audited via immutable logs. Sessions auto-expire.</p>
+            {/* Keep these claims true: no column-level encryption exists (TDE only), and audit
+                rows are archived to blob storage then removed from SQL, so they are not immutable.
+                See CLAUDE.md "HIPAA Compliance" and docs/hipaa-compliance.md. */}
+            <h3 className="font-medium text-amber-400 mb-1">Audit &amp; Sessions</h3>
+            <p className="text-gray-400">Access to records is audit-logged, and audit history is kept for 7 years. Idle sessions sign out automatically.</p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
-            <h3 className="font-medium text-blue-400 mb-1">Role-Based Access</h3>
-            <p className="text-gray-400">Three tiers: Viewer, Scheduler, Admin. Roles assigned via Azure AD app roles.</p>
+            <h3 className="font-medium text-blue-400 mb-1">Permission-Based Access</h3>
+            <p className="text-gray-400">Schedule, directory and code-call permissions are granted per person, per subscription. Admin rights come only from a tenant-admin assignment.</p>
           </div>
           <div className="p-4 bg-gray-800/50 rounded-lg">
-            <h3 className="font-medium text-green-400 mb-1">Data Encryption</h3>
-            <p className="text-gray-400">All traffic TLS-encrypted. Authentication via Microsoft Entra ID JWT bearer tokens.</p>
+            <h3 className="font-medium text-green-400 mb-1">Encryption</h3>
+            <p className="text-gray-400">Traffic is encrypted in transit (TLS 1.2+). The database is encrypted at rest by Azure SQL Transparent Data Encryption.</p>
           </div>
         </div>
       </div>

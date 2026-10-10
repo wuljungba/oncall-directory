@@ -223,6 +223,10 @@ export default function CommandCenterPage() {
       })
       addLogEntry('dispatch', createdLine(evt), `IncidentCreated-${evt.id}`)
       setShowActivateModal(false)
+      // Reload rather than relying on the IncidentCreated SignalR broadcast, as handleResolve
+      // does: if the hub is not connected the operator who raised the code never sees it in
+      // the Active column, and cannot tell whether it was raised at all.
+      await loadData()
     } catch (err) {
       addLogEntry('info', `Failed to create incident: ${err}`)
     }

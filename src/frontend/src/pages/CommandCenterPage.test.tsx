@@ -1,19 +1,23 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { PhoneTreeEvent } from '@/types'
 
 const getResolved = vi.fn()
+const getActive = vi.fn(() => Promise.resolve([] as PhoneTreeEvent[]))
+const getTrees = vi.fn(() => Promise.resolve([] as unknown[]))
+const createEvent = vi.fn()
 
 vi.mock('@/services/api', () => ({
   commandCenterApi: {
-    getActive: () => Promise.resolve([]),
+    getActive: () => getActive(),
     getResolved: () => getResolved(),
     acknowledgeEvent: vi.fn(),
     resolveEvent: vi.fn(),
     addDispatchStep: vi.fn(),
     addDebriefNote: vi.fn(),
   },
-  phoneTreesApi: { getAll: () => Promise.resolve([]), create: vi.fn(), createEvent: vi.fn() },
+  phoneTreesApi: { getAll: () => getTrees(), create: vi.fn(), createEvent: (...a: unknown[]) => createEvent(...a) },
   codeCallLocationsApi: { getAll: () => Promise.resolve([]) },
   departmentsApi: { getAll: () => Promise.resolve([]) },
 }))
@@ -125,5 +129,37 @@ describe('CommandCenterPage — Triggered by', () => {
     expect(screen.getByText(/Reported/)).toBeInTheDocument()
     expect(screen.getByText(/Notified/)).toBeInTheDocument()
     expect(screen.queryByText(/^Triggered $/)).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * The operator who raises a code must see it land in the Active column. That used to depend on
+ * the IncidentCreated SignalR broadcast alone, so with the hub down (useSignalR is mocked as
+ * disconnected here) the code was raised, paged, and never appeared on the console that raised
+ * it, leaving the operator unable to tell whether it had gone out at all.
+ */
+describe('CommandCenterPage — raising a code with no live connection', () => {
+  const codeBlue = { id: 1, name: 'Code Blue — Cardiac Arrest', treeType: 'code-blue', nodes: [] }
+
+  beforeEach(() => {
+    getResolved.mockReset().mockResolvedValue([])
+    getActive.mockReset().mockResolvedValue([])
+    getTrees.mockReset().mockResolvedValue([codeBlue])
+    createEvent.mockReset()
+  })
+
+  it('shows the new incident as active without waiting for a broadcast', async () => {
+    const raised = incident({
+      id: 42, status: 'active', endedAt: undefined, location: 'ICU — Bay 4', phoneTree: codeBlue,
+    })
+    createEvent.mockResolvedValue(raised)
+
+    render(<CommandCenterPage />)
+    await userEvent.click(await screen.findByRole('button', { name: /Activate Code/ }))
+    getActive.mockResolvedValue([raised])
+    await userEvent.click(screen.getByRole('button', { name: /Dispatch Now/ }))
+
+    expect(createEvent).toHaveBeenCalledWith(1, expect.objectContaining({ confirm: true }))
+    expect(await screen.findByText('#42 — Code Blue — Cardiac Arrest')).toBeInTheDocument()
   })
 })

@@ -39,13 +39,15 @@ const features = [
 
 const policies = [
   {
-    title: 'HIPAA Compliance',
-    description: 'PHI fields are column-encrypted at rest. Access is audited via immutable audit logs. Sessions auto-expire after inactivity. Audit records are retained per policy.',
+    // Keep these claims true: there is no column-level encryption (Azure SQL TDE only), and
+    // audit rows are archived then removed from SQL, so they are not "immutable". See CLAUDE.md.
+    title: 'Audit & Retention',
+    description: 'Access to records is audit-logged, and audit history is kept for 7 years. Sessions sign out automatically after inactivity.',
     icon: Shield,
   },
   {
     title: 'Data Security',
-    description: 'All traffic is TLS-encrypted. Authentication uses SSO providers (Microsoft, Google) or local accounts. No credentials are stored in the application.',
+    description: 'Traffic is encrypted in transit (TLS 1.2+) and the database is encrypted at rest (Azure SQL TDE). Sign in with Microsoft, Google or a local account; local passwords are stored only as salted hashes.',
     icon: CheckCircle,
   },
   {
